@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	"github.com/djdv/go-filesystem-utils/cmd/service"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
 )
@@ -20,6 +21,9 @@ func main() {
 			Helptext: cmds.HelpText{
 				Tagline: "File system service utility.",
 			},
+			Subcommands: map[string]*cmds.Command{
+				service.Name: service.Command,
+			},
 		}
 		// cmdline[0] is used literally in helptext generation.
 		ourName = filepath.Base(os.Args[0]) // We set it to the program's name.
@@ -30,8 +34,8 @@ func main() {
 		)
 		err = cli.Run(ctx, root, cmdline,
 			os.Stdin, os.Stdout, os.Stderr,
-			nil, nil,
-		)
+			service.MakeEnvironment, service.MakeExecutor,
+			)
 	)
 	if err != nil {
 		var cliError cli.ExitError
