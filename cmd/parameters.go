@@ -8,6 +8,17 @@ import (
 	"github.com/multiformats/go-multiaddr"
 )
 
+const (
+	// ServiceName defines a default name which server and clients may use
+	// to refer to the service, in namespace oriented APIs.
+	// Effectively the service root.
+	ServiceName = "fs"
+	// ServerName defines a default name which servers and clients may use
+	// to form or find connections to the named server instance.
+	// (E.g. a Unix socket of path `.../$ServiceName/$ServerName`.)
+	ServerName = "server"
+)
+
 // RootOptions returns top-level cmds-lib options,
 // as well as options which pertain to the `Settings` struct for this pkg.
 func RootOptions() []cmds.Option {

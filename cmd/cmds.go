@@ -13,17 +13,6 @@ import (
 	manet "github.com/multiformats/go-multiaddr/net"
 )
 
-const (
-	// ServiceName defines a default name which servers and clients may use
-	// to refer to the file system service in namespace oriented APIs.
-	// Effectively the service's API root.
-	ServiceName = "fs"
-	// ServerName defines a default name which servers and clients may use
-	// to form or find connections to named server instances.
-	// (E.g. a Unix socket of path `.../$ServiceName/$ServerName`.)
-	ServerName = "server"
-)
-
 var ErrServiceNotFound = errors.New("could not find service instance")
 
 // UserServiceMaddrs returns a list of multiaddrs that servers and client commands
@@ -84,7 +73,7 @@ func FindLocalServer() (multiaddr.Multiaddr, error) {
 		maddrStrings  = make([]string, len(localDefaults))
 	)
 	for i, serviceMaddr := range localDefaults {
-		if serverDialable(serviceMaddr) {
+		if ServerDialable(serviceMaddr) {
 			return serviceMaddr, nil
 		}
 		maddrStrings[i] = serviceMaddr.String()
@@ -95,9 +84,9 @@ func FindLocalServer() (multiaddr.Multiaddr, error) {
 	)
 }
 
-// serverDialable returns true if the multiaddr is dialable.
+// ServerDialable returns true if the multiaddr is dialable.
 // Signifying the target service at that address is ready for operation.
-func serverDialable(maddr multiaddr.Multiaddr) (connected bool) {
+func ServerDialable(maddr multiaddr.Multiaddr) (connected bool) {
 	conn, err := manet.Dial(maddr)
 	if err == nil && conn != nil {
 		if err = conn.Close(); err != nil {
