@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/adrg/xdg"
+	"github.com/djdv/go-filesystem-utils/manager"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
 	madns "github.com/multiformats/go-multiaddr-dns"
@@ -32,6 +33,9 @@ type (
 	// on the `env` provided to them, in order to gain access to this interface.
 	ServiceEnvironment interface {
 		context.Context
+
+		// TODO: docs; storage for daemon's instances
+		Index() manager.Index
 	}
 )
 

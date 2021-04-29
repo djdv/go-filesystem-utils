@@ -9,6 +9,7 @@ import (
 	"time"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	"github.com/djdv/go-filesystem-utils/cmd/list"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	cmdshttp "github.com/ipfs/go-ipfs-cmds/http"
 	"github.com/kardianos/service"
@@ -171,6 +172,9 @@ func (daemon *serviceDaemon) serviceLaunch(serviceListener manet.Listener, servi
 			Options: fscmds.RootOptions(),
 			Helptext: cmds.HelpText{
 				Tagline: "File system service client.",
+			},
+			Subcommands: map[string]*cmds.Command{
+				list.Name: list.Command,
 			},
 		}
 		httpServer, serverErrors = serveCmdHTTP(serviceListener,

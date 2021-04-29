@@ -6,6 +6,7 @@ import (
 	"reflect"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	"github.com/djdv/go-filesystem-utils/manager"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
 )
@@ -13,16 +14,20 @@ import (
 type (
 	daemonEnvironment struct {
 		context.Context
+		instanceIndex manager.Index
 	}
 )
 
 func MakeEnvironment(ctx context.Context, _ *cmds.Request) (cmds.Environment, error) {
 	env := &daemonEnvironment{
-		Context: ctx,
+		Context:       ctx,
+		instanceIndex: manager.NewIndex(),
 	}
 
 	return env, nil
 }
+
+func (de *daemonEnvironment) Index() manager.Index { return de.instanceIndex }
 
 func getHostServiceConfig(request *cmds.Request) (*service.Config, error) {
 	username, _, err := fscmds.GetStringArgument(request, UsernameParameter)

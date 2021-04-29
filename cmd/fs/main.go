@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	"github.com/djdv/go-filesystem-utils/cmd/list"
 	"github.com/djdv/go-filesystem-utils/cmd/service"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
@@ -23,6 +24,7 @@ func main() {
 			},
 			Subcommands: map[string]*cmds.Command{
 				service.Name: service.Command,
+				list.Name:    list.Command,
 			},
 		}
 		// cmdline[0] is used literally in helptext generation.

@@ -8,6 +8,7 @@ require (
 	github.com/kardianos/service v0.0.0-00010101000000-000000000000
 	github.com/multiformats/go-multiaddr v0.3.1
 	github.com/multiformats/go-multiaddr-dns v0.3.1
+	github.com/olekukonko/tablewriter v0.0.5
 	golang.org/x/sys v0.0.0-20210303074136-134d130e1a04
 )
 

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	"github.com/djdv/go-filesystem-utils/cmd/list"
 	"github.com/djdv/go-filesystem-utils/cmd/service"
 	"github.com/djdv/go-filesystem-utils/cmd/service/status"
 	cmds "github.com/ipfs/go-ipfs-cmds"
@@ -25,6 +27,7 @@ var testRoot = &cmds.Command{
 	Options: fscmds.RootOptions(),
 	Subcommands: map[string]*cmds.Command{
 		service.Name: service.Command,
+		list.Name:    list.Command,
 	},
 }
 
@@ -340,4 +343,81 @@ func TestServiceFormat(t *testing.T) {
 			waitForUninstall(t)
 		}
 	}
+}
+func TestServiceLauncher(t *testing.T) {
+	t.Run("From client", func(t *testing.T) {
+		runCtx, runCancel := context.WithCancel(context.Background())
+		defer runCancel()
+
+		const (
+			// service should be alive "long enough" for the request to be executed
+			// otherwise the service will exit early, and the test will fail
+			stopAfter       = 2 * time.Millisecond
+			responseTimeout = 2 * time.Second
+		)
+		listRequest, err := cmds.NewRequest(runCtx, []string{list.Name},
+			cmds.OptMap{
+				"stop-after": stopAfter.String(),
+			}, nil, nil, testRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		environment, err := service.MakeEnvironment(runCtx, listRequest)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// XXX: Type hacks used in test only
+		// caller shouldn't care to wait
+		// on the process like this in real use.
+		var testEnvPid int
+
+		// A service subprocess will be launched and used by this executor.
+		// MakeExecutor will wait until its ready, or fails to start.
+		client, err := service.MakeExecutor(listRequest, &testEnvPid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if testEnvPid == 0 {
+			t.Fatal("executor did not return subprocess PID")
+		}
+		subProc, err := os.FindProcess(testEnvPid)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var (
+			emitter, listResponse = cmds.NewChanResponsePair(listRequest)
+			listErr               = make(chan error)
+			testFail              = time.After(responseTimeout)
+		)
+		go func() {
+			err := client.Execute(listRequest, emitter, environment)
+			if err != nil {
+				listErr <- err
+				return
+			}
+			_, err = listResponse.Next()
+			listErr <- err
+		}()
+
+		select {
+		case err := <-listErr:
+			expectedErr := io.EOF
+			if err == nil ||
+				!errors.Is(err, expectedErr) {
+				t.Fatalf("expected %s, got: %v", expectedErr, err)
+			}
+		case <-testFail:
+			t.Error("service did not respond in time")
+			procErr := subProc.Kill()
+			if procErr != nil {
+				t.Fatal(procErr)
+			}
+		}
+
+		if _, err := subProc.Wait(); err != nil {
+			t.Fatal(err)
+		}
+	})
 }
