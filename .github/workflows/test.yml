@@ -1,0 +1,38 @@
+on: [push, pull_request]
+name: Checks
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: Restore cache
+      uses: actions/cache@v2
+      with:
+        path: |
+          ~/go/pkg/mod
+          ~/.cache/go-build
+          ~/Library/Caches/go-build
+          %LocalAppData%\go-build
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+    - name: Checkout code
+      uses: actions/checkout@v2
+    - name: Fetch Go version from mod file
+      run: echo "GO_VERSION=$(grep "go 1." go.mod | cut -d " " -f 2)" >> $GITHUB_ENV
+    - uses: actions/setup-go@v2
+      with:
+        go-version: ${{ env.GO_VERSION }}
+    - name: Test (Windows)
+      if: matrix.os == 'windows-latest'
+      run: go version # Nothing to test yet.
+    - name: Test (*nix)
+      if: matrix.os != 'windows-latest'
+      run: |
+        # The CI has an old version of Go by default.
+        # setup-go installs the version we want, but
+        # root won't have that binary in its `PATH`.
+        export GO_USER_BIN="$(which go)"
+        #sudo -E ${GO_USER_BIN} test -v ./...
