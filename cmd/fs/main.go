@@ -16,7 +16,7 @@ func main() {
 	var (
 		ctx  = context.Background()
 		root = &cmds.Command{
-			Options: fscmds.Options,
+			Options: fscmds.RootOptions(),
 			Helptext: cmds.HelpText{
 				Tagline: "File system service utility.",
 			},

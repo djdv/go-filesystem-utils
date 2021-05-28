@@ -37,10 +37,10 @@ var (
 		Description: `Time interval (e.g. "30s") to check if the service is active and exit if not.`,
 		Environment: "FS_STOP_AFTER",
 	}
+)
 
-	Options = []cmds.Option{
-		// TODO: consider file-relevant cmds pkg options (symlinks, hidden attribute, etc.)
-		// for dealing with fs/mtab-like input file
+func RootOptions() []cmds.Option {
+	return []cmds.Option{
 		cmds.OptionEncodingType,
 		cmds.OptionTimeout,
 		cmds.OptionStreamChannels,
@@ -49,7 +49,7 @@ var (
 		cmds.StringOption(ServiceMaddrParameter.Name, ServiceMaddrParameter.Description),
 		cmds.StringOption(AutoExitParameter.Name, AutoExitParameter.Description),
 	}
-)
+}
 
 func GetStringArgument(request *cmds.Request, parameters CmdsParameterSet) (argument string, provided bool, err error) {
 	var cmdsArg interface{}
