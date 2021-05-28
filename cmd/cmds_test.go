@@ -269,13 +269,13 @@ func TestRequestMultiaddr(t *testing.T) {
 func testRequestMultiaddrUnexpected(t *testing.T) {
 	const badMaddr = "\\invalid\\"
 	var (
+		badValue      = struct{}{}
 		badParameters = fscmds.CmdsParameterSet{
 			Name:        "bad-maddr-option-type",
 			Environment: "BAD_MADDR",
 		}
-		ctx, cancel   = context.WithCancel(context.Background())
-		badValue      = struct{}{}
 		checkProvided = func(t *testing.T, got multiaddr.Multiaddr, provided bool, err error) {
+			t.Helper()
 			if err == nil {
 				t.Fatalf("multiaddr returned for bad request:\n\tProvided? %t\n\tValue: %#v",
 					provided, got,
@@ -285,6 +285,7 @@ func testRequestMultiaddrUnexpected(t *testing.T) {
 				t.Fatalf("option was provided but not detected in request")
 			}
 		}
+		ctx, cancel = context.WithCancel(context.Background())
 	)
 	defer cancel()
 	request, err := cmds.NewRequest(ctx, nil,
@@ -296,35 +297,33 @@ func testRequestMultiaddrUnexpected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var ( // shorthand:
-		badParameter = badParameters.Name
-		badEnv       = badParameters.Environment
-	)
 	t.Run("Environment Variable", func(t *testing.T) {
-		if err := os.Setenv(badEnv, badMaddr); err != nil {
+		if err := os.Setenv(badParameters.Environment, badMaddr); err != nil {
 			t.Fatalf("failed to set environment %q to %v\n\t%s",
-				badEnv, badMaddr, err)
+				badParameters.Environment, badMaddr, err)
 		}
 		got, provided, err := fscmds.GetMultiaddrArgument(request, badParameters)
-		if osErr := os.Unsetenv(badEnv); osErr != nil {
+		if osErr := os.Unsetenv(badParameters.Environment); osErr != nil {
 			t.Fatalf("failed to unset environment %q: %s",
-				badEnv, osErr)
+				badParameters.Environment, osErr)
 		}
 		checkProvided(t, got, provided, err)
 	})
 	t.Run("Options", func(t *testing.T) {
-		request.SetOption(badParameter, badValue)
+		request.SetOption(badParameters.Name, badValue)
 		got, provided, err := fscmds.GetMultiaddrArgument(request, badParameters)
-		delete(request.Options, badParameter)
+		delete(request.Options, badParameters.Name)
 		checkProvided(t, got, provided, err)
 	})
 }
 
 func testRequestMultiaddrExpected(t *testing.T) {
+	t.Helper()
 	var (
 		ctx, cancel   = context.WithCancel(context.Background())
 		checkProvided = func(t *testing.T, request *cmds.Request, want multiaddr.Multiaddr,
 			parameters fscmds.CmdsParameterSet) {
+			t.Helper()
 			got, provided, err := fscmds.GetMultiaddrArgument(request, parameters)
 			if err != nil {
 				t.Fatal(err)
