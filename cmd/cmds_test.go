@@ -77,8 +77,8 @@ func TestRequestsStandard(t *testing.T) {
 			},
 		}
 	)
-	t.Run("Expected input", func(t *testing.T) { expectedArguments(t, request, expectedSet) })
 	t.Run("Erroneous input", func(t *testing.T) { erroneousArguments(t, request, unexpectedSet) })
+	t.Run("Expected input", func(t *testing.T) { expectedArguments(t, request, expectedSet) })
 }
 
 func expectedArguments(t *testing.T, request *cmds.Request, set genericParameterArgumentPair) {
@@ -262,8 +262,8 @@ func genericArgWasNotProvided(t *testing.T, typeName string, provided bool, got 
 }
 
 func TestRequestMultiaddr(t *testing.T) {
-	t.Run("Unexpected", testRequestMultiaddrUnexpected)
-	t.Run("Expected", testRequestMultiaddrExpected)
+	t.Run("Erroneous input", testRequestMultiaddrUnexpected)
+	t.Run("Expected input", testRequestMultiaddrExpected)
 }
 
 func testRequestMultiaddrUnexpected(t *testing.T) {
@@ -297,7 +297,13 @@ func testRequestMultiaddrUnexpected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Run("Environment Variable", func(t *testing.T) {
+	t.Run("Options", func(t *testing.T) {
+		request.SetOption(badParameters.Name, badValue)
+		got, provided, err := fscmds.GetMultiaddrArgument(request, badParameters)
+		delete(request.Options, badParameters.Name)
+		checkProvided(t, got, provided, err)
+	})
+	t.Run("Environment", func(t *testing.T) {
 		if err := os.Setenv(badParameters.Environment, badMaddr); err != nil {
 			t.Fatalf("failed to set environment %q to %v\n\t%s",
 				badParameters.Environment, badMaddr, err)
@@ -307,12 +313,6 @@ func testRequestMultiaddrUnexpected(t *testing.T) {
 			t.Fatalf("failed to unset environment %q: %s",
 				badParameters.Environment, osErr)
 		}
-		checkProvided(t, got, provided, err)
-	})
-	t.Run("Options", func(t *testing.T) {
-		request.SetOption(badParameters.Name, badValue)
-		got, provided, err := fscmds.GetMultiaddrArgument(request, badParameters)
-		delete(request.Options, badParameters.Name)
 		checkProvided(t, got, provided, err)
 	})
 }
@@ -361,10 +361,6 @@ func testRequestMultiaddrExpected(t *testing.T) {
 		var (
 			testParameters = test.parameters
 			testValue      = test.value
-
-			// shorthand:
-			testParameter = testParameters.Name
-			testEnv       = testParameters.Environment
 		)
 		t.Run(testValue, func(t *testing.T) {
 			want, err := multiaddr.NewMultiaddr(testValue)
@@ -377,19 +373,26 @@ func testRequestMultiaddrExpected(t *testing.T) {
 			}
 
 			t.Run("Environment Variable", func(t *testing.T) {
-				if err := os.Setenv(testEnv, testValue); err != nil {
+				if err := os.Setenv(testParameters.Environment, testValue); err != nil {
 					t.Fatalf("failed to set environment %q to %v\n\t%s",
-						testEnv, testValue, err)
+						testParameters.Environment, testValue, err)
 				}
-				checkProvided(t, request, want, testParameters)
-				if err := os.Unsetenv(testEnv); err != nil {
-					t.Fatalf("failed to unset environment %q: %s", testEnv, err)
+
+				checkProvided(t,
+					request, want, testParameters)
+
+				if err := os.Unsetenv(testParameters.Environment); err != nil {
+					t.Fatalf("failed to unset environment %q: %s",
+						testParameters.Environment, err)
 				}
 			})
 			t.Run("Options", func(t *testing.T) {
-				request.SetOption(testParameter, testValue)
-				checkProvided(t, request, want, testParameters)
-				delete(request.Options, testParameter)
+				request.SetOption(testParameters.Name, testValue)
+
+				checkProvided(t,
+					request, want, testParameters)
+
+				delete(request.Options, testParameters.Name)
 			})
 		})
 	}
