@@ -70,6 +70,7 @@ func issueControlRequest(controlAction string) error {
 
 func TestServiceControl(t *testing.T) {
 	t.Run("bad sequence", func(t *testing.T) {
+		var lastErr error
 		for _, test := range []struct {
 			controlAction string
 			shouldError   bool
@@ -88,22 +89,25 @@ func TestServiceControl(t *testing.T) {
 				shouldError   = test.shouldError
 			)
 			t.Run(controlAction, func(t *testing.T) {
-				err := issueControlRequest(controlAction)
+				lastErr = issueControlRequest(controlAction)
 				if shouldError &&
-					err == nil {
+					lastErr == nil {
 					t.Errorf("control \"%s\" was supposed to return an error, but did not",
 						controlAction)
 				}
 				if !shouldError &&
-					err != nil {
+					lastErr != nil {
 					t.Errorf("control \"%s\" returned error: %s",
-						controlAction, err)
+						controlAction, lastErr)
 				}
 			})
 		}
-		waitForUninstall(t)
+		if lastErr == nil {
+			waitForUninstall(t)
+		}
 	})
 	t.Run("good sequence", func(t *testing.T) {
+		var lastErr error
 		for _, testControl := range []string{
 			"install",
 			"start",
@@ -113,12 +117,14 @@ func TestServiceControl(t *testing.T) {
 		} {
 			controlAction := testControl
 			t.Run(controlAction, func(t *testing.T) {
-				if err := issueControlRequest(controlAction); err != nil {
-					t.Error(err)
+				if lastErr = issueControlRequest(controlAction); lastErr != nil {
+					t.Error(lastErr)
 				}
 			})
 		}
-		waitForUninstall(t)
+		if lastErr == nil {
+			waitForUninstall(t)
+		}
 	})
 }
 
