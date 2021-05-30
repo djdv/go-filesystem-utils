@@ -50,27 +50,33 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func issueControlRequest(controlAction string) error {
+func issueControlRequest(controlAction string, printErr bool) error {
 	var (
 		ctx     = context.Background()
 		cmdline = []string{
 			filepath.Base(os.Args[0]),
 			service.Name, controlAction,
 		}
+		stderr       *os.File
 		discard, err = os.OpenFile(os.DevNull, os.O_RDWR, 0o755)
 	)
 	if err != nil {
 		return err
 	}
 	defer discard.Close()
+	if printErr {
+		stderr = os.Stderr
+	} else {
+		stderr = discard
+	}
+
 	return cli.Run(ctx, testRoot, cmdline,
-		discard, discard, discard,
+		discard, discard, stderr,
 		service.MakeEnvironment, service.MakeExecutor)
 }
 
 func TestServiceControl(t *testing.T) {
 	t.Run("bad sequence", func(t *testing.T) {
-		var lastErr error
 		for _, test := range []struct {
 			controlAction string
 			shouldError   bool
@@ -87,27 +93,26 @@ func TestServiceControl(t *testing.T) {
 			var (
 				controlAction = test.controlAction
 				shouldError   = test.shouldError
+				printError    = !shouldError
 			)
 			t.Run(controlAction, func(t *testing.T) {
-				lastErr = issueControlRequest(controlAction)
+				err := issueControlRequest(controlAction, printError)
 				if shouldError &&
-					lastErr == nil {
-					t.Errorf("control \"%s\" was supposed to return an error, but did not",
+					err == nil {
+					t.Fatalf("control \"%s\" was supposed to return an error, but did not",
 						controlAction)
 				}
 				if !shouldError &&
-					lastErr != nil {
-					t.Errorf("control \"%s\" returned error: %s",
-						controlAction, lastErr)
+					err != nil {
+					t.Fatalf("control \"%s\" returned error: %s",
+						controlAction, err)
 				}
 			})
 		}
-		if lastErr == nil {
-			waitForUninstall(t)
-		}
+		waitForUninstall(t)
 	})
 	t.Run("good sequence", func(t *testing.T) {
-		var lastErr error
+		const printError = true
 		for _, testControl := range []string{
 			"install",
 			"start",
@@ -117,14 +122,12 @@ func TestServiceControl(t *testing.T) {
 		} {
 			controlAction := testControl
 			t.Run(controlAction, func(t *testing.T) {
-				if lastErr = issueControlRequest(controlAction); lastErr != nil {
-					t.Error(lastErr)
+				if err := issueControlRequest(controlAction, printError); err != nil {
+					t.Fatal(err)
 				}
 			})
 		}
-		if lastErr == nil {
-			waitForUninstall(t)
-		}
+		waitForUninstall(t)
 	})
 }
 
@@ -149,6 +152,7 @@ func TestServiceStatus(t *testing.T) {
 		}
 	})
 	t.Run("status sequence", func(t *testing.T) {
+		const printError = true
 		for _, test := range []struct {
 			controlAction  string
 			expectedStatus hostservice.Status
@@ -175,9 +179,9 @@ func TestServiceStatus(t *testing.T) {
 				expectedStatus = test.expectedStatus
 			)
 			t.Run(controlAction, func(t *testing.T) {
-				err := issueControlRequest(controlAction)
+				err := issueControlRequest(controlAction, printError)
 				if err != nil {
-					t.Error(err)
+					t.Fatal(err)
 				}
 				serviceStatus, err := issueStatusRequest()
 				if err != nil {
@@ -191,7 +195,8 @@ func TestServiceStatus(t *testing.T) {
 		}
 	})
 	t.Run("uninstall test service", func(t *testing.T) {
-		if err := issueControlRequest("uninstall"); err != nil {
+		const printError = true
+		if err := issueControlRequest("uninstall", printError); err != nil {
 			t.Error(err)
 		}
 		waitForUninstall(t)
