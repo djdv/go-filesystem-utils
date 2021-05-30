@@ -1,0 +1,44 @@
+name: Checks
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    types:
+      - synchronize
+jobs:
+  setup:
+    name: Setup
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Parse Go mod file
+        id: go_mod_parse
+        run: echo "::set-output name=go_mod_version::$(go mod edit -json | jq --raw-output .Go)"
+      - name: Setup specific Go version
+        uses: actions/setup-go@v2
+        with:
+          go-version: ${{ steps.go_mod_parse.outputs.go_mod_version }}
+      - name: Restore cache
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+            ~/Library/Caches/go-build
+            %LocalAppData%\go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-go-
+      - name: Test Windows
+        if: matrix.os == 'windows-latest'
+        run: go test -v .\...
+      - name: 'Test *nix'
+        if: matrix.os != 'windows-latest'
+        # The CI has an old version of Go by default.
+        # setup-go installs the version we want, but
+        # root won't have that binary in its `secure_path`.
+        run: sudo $(which go) test -v ./...
