@@ -11,8 +11,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/djdv/go-ipfs-cmds v0.0.0-20210504182537-92cf96be03f0 h1:w5fJfIiYXbRA9z0JSYlmzEEm8kcD7WkrGDdmfL/rztY=
 github.com/djdv/go-ipfs-cmds v0.0.0-20210504182537-92cf96be03f0/go.mod h1:ZgYiWVnCk43ChwoH8hAmI1IRbuVtq3GSTHwtRB/Kqhk=
-github.com/djdv/service v1.2.1-0.20210515140113-7b85551530fa h1:6J+owKQ7Dv4dJ9qeTdFVSwvlav4R9f7D8Rzrvn85VR8=
-github.com/djdv/service v1.2.1-0.20210515140113-7b85551530fa/go.mod h1:CIMRFEJVL+0DS1a3Nx06NaMn4Dz63Ng6O7dl0qH0zVM=
+github.com/djdv/service v1.2.1-0.20210530025522-eb90fecf3353 h1:4HkvQbLq9n8zuXAlCxMyWhp1spxzUZePz/0zH2tmixg=
+github.com/djdv/service v1.2.1-0.20210530025522-eb90fecf3353/go.mod h1:CIMRFEJVL+0DS1a3Nx06NaMn4Dz63Ng6O7dl0qH0zVM=
 github.com/gogo/protobuf v1.3.1 h1:DqDEcV5aeaTmdFBePNpYsp3FlcVH/2ISVVM9Qf8PSls=
 github.com/gogo/protobuf v1.3.1/go.mod h1:SlYgWuQ5SjCEi6WLHjHCa1yvBfUnHcTbrrZtXPKa29o=
 github.com/google/renameio v0.1.0/go.mod h1:KWCgfxg9yswjAJkECMjeO8J8rahYeXnNhOm40UhjYkI=

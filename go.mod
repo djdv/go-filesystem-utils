@@ -13,5 +13,5 @@ require (
 
 replace (
 	github.com/ipfs/go-ipfs-cmds => github.com/djdv/go-ipfs-cmds v0.0.0-20210504182537-92cf96be03f0
-	github.com/kardianos/service => github.com/djdv/service v1.2.1-0.20210515140113-7b85551530fa
+	github.com/kardianos/service => github.com/djdv/service v1.2.1-0.20210530025522-eb90fecf3353
 )
