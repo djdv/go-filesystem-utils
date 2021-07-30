@@ -1,0 +1,40 @@
+name: Checks
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+jobs:
+  setup:
+    name: Go tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Setup Go
+        uses: actions/setup-go@v3
+        with:
+          go-version-file: 'go.mod'
+          check-latest: true
+      - name: Get Go cache paths
+        id: cache_go
+        run: |
+          echo "::set-output name=mod::$(go env GOMODCACHE)"
+          echo "::set-output name=build::$(go env GOCACHE)"
+      - name: Restore cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ${{ steps.cache_go.outputs.mod }}
+            ${{ steps.cache_go.outputs.build }}
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-go-
+      - name: Test Windows
+        if: matrix.os == 'windows-latest'
+        run: go test -cover .\...
+      - name: 'Test *nix'
+        if: matrix.os != 'windows-latest'
+        run: go test -cover ./...
