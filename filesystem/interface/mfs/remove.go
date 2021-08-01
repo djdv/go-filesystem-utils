@@ -7,7 +7,7 @@ import (
 	"os"
 	gopath "path"
 
-	iferrors "github.com/ipfs/go-ipfs/filesystem/interface/errors"
+	iferrors "github.com/djdv/go-filesystem-utils/filesystem/interface/errors"
 	gomfs "github.com/ipfs/go-mfs"
 	"github.com/ipfs/go-unixfs"
 	unixpb "github.com/ipfs/go-unixfs/pb"

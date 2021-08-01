@@ -5,7 +5,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/ipfs/go-ipfs/filesystem/manager"
+	"github.com/djdv/go-filesystem-utils/filesystem/manager"
 )
 
 type (

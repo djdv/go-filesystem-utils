@@ -4,7 +4,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/ipfs/go-ipfs/filesystem"
+	"github.com/djdv/go-filesystem-utils/filesystem"
 )
 
 type closer func() error      // io.Closure closure wrapper

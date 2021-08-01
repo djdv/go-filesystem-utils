@@ -7,9 +7,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ipfs/go-ipfs/core/commands/filesystem/manager"
-	"github.com/ipfs/go-ipfs/core/commands/filesystem/cgofuse"
-	"github.com/ipfs/go-ipfs/filesystem"
+	"github.com/djdv/go-filesystem-utils/cmd/filesystem/manager"
+	"github.com/djdv/go-filesystem-utils/cmd/filesystem/cgofuse"
+	"github.com/djdv/go-filesystem-utils/filesystem"
 	gomfs "github.com/ipfs/go-mfs"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 )

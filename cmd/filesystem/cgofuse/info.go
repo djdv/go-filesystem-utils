@@ -4,7 +4,7 @@ package cgofuse
 
 import (
 	fuselib "github.com/billziss-gh/cgofuse/fuse"
-	"github.com/ipfs/go-ipfs/filesystem"
+	"github.com/djdv/go-filesystem-utils/filesystem"
 )
 
 func (fs *hostBinding) Getattr(path string, stat *fuselib.Stat_t, fh uint64) int {

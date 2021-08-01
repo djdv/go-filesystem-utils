@@ -13,10 +13,10 @@ import (
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	"github.com/ipfs/go-ipfs/core"
-	"github.com/ipfs/go-ipfs/core/commands/filesystem/bazil/ipns"
-	rofs "github.com/ipfs/go-ipfs/core/commands/filesystem/bazil/readonly"
-	"github.com/ipfs/go-ipfs/filesystem"
-	"github.com/ipfs/go-ipfs/filesystem/manager"
+	"github.com/djdv/go-filesystem-utils/cmd/filesystem/bazil/ipns"
+	rofs "github.com/djdv/go-filesystem-utils/cmd/filesystem/bazil/readonly"
+	"github.com/djdv/go-filesystem-utils/filesystem"
+	"github.com/djdv/go-filesystem-utils/filesystem/manager"
 	"github.com/ipfs/go-log"
 )
 

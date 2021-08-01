@@ -7,14 +7,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/djdv/go-filesystem-utils/cmd/filesystem/cgofuse"
+	"github.com/djdv/go-filesystem-utils/filesystem"
+	"github.com/djdv/go-filesystem-utils/filesystem/interface/ipfscore"
+	"github.com/djdv/go-filesystem-utils/filesystem/interface/pinfs"
+	"github.com/djdv/go-filesystem-utils/filesystem/manager"
+	"github.com/djdv/go-filesystem-utils/filesystem/manager/errors"
 	config "github.com/ipfs/go-ipfs-config"
 	configfile "github.com/ipfs/go-ipfs-config/serialize"
-	"github.com/ipfs/go-ipfs/core/commands/filesystem/cgofuse"
-	"github.com/ipfs/go-ipfs/filesystem"
-	"github.com/ipfs/go-ipfs/filesystem/interface/ipfscore"
-	"github.com/ipfs/go-ipfs/filesystem/interface/pinfs"
-	"github.com/ipfs/go-ipfs/filesystem/manager"
-	"github.com/ipfs/go-ipfs/filesystem/manager/errors"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 )
 

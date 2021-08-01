@@ -5,7 +5,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/ipfs/go-ipfs/filesystem"
+	"github.com/djdv/go-filesystem-utils/filesystem"
 )
 
 var (

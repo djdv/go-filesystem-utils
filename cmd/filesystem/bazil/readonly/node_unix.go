@@ -13,7 +13,7 @@ import (
 	fuse "bazil.org/fuse"
 	fs "bazil.org/fuse/fs"
 	core "github.com/ipfs/go-ipfs/core"
-	"github.com/ipfs/go-ipfs/core/commands/filesystem/bazil/log"
+	"github.com/djdv/go-filesystem-utils/cmd/filesystem/bazil/log"
 	ipld "github.com/ipfs/go-ipld-format"
 	mdag "github.com/ipfs/go-merkledag"
 	ft "github.com/ipfs/go-unixfs"

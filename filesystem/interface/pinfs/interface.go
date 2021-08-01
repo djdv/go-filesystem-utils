@@ -3,8 +3,8 @@ package pinfs
 import (
 	"context"
 
-	"github.com/ipfs/go-ipfs/filesystem"
-	"github.com/ipfs/go-ipfs/filesystem/interface/ipfscore"
+	"github.com/djdv/go-filesystem-utils/filesystem"
+	"github.com/djdv/go-filesystem-utils/filesystem/interface/ipfscore"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 )
 

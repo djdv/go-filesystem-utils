@@ -3,7 +3,7 @@ package filesystem_test
 import (
 	"fmt"
 
-	"github.com/ipfs/go-ipfs/filesystem"
+	"github.com/djdv/go-filesystem-utils/filesystem"
 	"github.com/multiformats/go-multiaddr"
 )
 

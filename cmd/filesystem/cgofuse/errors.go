@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	fuselib "github.com/billziss-gh/cgofuse/fuse"
-	fserrors "github.com/ipfs/go-ipfs/filesystem/errors"
+	fserrors "github.com/djdv/go-filesystem-utils/filesystem/errors"
 )
 
 func interpretError(err error) errNo {

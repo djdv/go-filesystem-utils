@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ipfs/go-ipfs/filesystem"
-	iferrors "github.com/ipfs/go-ipfs/filesystem/interface/errors"
+	"github.com/djdv/go-filesystem-utils/filesystem"
+	iferrors "github.com/djdv/go-filesystem-utils/filesystem/interface/errors"
 	gomfs "github.com/ipfs/go-mfs"
 	"github.com/ipfs/go-unixfs"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"

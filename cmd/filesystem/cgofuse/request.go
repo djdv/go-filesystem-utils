@@ -4,7 +4,7 @@ import (
 	gopath "path"
 	"strings"
 
-	"github.com/ipfs/go-ipfs/filesystem"
+	"github.com/djdv/go-filesystem-utils/filesystem"
 )
 
 type Request struct {

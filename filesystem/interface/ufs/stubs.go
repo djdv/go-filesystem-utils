@@ -1,8 +1,8 @@
 package ufs
 
 import (
-	"github.com/ipfs/go-ipfs/filesystem"
-	iferrors "github.com/ipfs/go-ipfs/filesystem/interface/errors"
+	"github.com/djdv/go-filesystem-utils/filesystem"
+	iferrors "github.com/djdv/go-filesystem-utils/filesystem/interface/errors"
 )
 
 // TODO: we can implement directories, but currently have no use for them here

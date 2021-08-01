@@ -1,8 +1,8 @@
 package keyfs
 
 import (
-	"github.com/ipfs/go-ipfs/filesystem"
-	tcom "github.com/ipfs/go-ipfs/filesystem/interface"
+	"github.com/djdv/go-filesystem-utils/filesystem"
+	tcom "github.com/djdv/go-filesystem-utils/filesystem/interface"
 )
 
 func (ki *keyInterface) OpenDirectory(path string) (filesystem.Directory, error) {

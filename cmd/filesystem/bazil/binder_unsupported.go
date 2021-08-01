@@ -8,8 +8,8 @@ import (
 	"fmt"
 
 	"github.com/ipfs/go-ipfs/core"
-	"github.com/ipfs/go-ipfs/filesystem"
-	"github.com/ipfs/go-ipfs/filesystem/manager"
+	"github.com/djdv/go-filesystem-utils/filesystem"
+	"github.com/djdv/go-filesystem-utils/filesystem/manager"
 )
 
 //func NewBinder(context.Context, filesystem.ID, *core.IpfsNode, bool) (manager.Binder, error) {

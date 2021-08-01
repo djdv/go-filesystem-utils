@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/ipfs/go-ipfs/filesystem"
-	"github.com/ipfs/go-ipfs/filesystem/manager"
-	"github.com/ipfs/go-ipfs/filesystem/manager/errors"
+	"github.com/djdv/go-filesystem-utils/filesystem"
+	"github.com/djdv/go-filesystem-utils/filesystem/manager"
+	"github.com/djdv/go-filesystem-utils/filesystem/manager/errors"
 	"github.com/multiformats/go-multiaddr"
 )
 

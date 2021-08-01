@@ -3,8 +3,8 @@ package ipfscore
 import (
 	"context"
 
-	"github.com/ipfs/go-ipfs/filesystem"
-	tcom "github.com/ipfs/go-ipfs/filesystem/interface"
+	"github.com/djdv/go-filesystem-utils/filesystem"
+	tcom "github.com/djdv/go-filesystem-utils/filesystem/interface"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 	corepath "github.com/ipfs/interface-go-ipfs-core/path"
 )

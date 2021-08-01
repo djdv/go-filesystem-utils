@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	fserrors "github.com/ipfs/go-ipfs/filesystem/errors"
+	fserrors "github.com/djdv/go-filesystem-utils/filesystem/errors"
 )
 
 // Err implements the filesystem error interface.

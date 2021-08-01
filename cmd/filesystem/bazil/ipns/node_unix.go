@@ -11,7 +11,7 @@ import (
 
 	fuse "bazil.org/fuse"
 	fs "bazil.org/fuse/fs"
-	"github.com/ipfs/go-ipfs/core/commands/filesystem/bazil/log"
+	"github.com/djdv/go-filesystem-utils/cmd/filesystem/bazil/log"
 	mfs "github.com/ipfs/go-mfs"
 )
 

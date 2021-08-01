@@ -1,8 +1,8 @@
 package ipfscore
 
 import (
-	"github.com/ipfs/go-ipfs/filesystem"
-	interfaceutils "github.com/ipfs/go-ipfs/filesystem/interface"
+	"github.com/djdv/go-filesystem-utils/filesystem"
+	interfaceutils "github.com/djdv/go-filesystem-utils/filesystem/interface"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 )
 

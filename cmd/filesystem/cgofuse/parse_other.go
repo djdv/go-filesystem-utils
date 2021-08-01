@@ -3,7 +3,7 @@
 package cgofuse
 
 import (
-	"github.com/ipfs/go-ipfs/filesystem"
+	"github.com/djdv/go-filesystem-utils/filesystem"
 )
 
 func ParseRequest(_ filesystem.ID, target string) (request Request, _ error) {

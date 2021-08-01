@@ -6,8 +6,8 @@ package fscmds
 import (
 	"context"
 
-	"github.com/ipfs/go-ipfs/filesystem"
-	"github.com/ipfs/go-ipfs/filesystem/manager"
+	"github.com/djdv/go-filesystem-utils/filesystem"
+	"github.com/djdv/go-filesystem-utils/filesystem/manager"
 )
 
 // TODO:

@@ -10,8 +10,8 @@ import (
 
 	fuselib "github.com/billziss-gh/cgofuse/fuse"
 	config "github.com/ipfs/go-ipfs-config"
-	"github.com/ipfs/go-ipfs/core/commands/filesystem/cgofuse/sys"
-	"github.com/ipfs/go-ipfs/filesystem"
+	"github.com/djdv/go-filesystem-utils/cmd/filesystem/cgofuse/sys"
+	"github.com/djdv/go-filesystem-utils/filesystem"
 	logging "github.com/ipfs/go-log"
 )
 

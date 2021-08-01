@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ipfs/go-ipfs/filesystem"
-	interfaceutils "github.com/ipfs/go-ipfs/filesystem/interface"
-	iferrors "github.com/ipfs/go-ipfs/filesystem/interface/errors"
+	"github.com/djdv/go-filesystem-utils/filesystem"
+	interfaceutils "github.com/djdv/go-filesystem-utils/filesystem/interface"
+	iferrors "github.com/djdv/go-filesystem-utils/filesystem/interface/errors"
 	gomfs "github.com/ipfs/go-mfs"
 )
 

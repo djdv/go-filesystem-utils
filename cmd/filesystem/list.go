@@ -1,9 +1,9 @@
 package fscmds
 
 import (
+	"github.com/djdv/go-filesystem-utils/filesystem/manager"
+	"github.com/djdv/go-filesystem-utils/filesystem/manager/errors"
 	cmds "github.com/ipfs/go-ipfs-cmds"
-	"github.com/ipfs/go-ipfs/filesystem/manager"
-	"github.com/ipfs/go-ipfs/filesystem/manager/errors"
 )
 
 const (
@@ -11,6 +11,8 @@ const (
 	listDescription = "list active instances"
 )
 
+// TODO: This is the old version of List, ported to the latest commit.
+// Finalize the draft version and use it here instead.
 var List = &cmds.Command{
 	Run: listRun,
 	PostRun: cmds.PostRunMap{

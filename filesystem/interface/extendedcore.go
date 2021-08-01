@@ -6,8 +6,8 @@ import (
 	"time"
 
 	files "github.com/ipfs/go-ipfs-files"
-	"github.com/ipfs/go-ipfs/filesystem"
-	iferrors "github.com/ipfs/go-ipfs/filesystem/interface/errors"
+	"github.com/djdv/go-filesystem-utils/filesystem"
+	iferrors "github.com/djdv/go-filesystem-utils/filesystem/interface/errors"
 	ipld "github.com/ipfs/go-ipld-format"
 	dag "github.com/ipfs/go-merkledag"
 	"github.com/ipfs/go-unixfs"

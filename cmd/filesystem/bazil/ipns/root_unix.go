@@ -16,7 +16,7 @@ import (
 	fs "bazil.org/fuse/fs"
 	cid "github.com/ipfs/go-cid"
 	"github.com/ipfs/go-ipfs/core"
-	"github.com/ipfs/go-ipfs/core/commands/filesystem/bazil/log"
+	"github.com/djdv/go-filesystem-utils/cmd/filesystem/bazil/log"
 	coreapi "github.com/ipfs/go-ipfs/core/coreapi"
 	logging "github.com/ipfs/go-log"
 	dag "github.com/ipfs/go-merkledag"

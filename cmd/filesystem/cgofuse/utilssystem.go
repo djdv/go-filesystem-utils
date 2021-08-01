@@ -10,7 +10,7 @@ import (
 	"runtime"
 
 	fuselib "github.com/billziss-gh/cgofuse/fuse"
-	"github.com/ipfs/go-ipfs/filesystem"
+	"github.com/djdv/go-filesystem-utils/filesystem"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 )
 

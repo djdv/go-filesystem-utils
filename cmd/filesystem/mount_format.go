@@ -7,8 +7,8 @@ import (
 
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
-	"github.com/ipfs/go-ipfs/filesystem/manager"
-	"github.com/ipfs/go-ipfs/filesystem/manager/errors"
+	"github.com/djdv/go-filesystem-utils/filesystem/manager"
+	"github.com/djdv/go-filesystem-utils/filesystem/manager/errors"
 )
 
 type (

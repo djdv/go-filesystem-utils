@@ -3,7 +3,7 @@ package keyfs
 import (
 	"context"
 
-	tcom "github.com/ipfs/go-ipfs/filesystem/interface"
+	tcom "github.com/djdv/go-filesystem-utils/filesystem/interface"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 )
 

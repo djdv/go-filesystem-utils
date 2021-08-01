@@ -4,7 +4,7 @@ import (
 	"context"
 	gopath "path"
 
-	tcom "github.com/ipfs/go-ipfs/filesystem/interface"
+	tcom "github.com/djdv/go-filesystem-utils/filesystem/interface"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 	coreoptions "github.com/ipfs/interface-go-ipfs-core/options"
 )
