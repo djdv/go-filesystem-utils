@@ -1,3 +1,3 @@
-// Package fscmds defines common methods used by commands within its sub-pkgs.
-// It may be used by external packages to interoperate with these commands, systems, and services.
+// Package fscmds defines file system related `cmds.Command`s,
+// parsers for their requests, and their output formats.
 package fscmds

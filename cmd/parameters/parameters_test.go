@@ -27,13 +27,9 @@ func testParam() parameters.Parameter {
 	)
 }
 
-// The Parameter constructor can take in a series of options.
 func testParam2() parameters.Parameter {
 	return parameters.NewParameter(
 		"I'm used to test the parameter library.",
-		parameters.WithRootNamespace(),
-		parameters.WithName("Something Different"), // --something-different
-		parameters.WithEnvironmentPrefix("t"),      // T_SOMETHING_DIFFERENT
 	)
 }
 
@@ -55,34 +51,6 @@ func nestedComplexParam() parameters.Parameter {
 	)
 }
 
-// You can imagine these parameters being part of another pkg.
-// They're in the same file just for testing.
-func embeddedParam1() parameters.Parameter {
-	return parameters.NewParameter(
-		"I'm a parameter for a settings struct that gets embedded",
-	)
-}
-
-func embeddedParam2() parameters.Parameter {
-	return parameters.NewParameter(
-		"I'm a parameter for a settings struct that gets embedded",
-	)
-}
-
-func embeddedParam3() parameters.Parameter {
-	return parameters.NewParameter(
-		"I'm a parameter for a settings struct that gets embedded",
-	)
-}
-
-// This is just an arbitrary struct that's not part of the parameter settings
-// but is part of the setting struct. It's here just to satisfy the tests and can be ignored.
-type unrelatedEmbed struct {
-	pointless bool
-	and       byte
-	unused    int
-}
-
 // This Settings struct may be used on its own,
 // but is also intended to be inherited by others.
 // As if it was declared in another pkg as `root.Settings`,
@@ -91,8 +59,6 @@ type unrelatedEmbed struct {
 type TestRootSettings struct {
 	unrelatedField1 int8
 	unrelatedField2 int16
-	unrelatedField3 struct{}
-	unrelatedEmbed
 	// Notice the struct tag. This indicates to the library
 	// that this is the location where settings fields start.
 	// There is no end marker. Parsers use the parameter list
@@ -134,12 +100,6 @@ type (
 		G []rune
 	}
 
-	testEmbed struct {
-		H bool
-		I int
-		J uint
-	}
-
 	// Settings intended to be relevant to functions in this pkg,
 	// or inherited by another pkg.
 	testSettings struct {
@@ -153,22 +113,10 @@ type (
 		Simple int16
 		// Nested complex types are just as valid.
 		VeryComplex testVeryComplexType
-		// Embedded structs should get flattened into their fields.
-		// Regardless of if they're tagged or not.
-		testEmbed
 		// Unrelated fields after settings should have no effects.
 		unrelatedField4 int64
 	}
 )
-
-// Associate the embedded settings struct with a list of parameters.
-func (*testEmbed) Parameters() parameters.Parameters {
-	return []parameters.Parameter{
-		embeddedParam1(),
-		embeddedParam2(),
-		embeddedParam3(),
-	}
-}
 
 // Associate the pkg settings struct with a list of parameters.
 func (*testSettings) Parameters() parameters.Parameters {
@@ -181,14 +129,13 @@ func (*testSettings) Parameters() parameters.Parameters {
 			simpleParam(),
 			nestedComplexParam(),
 		}
-		embeddedParams = (*testEmbed)(nil).Parameters()
 	)
 	// We concatenate the lists of parameters together to form a super-set.
 	// As Go does for the struct itself.
 	// I.e. As Go expands embedded struct super-fields
 	// into the sub-struct's own fields;
 	// we expand the super-parameters into our own parameters.
-	return append(rootParams, append(pkgParams, embeddedParams...)...)
+	return append(rootParams, pkgParams...)
 }
 
 func TestArguments(t *testing.T) {
@@ -212,12 +159,6 @@ func TestArguments(t *testing.T) {
 			G:               []rune{'6', '4'},
 		}
 
-		embeddedValue = testEmbed{
-			H: true,
-			I: 1234,
-			J: 7,
-		}
-
 		// Create a cmds-lib request, utilizing the keys provided
 		// by the parameters themselves in order to set option values.
 		request, _ = cmds.NewRequest(ctx, nil,
@@ -227,9 +168,6 @@ func TestArguments(t *testing.T) {
 				complexParam().CommandLine():       complexValue,
 				simpleParam().CommandLine():        simpleValue,
 				nestedComplexParam().CommandLine(): veryComplexValue,
-				embeddedParam1().CommandLine():     embeddedValue.H,
-				embeddedParam2().CommandLine():     embeddedValue.I,
-				embeddedParam3().CommandLine():     embeddedValue.J,
 			},
 			nil, nil, &cmds.Command{})
 		// Instantiate the settings struct we need for this function.
@@ -257,14 +195,9 @@ func TestArguments(t *testing.T) {
 		Complex:     complexValue,
 		Simple:      simpleValue,
 		VeryComplex: veryComplexValue,
-		testEmbed:   embeddedValue,
 	}
 	if !reflect.DeepEqual(validSettings, settings) {
-		t.Fatalf("settings field values do not match input values"+
-			"\n\twanted:"+
-			"\n\t%#v"+ // These long structs get their own lines.
-			"\n\tgot:"+
-			"\n\t%#v",
+		t.Fatalf("settings field values do not match input values\n\twanted:\n\t%#v\n\tgot:\n\t%#v",
 			validSettings, settings)
 	}
 
@@ -387,7 +320,7 @@ func TestEnvironment(t *testing.T) {
 	)
 	const (
 		// XXX: magic because lazy tests, don't mimick this.
-		unrelatedRootPadding = 4
+		unrelatedRootPadding = 2
 		paddingAndRoot       = 2
 	)
 	insertInEnv(&validSettings.TestRootSettings, unrelatedRootPadding, rootParams)
@@ -408,11 +341,7 @@ func TestEnvironment(t *testing.T) {
 	}
 
 	if !reflect.DeepEqual(validSettings, settings) {
-		t.Fatalf("settings field values do not match input values"+
-			"\n\twanted:"+
-			"\n\t%#v"+ // These long structs get their own lines.
-			"\n\tgot:"+
-			"\n\t%#v",
+		t.Fatalf("settings field values do not match input values\n\twanted:\n\t%#v\n\tgot:\n\t%#v",
 			validSettings, settings)
 	}
 	t.Run("cancel context", func(t *testing.T) {
@@ -570,49 +499,6 @@ func TestInvalidArguments(t *testing.T) {
 			}
 		})
 	}
-	t.Run("nil inputs", func(t *testing.T) {
-		args := make(chan *parameters.Argument, 1)
-		args <- (*parameters.Argument)(nil)
-		close(args)
-		if _, err := parameters.AccumulateArgs(ctx, args, nil); err == nil {
-			t.Error("expected an error but did not receive one - " +
-				"argument generator provided nil argument")
-		}
-	})
-
-	t.Run("multiple errors", func(t *testing.T) {
-		var (
-			te1  = errors.New("test 1")
-			te2  = errors.New("test 2")
-			errs = make(chan error, 2)
-		)
-		errs <- te1
-		errs <- te2
-		close(errs)
-		_, err := parameters.AccumulateArgs(ctx, nil, errs)
-		if err == nil {
-			t.Error("expected an error but did not receive one - " +
-				"errors were supplied in the input channel")
-		}
-
-		// XXX: This string is only for human readability in the event we get several errors.
-		// Don't mimic this pattern in non-test code.
-		for i, e := range []error{te1, te2} {
-			var passed bool
-			// Only the first error encountered will be wrapped.
-			if i == 0 {
-				passed = errors.Is(err, e)
-			} else {
-				passed = strings.Contains(err.Error(), e.Error())
-			}
-			if !passed {
-				t.Errorf("input error not found in output error"+
-					"\n\tlooking for: %v"+
-					"\n\thave: %v",
-					e, err)
-			}
-		}
-	})
 }
 
 // The cmds-lib supports a subset of types.
@@ -652,19 +538,6 @@ func (*testOptionsSettings) Parameters() parameters.Parameters {
 	return append(rootParams, pkgParams...)
 }
 
-type testOptionEmbedded struct {
-	NotEmbedded string `settings:"arguments"`
-	testEmbed          // This should expand its fields into options to match its parameters.
-	unrelated   bool
-}
-
-func (*testOptionEmbedded) Parameters() parameters.Parameters {
-	return append(
-		[]parameters.Parameter{simpleParam()},
-		(*testEmbed)(nil).Parameters()...,
-	)
-}
-
 func TestOptions(t *testing.T) {
 	for _, test := range []struct {
 		name         string
@@ -681,11 +554,6 @@ func TestOptions(t *testing.T) {
 			new(testOptionsSettings),
 			testOptionParamCount,
 		},
-		{
-			"embedded",
-			new(testOptionEmbedded),
-			len((*testOptionEmbedded)(nil).Parameters()),
-		},
 	} {
 		var (
 			testName      = test.name
@@ -699,7 +567,7 @@ func TestOptions(t *testing.T) {
 				for i, opt := range opts {
 					optStrings[i] = opt.Name()
 				}
-				t.Errorf("settings options do not match expected count"+
+				t.Fatalf("settings options do not match expected count"+
 					"\n\twanted: %d"+
 					"\n\tgot: {%d}[%s]",
 					expectedCount, optLen, strings.Join(optStrings, ", "),

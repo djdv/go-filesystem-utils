@@ -13,18 +13,19 @@ import (
 )
 
 type (
-	// Argument represents the pairing of a Parameter (the formal argument)
-	// with its concrete value (the actual argument).
-	//  // I.e `process --serverFlag="localhost"`
-	//  //                ↑Parameter  ↑Value -> *ValueRef <- &Settings.TypedValue == "localhost"
-	//  //  (abstract key-value like YAML, JSON, et al.)
-	//  //  `serverOption: localhost`
-	//  //   ↑Parameter    ↑Value -> *ValueRef <- &Settings.TypedValue == "localhost"
+	// FIXME: [Ame] docs outdated
+	// "actual argument"
 	Argument struct {
 		Parameter
-		// ValueReference is typically a pointer to a field within a `Settings` struct,
-		// but any abstract reference value is allowed.
+		// ValueReference abstractly refers to an argument's data.
+		// (Typically a pointer to a Settings field
+		// that will be assigned to)
 		ValueReference interface{}
+		// I.e `process --serverFlag="localhost"`
+		//                ↑Parameter ↑Value -> *ValueRef <- &Settings.TypedValue
+		// (abstract key-value like YAML, JSON, et al.)
+		// `serverOption: localhost`
+		//  ↑Parameter    ↑Value -> *ValueRef <- &Settings.TypedValue
 	}
 	ArgumentList <-chan *Argument
 )
@@ -214,7 +215,7 @@ out:
 	if len(errs) > 0 {
 		err = errs[0]
 		for _, e := range errs[1:] {
-			err = fmt.Errorf("%w; %s", err, e)
+			err = fmt.Errorf("%w\n%s", err, e)
 		}
 	}
 	return

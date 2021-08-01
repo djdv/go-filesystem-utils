@@ -3,6 +3,7 @@ package fscmds
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -11,17 +12,6 @@ import (
 	"github.com/adrg/xdg"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
-)
-
-const (
-	// ServiceName defines a default name which servers and clients may use
-	// to refer to the file system service in namespace oriented APIs.
-	// Effectively the service's API root.
-	ServiceName = "fs"
-	// ServerName defines a default name which servers and clients may use
-	// to form or find connections to named server instances.
-	// (E.g. a Unix socket of path `.../$ServiceName/$ServerName`.)
-	ServerName = "server"
 )
 
 var ErrServiceNotFound = errors.New("could not find service instance")
@@ -67,9 +57,9 @@ func servicePathsToServiceMaddrs(servicePaths ...string) ([]multiaddr.Multiaddr,
 	return serviceMaddrs, nil
 }
 
-// FindLocalServer searches a set of local addresses
-// and returns the first dialable maddr it finds.
-// Otherwise it returns `ErrServiceNotFound`.
+// FindLocalServer returns a local service socket's maddr,
+// if an active server instance is found. Otherwise it returns
+// `ErrServiceNotFound`.
 func FindLocalServer() (multiaddr.Multiaddr, error) {
 	userMaddrs, err := UserServiceMaddrs()
 	if err != nil {
@@ -79,30 +69,54 @@ func FindLocalServer() (multiaddr.Multiaddr, error) {
 	if err != nil {
 		return nil, err
 	}
+	localDefaults := append(userMaddrs, systemMaddrs...)
 
-	var (
-		localDefaults = append(userMaddrs, systemMaddrs...)
-		maddrStrings  = make([]string, len(localDefaults))
-	)
-	for i, serviceMaddr := range localDefaults {
-		if serverDialable(serviceMaddr) {
+	for _, serviceMaddr := range localDefaults {
+		if ClientDialable(serviceMaddr) {
 			return serviceMaddr, nil
 		}
+	}
+
+	// NOTE: We separate this loop out
+	// so that it only allocates+executes if no servers are found.
+	maddrStrings := make([]string, len(localDefaults))
+	for i, serviceMaddr := range localDefaults {
 		maddrStrings[i] = serviceMaddr.String()
 	}
 
-	return nil, fmt.Errorf("%w: tried %s",
-		ErrServiceNotFound, strings.Join(maddrStrings, ", "),
-	)
+	return nil, fmt.Errorf("%w: tried %s", ErrServiceNotFound, strings.Join(maddrStrings, ", "))
 }
 
-// serverDialable returns true if the multiaddr is dialable.
-// Signifying the target service at that address is ready for operation.
-func serverDialable(maddr multiaddr.Multiaddr) (connected bool) {
+// ClientDialable returns true if the multiaddr is dialable.
+// Usually signifying the target service is ready for operation.
+// Otherwise, it's down.
+func ClientDialable(maddr multiaddr.Multiaddr) (connected bool) {
+	socketPath, err := maddr.ValueForProtocol(multiaddr.P_UNIX)
+	if err == nil {
+		if runtime.GOOS == "windows" { // `/C:/path/...` -> `C:\path\...`
+			socketPath = filepath.FromSlash(strings.TrimPrefix(socketPath, `/`))
+		}
+		fi, err := os.Lstat(socketPath)
+		if err != nil {
+			return false
+		}
+
+		// TODO: link issue tracker number
+		// FIXME: [2021.04.30 / Go 1.16]
+		// Go does not set socket mode on Windows
+		// change this when resolved
+		if runtime.GOOS != "windows" {
+			return fi.Mode()&os.ModeSocket != 0
+		}
+		// HACK:
+		// for now, try dialing the socket
+		// but only when it exists, otherwise we'd create it
+		// and need to clean that up
+	}
 	conn, err := manet.Dial(maddr)
 	if err == nil && conn != nil {
 		if err = conn.Close(); err != nil {
-			return // Socket is faulty, not accepting.
+			return // socket is faulty, not accepting.
 		}
 		connected = true
 	}

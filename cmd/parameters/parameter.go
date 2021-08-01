@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"unicode"
 
 	"github.com/fatih/camelcase"
 )
@@ -53,36 +52,12 @@ func (params Parameters) String() string {
 	return strings.Join(parameterNames, ", ")
 }
 
-func omitRestricted(r rune) rune {
-	if unicode.IsSpace(r) ||
-		r == '=' {
-		return -1
-	}
-	return r
-}
-
-func filter(components ...string) []string {
-	filtered := make([]string, 0, len(components))
-	for _, component := range components {
-		component := strings.Map(omitRestricted, component)
-		if component != "" {
-			filtered = append(filtered, component)
-		}
-	}
-	return filtered
-}
-
 func (parameter parameter) Description() string { return parameter.description }
 func (parameter parameter) CommandLine() string {
 	return strings.ToLower(
 		strings.Join(
-			filter(
-				camelcase.Split(
-					parameter.name)...,
-			),
-			"-",
-		),
-	)
+			camelcase.Split(
+				parameter.name), "-"))
 }
 
 func (parameter parameter) Environment() string {
@@ -96,14 +71,13 @@ func (parameter parameter) Environment() string {
 		envComponents = make([]string, 0, len(paramComponents))
 	)
 	for _, component := range paramComponents {
-		if component == "" {
+		if component != "" {
 			// NOTE: Top-level commands are likely to have a blank namespace.
-			// We omit these in the ENV_VAR_FORMAT_USED_HERE.
-			continue
+			// We omit any blanks in the ENV_VAR_FORMAT_USED_HERE.
+			envComponents = append(envComponents, component)
 		}
-		envComponents = append(envComponents, component)
 	}
-	envComponents = filter(envComponents...)
+
 	return strings.ToUpper(strings.Join(envComponents, "_"))
 }
 
