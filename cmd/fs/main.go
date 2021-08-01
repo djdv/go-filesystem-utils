@@ -11,6 +11,9 @@ import (
 	"github.com/djdv/go-filesystem-utils/cmd/service"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
+
+	// TODO: migrate
+	oldfscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
 )
 
 func main() {
@@ -23,6 +26,9 @@ func main() {
 			},
 			Subcommands: map[string]*cmds.Command{
 				service.Name: service.Command,
+				"mount":      oldfscmds.Mount, // TODO: migrate
+				"unmount":    oldfscmds.Unmount,
+				"list":       oldfscmds.List,
 			},
 		}
 		// cmdline[0] is used literally in helptext generation.
@@ -33,7 +39,7 @@ func main() {
 		)
 		err = cli.Run(ctx, root, cmdline,
 			os.Stdin, os.Stdout, os.Stderr,
-			service.MakeEnvironment, service.MakeExecutor,
+			oldfscmds.MakeFileSystemEnvironment, service.MakeExecutor,
 		)
 	)
 	if err != nil {

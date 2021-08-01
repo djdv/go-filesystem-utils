@@ -9,10 +9,15 @@ import (
 	"os"
 	"time"
 
+	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+
+	"github.com/djdv/go-filesystem-utils/cmd/parameters"
+	"github.com/djdv/go-filesystem-utils/filesystem/manager"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	cmdshttp "github.com/ipfs/go-ipfs-cmds/http"
+	config "github.com/ipfs/go-ipfs-config"
 	httpapi "github.com/ipfs/go-ipfs-http-client"
-	"github.com/ipfs/go-ipfs/filesystem/manager"
+	"github.com/ipfs/go-ipfs/repo/fsrepo"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 	"github.com/multiformats/go-multiaddr"
 	madns "github.com/multiformats/go-multiaddr-dns"
@@ -36,7 +41,7 @@ type (
 		SystemService() (cmds.Executor, error)
 
 		// typically used by the cmds run methods
-		ServiceMaddr() multiaddr.Multiaddr
+		//ServiceMaddr() multiaddr.Multiaddr
 		IPFS(*cmds.Request) (coreiface.CoreAPI, error)
 	}
 	filesystemEnvironment struct {
@@ -58,57 +63,34 @@ func MakeFileSystemEnvironment(ctx context.Context, request *cmds.Request) (env 
 			instanceIndex: newIndex(),
 			Context:       ctx,
 		}
-		serviceMaddr multiaddr.Multiaddr
 	)
-	if serviceMaddr, err = multiaddrOption(request, rootServiceOptionKwd); err != nil {
+
+	var (
+		rctx            = request.Context
+		settings        = new(settings)
+		unsetArgs, errs = parameters.ParseSettings(rctx, settings,
+			parameters.SettingsFromCmds(request),
+			parameters.SettingsFromEnvironment(),
+		)
+	)
+	if _, err = parameters.AccumulateArgs(ctx, unsetArgs, errs); err != nil {
 		return
 	}
 
-	var ( // request conditions
-		isLocalCommand   = !request.Command.NoLocal || request.Command.NoRemote
-		addrWasProvided  = serviceMaddr != nil
-		tryLaunchService = !isLocalCommand && !addrWasProvided
-	)
-	if !addrWasProvided {
-		if serviceMaddr, err = localServiceMaddr(); err != nil {
-			return
-		}
-	} else { // resolve the address contained in the request
-		if serviceMaddr, err = resolveAddr(request.Context, serviceMaddr); err != nil {
-			return
-		}
+	// HACK: needs proper something something
+	if len(settings.ServiceMaddrs) == 0 {
+		settings.ServiceMaddrs, _ = fscmds.UserServiceMaddrs()
 	}
 
-	// TODO: check for environment variable ?
-	// ${FS_API} ???
+	// resolve the address contained in the request
+	serviceMaddr := settings.ServiceMaddrs[0] // TODO [port]: this became a vector.
+	if serviceMaddr, err = resolveAddr(request.Context, serviceMaddr); err != nil {
+		return
+	}
 
 	fsEnv.serviceMaddr = serviceMaddr
-
-	if tryLaunchService {
-		// try connecting
-		if _, err = getServiceClient(serviceMaddr); err != nil {
-			// not okay; try to launch service
-			_, err = relaunchSelfAsService(request, serviceMaddr)
-		}
-	}
-	if err == nil {
-		env = fsEnv
-	}
+	env = fsEnv
 	return
-}
-
-func MakeFileSystemExecutor(request *cmds.Request, env interface{}) (cmds.Executor, error) {
-	fsEnv, envIsUsable := env.(FileSystemEnvironment)
-	if !envIsUsable {
-		return nil, envError(env)
-	}
-
-	// execute the request locally if we can
-	if !request.Command.NoLocal || request.Command.NoRemote {
-		return cmds.NewExecutor(request.Root), nil
-	}
-	// everything else connects to a cmds server as a client
-	return fsEnv.SystemService()
 }
 
 // getServiceClient will test the connection before returning the client
@@ -184,6 +166,52 @@ func (fe *filesystemEnvironment) IPFS(request *cmds.Request) (coreiface.CoreAPI,
 		return nil, err
 	}
 	return httpapi.NewApi(apiAddr)
+}
+
+type settings struct {
+	fscmds.Settings
+	IPFS multiaddr.Multiaddr `settings:"arguments"`
+}
+
+func (*settings) Parameters() parameters.Parameters {
+	root := fscmds.Parameters()
+	hack := []parameters.Parameter{
+		parameters.NewParameter("IPFS maddr",
+			parameters.WithNamespace("mount"),
+			parameters.WithName("ipfs"),
+		),
+	}
+	return append(root, hack...)
+}
+
+func getIPFSAPIAddr(request *cmds.Request) (multiaddr.Multiaddr, error) {
+	// TODO: port wart - migrate properly to new params lib
+	// and probably move this logic into mount cmd anyway.
+	var (
+		ctx             = request.Context
+		settings        = new(settings)
+		unsetArgs, errs = parameters.ParseSettings(ctx, settings,
+			parameters.SettingsFromCmds(request),
+			parameters.SettingsFromEnvironment(),
+		)
+		_, err = parameters.AccumulateArgs(ctx, unsetArgs, errs)
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// (precedence 0) parameters
+	apiAddr := settings.IPFS
+	if apiAddr != nil {
+		return apiAddr, nil
+	}
+
+	// (precedence 1) (maybe) IPFS config file
+	confRoot, err := config.PathRoot()
+	if err == nil {
+		apiAddr, err = fsrepo.APIAddr(confRoot)
+	}
+	return apiAddr, err
 }
 
 func (fe *filesystemEnvironment) Index(request *cmds.Request) (manager.Index, error) {

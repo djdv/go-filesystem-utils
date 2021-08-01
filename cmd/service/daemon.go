@@ -14,6 +14,9 @@ import (
 	"github.com/kardianos/service"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
+
+	// TODO: migrate
+	oldfscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
 )
 
 type (
@@ -119,6 +122,11 @@ func (daemon *serviceDaemon) Start(s service.Service) error {
 			Options: fscmds.RootOptions(),
 			Helptext: cmds.HelpText{
 				Tagline: "File system service client.",
+			},
+			Subcommands: map[string]*cmds.Command{
+				"mount":   oldfscmds.Mount,
+				"unmount": oldfscmds.Unmount,
+				"list":    oldfscmds.List,
 			},
 		}
 		serviceContext, serviceCancel = context.WithCancel(daemon.Context)

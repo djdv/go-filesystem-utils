@@ -1,13 +1,14 @@
 package fscmds
 
 import (
-	"errors"
+	goerrors "errors"
 	"fmt"
 	"strings"
 
+	"github.com/djdv/go-filesystem-utils/cmd/parameters"
+	"github.com/djdv/go-filesystem-utils/filesystem"
+	"github.com/djdv/go-filesystem-utils/filesystem/manager"
 	cmds "github.com/ipfs/go-ipfs-cmds"
-	"github.com/ipfs/go-ipfs/filesystem"
-	"github.com/ipfs/go-ipfs/filesystem/manager"
 )
 
 const (
@@ -30,8 +31,9 @@ var Mount = &cmds.Command{
 		// this would allow passing IPFS mtab references as well
 		// e.g. `ipfs mount /ipfs/Qm.../my-mount-table.json`
 	},
-	PreRun: mountPreRun,
-	Run:    mountRun,
+	Options: parameters.CmdsOptionsFrom((*settings)(nil)),
+	PreRun:  mountPreRun,
+	Run:     mountRun,
 	PostRun: cmds.PostRunMap{
 		cmds.CLI: formatMount,
 	},
@@ -128,7 +130,7 @@ func registerMountSubcommands(parent *cmds.Command) {
 
 func mountPreRun(request *cmds.Request, env cmds.Environment) (err error) {
 	if len(request.Arguments) == 0 {
-		return errors.New("no arguments provided - portable defaults not implemented yet")
+		return goerrors.New("no arguments provided - portable defaults not implemented yet")
 		/* TODO: update defaults - don't depend on go-ipfs config file
 		FIXME: if the argument is just a header,
 		the dispatcher will send nil request(s) to that header's binder
