@@ -61,6 +61,9 @@ func MakeExecutor(request *cmds.Request, environment interface{}) (cmds.Executor
 		// If none of these are available,
 		// we'll try to launch and instance ourselves.
 		tryLaunching = true
+		if settings.AutoExit == 0 { // Don't linger around forever.
+			settings.AutoExit = 30 * time.Second
+		}
 	}
 
 	var (
@@ -168,7 +171,8 @@ func relaunchSelfAsService(exitAfter time.Duration,
 	// Communicate with subprocess.
 	err = waitForService(servicePipe, startGrace)
 	if err != nil {
-		if !procState.Exited() {
+		if procState != nil &&
+			!procState.Exited() {
 			// Subprocess is still running after a fault.
 			// Implementation fault in service command is implied.
 			kErr := proc.Kill() // Vae puer meus victis est.
