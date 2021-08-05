@@ -9,6 +9,7 @@ import (
 	"time"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	"github.com/djdv/go-filesystem-utils/cmd/ipc"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	cmdshttp "github.com/ipfs/go-ipfs-cmds/http"
 	"github.com/kardianos/service"
@@ -106,7 +107,7 @@ func (daemon *serviceDaemon) Start(s service.Service) error {
 		logger.Errorf("Start requested but %s", err)
 		return err
 	}
-	logger.Info(stdHeader)
+	logger.Info(ipc.StdHeader)
 
 	listeners, serviceCleanup, err := getServiceListeners(daemon.ServiceMaddrs...)
 	if err != nil {
@@ -184,7 +185,7 @@ func (daemon *serviceDaemon) Start(s service.Service) error {
 					}
 				}()
 
-				logger.Info(stdGoodStatus, listener.Multiaddr())
+				logger.Info(ipc.StdGoodStatus, listener.Multiaddr())
 			}
 		}
 	)
@@ -216,7 +217,7 @@ func (daemon *serviceDaemon) Start(s service.Service) error {
 		defer logger.Info("Send interrupt to stop")
 	}
 
-	return logger.Info(stdReady)
+	return logger.Info(ipc.StdReady)
 }
 
 // TODO: placeholder - move to _platform.go e.g. _systemd.go
@@ -267,6 +268,7 @@ func acceptCmdsHTTP(ctx context.Context,
 		httpServerErrs = make(chan error, 1)
 	)
 	go func() {
+		const stopGrace = 30 * time.Second
 		defer close(httpServerErrs)
 		serveErr := make(chan error, 1)
 		// The actual listen and serve / accept loop.

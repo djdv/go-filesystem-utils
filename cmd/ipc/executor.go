@@ -1,4 +1,4 @@
-package service
+package ipc
 
 import (
 	"bufio"
@@ -20,6 +20,14 @@ import (
 	manet "github.com/multiformats/go-multiaddr/net"
 )
 
+// MakeExecutor constructs a cmds-lib executor; which parses the Request and
+// determines whether to execute the Command within the same local process,
+// or within a remote service instance's process.
+//
+// If no remote addresses are provided in the request,
+// and no default instances respond to our checks -
+// a local service instance will be created automatically,
+// and used to satisfy the request.
 func MakeExecutor(request *cmds.Request, environment interface{}) (cmds.Executor, error) {
 	// Execute the request locally if we can.
 	if request.Command.NoRemote ||
@@ -146,14 +154,14 @@ func relaunchSelfAsService(exitAfter time.Duration,
 		return nil, err
 	}
 
-	cmd := exec.Command(self, Name)
+	cmd := exec.Command(self, ServiceCommandName)
+	cmd.Dir = cwd
+	cmd.Env = os.Environ()
 	if exitAfter != 0 {
 		cmd.Args = append(cmd.Args,
 			fmt.Sprintf("--%s=%s", fscmds.AutoExitInterval().CommandLine(), exitAfter),
 		)
 	}
-	cmd.Dir = cwd
-	cmd.Env = os.Environ()
 
 	// Setup IPC
 	servicePipe, err := cmd.StderrPipe()
@@ -165,12 +173,14 @@ func relaunchSelfAsService(exitAfter time.Duration,
 	if err = cmd.Start(); err != nil {
 		return nil, err
 	}
-	proc := cmd.Process
-	procState := cmd.ProcessState
 
 	// Communicate with subprocess.
-	err = waitForService(servicePipe, startGrace)
-	if err != nil {
+	const startGrace = 10 * time.Second
+	var (
+		proc      = cmd.Process
+		procState = cmd.ProcessState
+	)
+	if err := waitForService(servicePipe, startGrace); err != nil {
 		if procState != nil &&
 			!procState.Exited() {
 			// Subprocess is still running after a fault.
@@ -187,7 +197,7 @@ func relaunchSelfAsService(exitAfter time.Duration,
 	// Process passed our checks,
 	// release it and proceed ourselves.
 	releasedPid := proc.Pid
-	if err = proc.Release(); err != nil {
+	if err := proc.Release(); err != nil {
 		return nil, err
 	}
 
@@ -207,7 +217,7 @@ func waitForService(input io.Reader, timeout time.Duration) error {
 		serviceScanner.Scan()
 		{
 			text := serviceScanner.Text()
-			if !strings.Contains(text, stdHeader) {
+			if !strings.Contains(text, StdHeader) {
 				scannerErr <- fmt.Errorf("unexpected process output: %s", text)
 				return
 			}
@@ -216,7 +226,7 @@ func waitForService(input io.Reader, timeout time.Duration) error {
 		var text string
 		for serviceScanner.Scan() {
 			text = serviceScanner.Text()
-			if strings.Contains(text, stdReady) {
+			if strings.Contains(text, StdReady) {
 				return
 			}
 		}

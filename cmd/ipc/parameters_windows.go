@@ -1,4 +1,4 @@
-package service
+package ipc
 
 import "github.com/djdv/go-filesystem-utils/cmd/parameters"
 
