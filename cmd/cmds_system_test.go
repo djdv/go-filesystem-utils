@@ -14,8 +14,8 @@ import (
 	"time"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	"github.com/djdv/go-filesystem-utils/cmd/ipc"
 	"github.com/djdv/go-filesystem-utils/cmd/service"
-	"github.com/djdv/go-filesystem-utils/cmd/service/status"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
 	hostservice "github.com/kardianos/service"
@@ -36,7 +36,7 @@ func TestMain(m *testing.M) {
 			ctx = context.Background()
 			err = cli.Run(ctx, testRoot, os.Args,
 				os.Stdin, os.Stdout, os.Stderr,
-				service.MakeEnvironment, service.MakeExecutor)
+				ipc.MakeEnvironment, ipc.MakeExecutor)
 		)
 		if err != nil {
 			cliError := new(cli.ExitError)
@@ -72,7 +72,7 @@ func issueControlRequest(controlAction string, printErr bool) error {
 
 	return cli.Run(ctx, testRoot, cmdline,
 		discard, discard, stderr,
-		service.MakeEnvironment, service.MakeExecutor)
+		ipc.MakeEnvironment, ipc.MakeExecutor)
 }
 
 func TestServiceControl(t *testing.T) {
@@ -150,7 +150,7 @@ func TestServiceStatus(t *testing.T) {
 			t.Fatal(err)
 		}
 		var (
-			svcErr        = serviceStatus.ControllerError
+			svcErr        = serviceStatus.SystemController.Error
 			expectedError = hostservice.ErrNotInstalled
 		)
 		if svcErr == nil ||
@@ -204,9 +204,9 @@ func TestServiceStatus(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if serviceStatus.ControllerStatus != expectedStatus {
+				if serviceStatus.SystemController.Status != expectedStatus {
 					t.Errorf("service state is not what we expected\n\twanted: %v\n\tgot: %v",
-						statusString(expectedStatus), statusString(serviceStatus.ControllerStatus))
+						statusString(expectedStatus), statusString(serviceStatus.SystemController.Status))
 				}
 			})
 		}
@@ -220,7 +220,7 @@ func TestServiceStatus(t *testing.T) {
 	})
 }
 
-func issueStatusRequest() (*status.Status, error) {
+func issueStatusRequest() (*ipc.ServiceStatus, error) {
 	ctx := context.Background()
 	statusRequest, err := cmds.NewRequest(ctx, []string{service.Name, "status"},
 		nil, nil, nil, testRoot)
@@ -228,11 +228,11 @@ func issueStatusRequest() (*status.Status, error) {
 		return nil, err
 	}
 
-	environment, err := service.MakeEnvironment(ctx, statusRequest)
+	environment, err := ipc.MakeEnvironment(ctx, statusRequest)
 	if err != nil {
 		return nil, err
 	}
-	executor, err := service.MakeExecutor(statusRequest, environment)
+	executor, err := ipc.MakeExecutor(statusRequest, environment)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +260,7 @@ func issueStatusRequest() (*status.Status, error) {
 		return nil, err
 	}
 
-	serviceStatus, ok := v.(*status.Status)
+	serviceStatus, ok := v.(*ipc.ServiceStatus)
 	if !ok {
 		return nil, fmt.Errorf("status value is wrong type\n\texpected:%T\n\tgot:%T %v",
 			serviceStatus, v, v)
@@ -297,7 +297,7 @@ func waitForUninstall(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Logf("serviceStatus: %v", serviceStatus)
-			if svcErr := serviceStatus.ControllerError; svcErr != nil &&
+			if svcErr := serviceStatus.SystemController.Error; svcErr != nil &&
 				errors.Is(svcErr, hostservice.ErrNotInstalled) {
 				return
 			}
@@ -350,7 +350,7 @@ func TestServiceFormat(t *testing.T) {
 					// and coverage for panics and hangs in the format code.
 					lastErr = cli.Run(ctx, testRoot, cmdline,
 						discard, discard, discard,
-						service.MakeEnvironment, service.MakeExecutor)
+						ipc.MakeEnvironment, ipc.MakeExecutor)
 				})
 			}
 		})

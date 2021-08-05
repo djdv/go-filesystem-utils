@@ -6,34 +6,21 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strings"
-	"time"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	"github.com/djdv/go-filesystem-utils/cmd/ipc"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
+	"github.com/djdv/go-filesystem-utils/cmd/service/control"
+	"github.com/djdv/go-filesystem-utils/cmd/service/status"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
 )
 
-const (
-	Name        = "service"
-	description = "Manages active file system requests and instances."
-
-	serviceDisplayName = "File System Daemon"
-	serviceName        = "FileSystemDaemon"
-	startGrace         = 10 * time.Second
-	stopGrace          = 30 * time.Second
-
-	// NOTE: Used by the executor.
-	// To synchronize with a service subprocess that outputs to StdErr.
-	stdHeader     = serviceDisplayName + " starting..."
-	stdGoodStatus = "Listening on: "
-	stdReady      = serviceDisplayName + " started"
-)
+const Name = ipc.ServiceCommandName
 
 var Command = &cmds.Command{
 	NoRemote: true,
@@ -41,9 +28,20 @@ var Command = &cmds.Command{
 	Options:  parameters.CmdsOptionsFrom((*Settings)(nil)),
 	Encoders: cmds.Encoders,
 	Helptext: cmds.HelpText{
-		Tagline: description,
+		Tagline: ipc.ServiceDescription,
 	},
-	Subcommands: generateServiceSubcommands(),
+	Subcommands: func() map[string]*cmds.Command {
+		var (
+			actions     = service.ControlAction[:]
+			controls    = control.GenerateCommands(actions...)
+			subcommands = make(map[string]*cmds.Command, len(controls)+1)
+		)
+		subcommands[status.Name] = status.Command
+		for i, action := range actions {
+			subcommands[action] = controls[i]
+		}
+		return subcommands
+	}(),
 }
 
 func fileSystemServiceRun(request *cmds.Request, _ cmds.ResponseEmitter, env cmds.Environment) error {
@@ -54,68 +52,22 @@ func fileSystemServiceRun(request *cmds.Request, _ cmds.ResponseEmitter, env cmd
 			parameters.SettingsFromCmds(request),
 			parameters.SettingsFromEnvironment(),
 		)
-		_, err = parameters.AccumulateArgs(ctx, unsetArgs, errs)
 	)
+	if _, err := parameters.AccumulateArgs(ctx, unsetArgs, errs); err != nil {
+		return err
+	}
+	fsEnv, err := ipc.CastEnvironment(env)
 	if err != nil {
 		return err
 	}
-
-	serviceConfig := &service.Config{
-		Name:        serviceName,
-		DisplayName: serviceDisplayName,
-		Description: description,
-		UserName:    settings.Username,
-		Option:      serviceKeyValueFrom(&settings.PlatformSettings),
-		Arguments:   serviceArgs(settings),
+	serviceConfig, err := fsEnv.ServiceConfig(request)
+	if err != nil {
+		return err
 	}
 
 	serviceDaemon := newDaemon(ctx, &settings.Settings, env)
 
 	return runService(request.Context, serviceConfig, serviceDaemon)
-}
-
-func serviceArgs(settings *Settings) (serviceArgs []string) {
-	serviceArgs = []string{Name}
-	if len(settings.ServiceMaddrs) > 0 {
-		// Copy service-relevant arguments from our process,
-		// into the service config. The service manager will
-		// use these when starting its own process.
-		apiParam := fscmds.ServiceMaddrs().CommandLine()
-		for _, arg := range os.Args {
-			if strings.HasPrefix(
-				strings.TrimLeft(arg, "-"),
-				apiParam,
-			) {
-				serviceArgs = append(serviceArgs, arg)
-			}
-		}
-	}
-	if settings.AutoExitInterval != 0 {
-		exitParam := fscmds.AutoExitInterval().CommandLine()
-		for _, arg := range os.Args {
-			if strings.HasPrefix(arg, exitParam) {
-				serviceArgs = append(serviceArgs, arg)
-			}
-		}
-	}
-	return serviceArgs
-}
-
-// NOTE: Field names and data types in the setting's struct declaration
-// must match the map key names defined in the `service.KeyValue` pkg documentation.
-func serviceKeyValueFrom(platformSettings *PlatformSettings) service.KeyValue {
-	var (
-		settingsValue   = reflect.ValueOf(platformSettings).Elem()
-		settingsType    = settingsValue.Type()
-		settingsCount   = settingsType.NumField()
-		serviceSettings = make(service.KeyValue, settingsCount)
-	)
-	for i := 0; i != settingsCount; i++ {
-		structField := settingsType.Field(i) // The field itself (for its name).
-		fieldValue := settingsValue.Field(i) // The value it holds (not its type name).
-		serviceSettings[structField.Name] = fieldValue.Interface()
-	}
-	return serviceSettings
 }
 
 func runService(ctx context.Context, config *service.Config, daemon *serviceDaemon) error {

@@ -8,88 +8,105 @@ import (
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
+	"github.com/djdv/go-filesystem-utils/cmd/ipc"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
 	"github.com/multiformats/go-multiaddr"
 )
 
-// ServiceClientFunc should parses service options in the request,
-// and return a service interface which accepts status requests.
-type ServiceClientFunc func(request *cmds.Request) (service.Service, error)
+// controller implements a `Service`,
+// that can (only) query the service's status
+// and issue control requests;
+// it is not runnable.
+type controller struct{}
 
-// GenerateCommands generates a cmd which
-// uses the service controller from getClient
-// to query the daemon and service status.
-func GenerateCommand(getClient ServiceClientFunc) *cmds.Command {
-	return &cmds.Command{
-		Helptext: cmds.HelpText{
-			Tagline: "Retrieve the current service status.",
-		},
-		NoRemote: true,
-		Encoders: cmds.Encoders,
-		Type:     Status{},
-		Run: func(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
-			serviceClient, err := getClient(request)
+var errControlOnly = errors.New("tried to run service client, not service itself")
+
+func (*controller) Start(service.Service) error { return errControlOnly }
+func (*controller) Stop(service.Service) error  { return errControlOnly }
+
+const Name = "status"
+
+// Status queries the status of the service daemon
+// and the operating system's own service manager.
+var Command = &cmds.Command{
+	Helptext: cmds.HelpText{
+		Tagline: "Retrieve the current service status.",
+	},
+	NoRemote: true,
+	Encoders: cmds.Encoders,
+	Type:     ipc.ServiceStatus{},
+	Run: func(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
+		var (
+			ctx             = request.Context
+			settings        = new(fscmds.Settings)
+			unsetArgs, errs = parameters.ParseSettings(ctx, settings,
+				parameters.SettingsFromCmds(request),
+				parameters.SettingsFromEnvironment(),
+			)
+			statusResponse ipc.ServiceStatus
+		)
+		if _, err := parameters.AccumulateArgs(ctx, unsetArgs, errs); err != nil {
+			return err
+		}
+
+		// Query the host system service manager.
+		fsEnv, err := ipc.CastEnvironment(env)
+		if err != nil {
+			return err
+		}
+		serviceConfig, err := fsEnv.ServiceConfig(request)
+		if err != nil {
+			return err
+		}
+		serviceClient, err := service.New((*controller)(nil), serviceConfig)
+		if err != nil {
+			return err
+		}
+
+		{
+			controllerStatus, svcErr := serviceClient.Status()
+			statusResponse.SystemController = ipc.SystemController{
+				Status: controllerStatus,
+				Error:  svcErr,
+			}
+		}
+
+		// Query host system service servers.
+		serviceMaddrs := settings.ServiceMaddrs
+		if len(serviceMaddrs) == 0 {
+			userMaddrs, err := fscmds.UserServiceMaddrs()
 			if err != nil {
 				return err
 			}
-
-			var (
-				ctx             = request.Context
-				settings        = new(fscmds.Settings)
-				unsetArgs, errs = parameters.ParseSettings(ctx, settings,
-					parameters.SettingsFromCmds(request),
-					parameters.SettingsFromEnvironment(),
-				)
-
-				statusResponse Status
-			)
-			if _, err := parameters.AccumulateArgs(ctx, unsetArgs, errs); err != nil {
+			systemMaddrs, err := fscmds.SystemServiceMaddrs()
+			if err != nil {
 				return err
 			}
+			serviceMaddrs = append(userMaddrs, systemMaddrs...)
+		}
 
-			if controllerStatus, svcErr := serviceClient.Status(); svcErr != nil {
-				statusResponse.ControllerError = svcErr
-			} else {
-				statusResponse.ControllerStatus = controllerStatus
+		listeners := make([]multiaddr.Multiaddr, 0, len(serviceMaddrs))
+		for _, serviceMaddr := range serviceMaddrs {
+			if fscmds.ServerDialable(serviceMaddr) {
+				listeners = append(
+					listeners,
+					serviceMaddr,
+				)
 			}
+		}
+		if len(listeners) != 0 {
+			// NOTE: This only matters because we're encoding and emitting this struct.
+			// There's no point in processing an empty list versus nil.
+			statusResponse.Listeners = listeners
+		}
 
-			serviceMaddrs := settings.ServiceMaddrs
-			if len(serviceMaddrs) == 0 {
-				userMaddrs, err := fscmds.UserServiceMaddrs()
-				if err != nil {
-					return err
-				}
-				systemMaddrs, err := fscmds.SystemServiceMaddrs()
-				if err != nil {
-					return err
-				}
-				serviceMaddrs = append(userMaddrs, systemMaddrs...)
-			}
-
-			for _, serviceMaddr := range serviceMaddrs {
-				if fscmds.ServerDialable(serviceMaddr) {
-					statusResponse.DaemonListeners = append(
-						statusResponse.DaemonListeners,
-						serviceMaddr,
-					)
-				}
-			}
-
-			return emitter.Emit(&statusResponse)
-		},
-		PostRun: cmds.PostRunMap{
-			cmds.CLI: formatStatus,
-		},
-	}
-}
-
-// TODO: Text encoder.
-type Status struct {
-	DaemonListeners  []multiaddr.Multiaddr
-	ControllerStatus service.Status
-	ControllerError  error
+		return emitter.Emit(&statusResponse)
+	},
+	PostRun: cmds.PostRunMap{
+		cmds.CLI: formatStatus,
+	},
 }
 
 func statusString(stat service.Status) string {
@@ -113,7 +130,7 @@ func formatStatus(response cmds.Response, emitter cmds.ResponseEmitter) error {
 			return err
 		}
 
-		responseValue, ok := untypedResponse.(*Status)
+		responseValue, ok := untypedResponse.(*ipc.ServiceStatus)
 		if !ok {
 			return cmds.Errorf(cmds.ErrImplementation,
 				"emitter sent unexpected type+value: %#v", untypedResponse)
@@ -123,14 +140,17 @@ func formatStatus(response cmds.Response, emitter cmds.ResponseEmitter) error {
 			return err
 		}
 
-		var daemonStatus string
-		if responseValue.DaemonListeners == nil {
+		var (
+			daemonStatus    string
+			daemonListeners = responseValue.Listeners
+		)
+		if len(daemonListeners) == 0 {
 			daemonStatus = "Daemon: Not running.\n"
 		} else {
 			// TODO: tabularize instead
 			var sb strings.Builder
 			sb.WriteString("Daemon listening on:")
-			for _, listenerMaddr := range responseValue.DaemonListeners {
+			for _, listenerMaddr := range daemonListeners {
 				sb.WriteString("\n\t" + listenerMaddr.String())
 			}
 			sb.WriteString("\n")
@@ -141,7 +161,7 @@ func formatStatus(response cmds.Response, emitter cmds.ResponseEmitter) error {
 		}
 
 		var (
-			svcErr              = responseValue.ControllerError
+			svcErr              = responseValue.SystemController.Error
 			serviceNotInstalled = svcErr != nil &&
 				errors.Is(svcErr, service.ErrNotInstalled)
 		)
@@ -161,7 +181,7 @@ func formatStatus(response cmds.Response, emitter cmds.ResponseEmitter) error {
 		if serviceNotInstalled {
 			serviceStatus = "Not Installed.\n"
 		} else {
-			serviceStatus = statusString(responseValue.ControllerStatus) + ".\n"
+			serviceStatus = statusString(responseValue.SystemController.Status) + ".\n"
 		}
 
 		if err := outputs.Print(serviceStatus); err != nil {

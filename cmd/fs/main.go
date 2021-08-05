@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	"github.com/djdv/go-filesystem-utils/cmd/ipc"
 	"github.com/djdv/go-filesystem-utils/cmd/service"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
@@ -33,8 +34,8 @@ func main() {
 		)
 		err = cli.Run(ctx, root, cmdline,
 			os.Stdin, os.Stdout, os.Stderr,
-			service.MakeEnvironment, service.MakeExecutor,
-			)
+			ipc.MakeEnvironment, ipc.MakeExecutor,
+		)
 	)
 	if err != nil {
 		cliError := new(cli.ExitError)

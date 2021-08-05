@@ -9,29 +9,29 @@ import (
 	"time"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	"github.com/djdv/go-filesystem-utils/cmd/ipc"
 	"github.com/djdv/go-filesystem-utils/cmd/service"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
-var testRoot = &cmds.Command{
-	Options: fscmds.RootOptions(),
-	Subcommands: map[string]*cmds.Command{
-		service.Name: service.Command,
-	},
-}
-
 func TestServiceRun(t *testing.T) {
+	root := &cmds.Command{
+		Options: fscmds.RootOptions(),
+		Subcommands: map[string]*cmds.Command{
+			service.Name: service.Command,
+		},
+	}
 	callServiceMethod := func(ctx context.Context, optMap cmds.OptMap) (<-chan error, context.CancelFunc, error) {
 		request, err := cmds.NewRequest(ctx, []string{service.Name},
-			optMap, nil, nil, testRoot)
+			optMap, nil, nil, root)
 		if err != nil {
 			return nil, nil, err
 		}
-		environment, err := service.MakeEnvironment(ctx, request)
+		environment, err := ipc.MakeEnvironment(ctx, request)
 		if err != nil {
 			return nil, nil, err
 		}
-		executor, err := service.MakeExecutor(request, environment)
+		executor, err := ipc.MakeExecutor(request, environment)
 		if err != nil {
 			return nil, nil, err
 		}
