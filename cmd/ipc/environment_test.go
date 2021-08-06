@@ -27,4 +27,8 @@ func TestEnvironment(t *testing.T) {
 	if _, err := ipc.CastEnvironment(env); err != nil {
 		t.Fatal(err)
 	}
+
+	if _, err := ipc.CastEnvironment(nil); err == nil {
+		t.Fatal("expected to error but did not - nil environment provided")
+	}
 }
