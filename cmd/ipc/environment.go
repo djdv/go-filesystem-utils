@@ -12,14 +12,10 @@ import (
 type (
 	Environment interface {
 		ServiceConfig(*cmds.Request) (*service.Config, error)
-		//SystemService(config service.Config) (service.Service, error)
 	}
 
 	daemonEnvironment struct {
 		context.Context
-		// Used in conjunture with
-		// the operating system's service manager.
-		// HostServiceConfig *service.Config
 	}
 )
 

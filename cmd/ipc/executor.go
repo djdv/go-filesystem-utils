@@ -50,12 +50,12 @@ func MakeExecutor(request *cmds.Request, environment interface{}) (cmds.Executor
 	}
 
 	var (
-		serviceMaddrs             = settings.ServiceMaddrs
-		foundServer, tryLaunching bool
+		serviceMaddrs = settings.ServiceMaddrs
+		tryLaunching  bool
 	)
 	if len(serviceMaddrs) == 0 {
 		// When service maddrs aren't provided,
-		// check a default set.
+		// provide+check a default set.
 		userMaddrs, err := fscmds.UserServiceMaddrs()
 		if err != nil {
 			return nil, err
@@ -64,19 +64,17 @@ func MakeExecutor(request *cmds.Request, environment interface{}) (cmds.Executor
 		if err != nil {
 			return nil, err
 		}
-		serviceMaddrs = append(userMaddrs, systemMaddrs...)
 
 		// If none of these are available,
-		// we'll try to launch and instance ourselves.
+		// we'll try to launch an instance ourselves.
+		serviceMaddrs = append(userMaddrs, systemMaddrs...)
 		tryLaunching = true
-		if settings.AutoExitInterval == 0 { // Don't linger around forever.
-			settings.AutoExitInterval = 30 * time.Second
-		}
 	}
 
 	var (
-		clientHost string
-		clientOpts []cmdshttp.ClientOpt
+		clientHost  string
+		clientOpts  []cmdshttp.ClientOpt
+		foundServer bool
 	)
 	for _, serviceMaddr := range serviceMaddrs {
 		if !fscmds.ServerDialable(serviceMaddr) {
@@ -91,11 +89,18 @@ func MakeExecutor(request *cmds.Request, environment interface{}) (cmds.Executor
 	}
 
 	if !foundServer && tryLaunching {
-		// The first in this list should be most specific to the user.
-		// And thus most likely to succeed.
-		// We don't want to try all of them.
-		localMaddr := serviceMaddrs[0]
-		pid, err := relaunchSelfAsService(settings.AutoExitInterval, localMaddr)
+		var (
+			// The first element in this list
+			// should be most specific to the user.
+			// And thus most likely to succeed.
+			// We don't want to try all of them.
+			localMaddr       = serviceMaddrs[0]
+			autoExitInterval = settings.AutoExitInterval
+		)
+		if autoExitInterval == 0 { // Don't linger around forever.
+			autoExitInterval = 30 * time.Second
+		}
+		pid, err := relaunchSelfAsService(autoExitInterval, localMaddr)
 		if err != nil {
 			return nil, err
 		}
@@ -141,10 +146,9 @@ func parseCmdsClientOptions(maddr multiaddr.Multiaddr) (clientHost string, clien
 	return clientHost, clientOpts, nil
 }
 
-func relaunchSelfAsService(exitAfter time.Duration,
+func relaunchSelfAsService(exitInterval time.Duration,
 	serviceMaddrs ...multiaddr.Multiaddr) (*int, error) {
 	// Initialize subprocess arguments and environment.
-	// Surprise, we're argv[0].
 	self, err := os.Executable()
 	if err != nil {
 		return nil, err
@@ -157,9 +161,9 @@ func relaunchSelfAsService(exitAfter time.Duration,
 	cmd := exec.Command(self, ServiceCommandName)
 	cmd.Dir = cwd
 	cmd.Env = os.Environ()
-	if exitAfter != 0 {
+	if exitInterval != 0 {
 		cmd.Args = append(cmd.Args,
-			fmt.Sprintf("--%s=%s", fscmds.AutoExitInterval().CommandLine(), exitAfter),
+			fmt.Sprintf("--%s=%s", fscmds.AutoExitInterval().CommandLine(), exitInterval),
 		)
 	}
 

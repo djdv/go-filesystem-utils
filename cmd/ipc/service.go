@@ -50,7 +50,7 @@ func serviceArgs(settings *HostService) (serviceArgs []string) {
 	return serviceArgs
 }
 
-// NOTE: Field names and data types in the setting's struct declaration
+// NOTE: Field names and data types in the setting's struct declaration -
 // must match the map key names defined in the `service.KeyValue` pkg documentation.
 func serviceKeyValueFrom(platformSettings *PlatformSettings) service.KeyValue {
 	var (
@@ -60,8 +60,10 @@ func serviceKeyValueFrom(platformSettings *PlatformSettings) service.KeyValue {
 		serviceSettings = make(service.KeyValue, settingsCount)
 	)
 	for i := 0; i != settingsCount; i++ {
-		structField := settingsType.Field(i) // The field itself (for its name).
-		fieldValue := settingsValue.Field(i) // The value it holds (not its type name).
+		var (
+			structField = settingsType.Field(i)
+			fieldValue  = settingsValue.Field(i)
+		)
 		serviceSettings[structField.Name] = fieldValue.Interface()
 	}
 	return serviceSettings
