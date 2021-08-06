@@ -56,10 +56,11 @@ func CmdsOptionsFrom(settings Settings) (cmdsOptions []cmds.Option) {
 	return options
 }
 
-func cmdsOptionsFrom(settingsType reflect.Type, settingsIndex []int, parameters Parameters) (cmdsOptions []cmds.Option) {
+func cmdsOptionsFrom(settingsType reflect.Type, settingsIndex []int, parameters Parameters) []cmds.Option {
 	var (
 		optionsBound   int
 		parameterCount = len(parameters)
+		cmdsOptions    = make([]cmds.Option, 0, parameterCount)
 		ctx, cancel    = context.WithCancel(context.Background())
 		fieldOffset    = settingsIndex[0]
 		fields         = fieldsFrom(ctx, settingsType, fieldOffset)
@@ -73,7 +74,6 @@ func cmdsOptionsFrom(settingsType reflect.Type, settingsIndex []int, parameters 
 		taggedType       = settingsType.FieldByIndex(tagTypeIndex).Type
 	)
 	defer cancel()
-	cmdsOptions = make([]cmds.Option, 0, parameterCount)
 	for field := range fields {
 		if optionsBound == parameterCount {
 			break
@@ -104,7 +104,7 @@ func cmdsOptionsFrom(settingsType reflect.Type, settingsIndex []int, parameters 
 		optionsBound++
 	}
 
-	return
+	return cmdsOptions
 }
 
 // SettingsFromCmds uses a cmds.Request as a source for settings values.

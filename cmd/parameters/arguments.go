@@ -179,9 +179,20 @@ func referenceFromField(field reflect.StructField, fieldValue reflect.Value) (in
 }
 
 func AccumulateArgs(ctx context.Context,
-	unsetArgs ArgumentList, inputErrs <-chan error) (unset []Argument, err error) {
-	var errs []error
-out:
+	unsetArgs ArgumentList, inputErrs <-chan error) (unset []Argument, _ error) {
+	var (
+		errs        []error
+		flattenErrs = func(errs ...error) error {
+			if len(errs) > 0 {
+				err := errs[0]
+				for _, e := range errs[1:] {
+					err = fmt.Errorf("%w; %s", err, e)
+				}
+				return err
+			}
+			return nil
+		}
+	)
 	for unsetArgs != nil ||
 		inputErrs != nil {
 		select {
@@ -195,7 +206,7 @@ out:
 				// exists in the input generator.
 				errs = append(errs,
 					errors.New("nil argument was received - aborting"))
-				break out
+				return unset, flattenErrs(errs...)
 			}
 			unset = append(unset, *argument)
 		case e, ok := <-inputErrs:
@@ -206,16 +217,11 @@ out:
 			errs = append(errs, e)
 		case <-ctx.Done():
 			errs = append(errs, ctx.Err())
-			break out
+			return unset, flattenErrs(errs...)
 		}
 	}
-	if len(errs) > 0 {
-		err = errs[0]
-		for _, e := range errs[1:] {
-			err = fmt.Errorf("%w; %s", err, e)
-		}
-	}
-	return
+
+	return unset, flattenErrs(errs...)
 }
 
 func argumentFieldIn(settingsType reflect.Type) (*reflect.StructField, error) {

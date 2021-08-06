@@ -40,9 +40,8 @@ func SystemServiceMaddrs() ([]multiaddr.Multiaddr, error) {
 			"/Library/Application Support", // NeXT
 			"/var/run",                     // BSD UNIX
 		)
-	} else {
-		return servicePathsToServiceMaddrs(xdg.ConfigDirs...)
 	}
+	return servicePathsToServiceMaddrs(xdg.ConfigDirs...)
 }
 
 func servicePathsToServiceMaddrs(servicePaths ...string) ([]multiaddr.Multiaddr, error) {
