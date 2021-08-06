@@ -37,10 +37,9 @@ func (re *runEnvironment) Stop() error {
 
 	var runtimeErrors error
 	for runErr := range re.runErrs {
-		switch runtimeErrors {
-		case nil:
+		if runtimeErrors == nil {
 			runtimeErrors = fmt.Errorf("service encountered errors during runtime: %w", runErr)
-		default:
+		} else {
 			runtimeErrors = fmt.Errorf("%w - %s", runtimeErrors, runErr)
 		}
 	}
@@ -292,7 +291,7 @@ func acceptCmdsHTTP(ctx context.Context,
 				httpServerErrs <- fmt.Errorf("could not shutdown server before timeout (%s): %w",
 					timeout, timeout.Err())
 			case err := <-serveErr:
-				if err != http.ErrServerClosed {
+				if !errors.Is(err, http.ErrServerClosed) {
 					httpServerErrs <- err
 				}
 			}
