@@ -166,6 +166,11 @@ func relaunchSelfAsService(exitInterval time.Duration,
 			fmt.Sprintf("--%s=%s", fscmds.AutoExitInterval().CommandLine(), exitInterval),
 		)
 	}
+	for _, maddr := range serviceMaddrs {
+		cmd.Args = append(cmd.Args,
+			fmt.Sprintf("--%s=%s", fscmds.ServiceMaddrs().CommandLine(), maddr.String()),
+		)
+	}
 
 	// Setup IPC
 	servicePipe, err := cmd.StderrPipe()
