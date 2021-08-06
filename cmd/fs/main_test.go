@@ -39,5 +39,5 @@ func TestMain(m *testing.M) {
 }
 
 // Does nothing other than suppress Go's testing warning
-//`testing: warning: no tests to run`
+// `testing: warning: no tests to run`.
 func TestSuppressWarning(t *testing.T) {}
