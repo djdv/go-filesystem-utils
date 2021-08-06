@@ -163,11 +163,9 @@ func argumentsFrom(ctx context.Context,
 
 func referenceFromField(field reflect.StructField, fieldValue reflect.Value) (interface{}, error) {
 	if !fieldValue.CanSet() {
-		var (
-			err = fmt.Errorf(
-				"field (of type `%s`) is not settable",
-				field.Type.Name(),
-			)
+		err := fmt.Errorf(
+			"field (of type `%s`) is not settable",
+			field.Type.Name(),
 		)
 		// TODO: When Go 1.17 is released
 		// if !field.IsExported() {
