@@ -23,27 +23,34 @@ type (
 	}
 )
 
-func serviceArgs(settings *HostService) (serviceArgs []string) {
+// serviceArgs constructs command line arguments,
+// extracting service-relevant arguments from the current process arguments.
+// The caller should store them in the service.Config,
+// so that the service manager can use them when starting the process itself.
+func serviceArgs() (serviceArgs []string) {
 	serviceArgs = []string{ServiceCommandName}
-	if len(settings.ServiceMaddrs) > 0 {
-		// Copy service-relevant arguments from our process,
-		// into the service config. The service manager will
-		// use these when starting its own process.
-		apiParam := fscmds.ServiceMaddrs().CommandLine()
-		for _, arg := range os.Args {
+	var (
+		params = []string{
+			fscmds.ServiceMaddrs().CommandLine(),
+			fscmds.AutoExitInterval().CommandLine(),
+		}
+	)
+	// NOTE: We do not marshal potentially processed values back into their argument form.
+	// We copy the arguments from argv exactly as they were supplied.
+	for i, arg := range os.Args {
+		for _, param := range params {
 			if strings.HasPrefix(
 				strings.TrimLeft(arg, "-"),
-				apiParam,
+				param,
 			) {
+				// handle unbroken arguments: `--parameter=argument`
 				serviceArgs = append(serviceArgs, arg)
-			}
-		}
-	}
-	if settings.AutoExitInterval != 0 {
-		exitParam := fscmds.AutoExitInterval().CommandLine()
-		for _, arg := range os.Args {
-			if strings.HasPrefix(arg, exitParam) {
-				serviceArgs = append(serviceArgs, arg)
+				// handle argument portion of seperated arguments: `--parameter argument`
+				if !strings.Contains(arg, "=") {
+					// XXX: This should be validated up front by the cmds lib,
+					// but if it's not - we could potentially panic via out of bounds.
+					serviceArgs = append(serviceArgs, os.Args[i+1])
+				}
 			}
 		}
 	}
