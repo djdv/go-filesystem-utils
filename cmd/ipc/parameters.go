@@ -1,13 +1,11 @@
 package ipc
 
 import (
-	fscmds "github.com/djdv/go-filesystem-utils/cmd"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 )
 
 type HostService struct {
-	fscmds.Settings
-	Username string
+	Username string `settings:"arguments"`
 	PlatformSettings
 }
 

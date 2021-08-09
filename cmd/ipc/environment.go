@@ -56,6 +56,6 @@ func (env *daemonEnvironment) ServiceConfig(request *cmds.Request) (*service.Con
 		Description: ServiceDescription,
 		UserName:    settings.Username,
 		Option:      serviceKeyValueFrom(&settings.PlatformSettings),
-		Arguments:   serviceArgs(settings),
+		Arguments:   serviceArgs(),
 	}, nil
 }
