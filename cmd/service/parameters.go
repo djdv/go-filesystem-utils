@@ -14,7 +14,7 @@ type Settings struct {
 func (*Settings) Parameters() parameters.Parameters {
 	var (
 		root   = (*fscmds.Settings)(nil).Parameters()
-		system = (*ipc.PlatformSettings)(nil).Parameters()
+		system = (*ipc.HostService)(nil).Parameters()
 	)
 	return append(root, system...)
 }
