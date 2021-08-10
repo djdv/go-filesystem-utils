@@ -89,25 +89,19 @@ func MakeExecutor(request *cmds.Request, environment interface{}) (cmds.Executor
 	}
 
 	if !foundServer && tryLaunching {
-		var (
-			// The first element in this list
-			// should be most specific to the user.
-			// And thus most likely to succeed.
-			// We don't want to try all of them.
-			localMaddr       = serviceMaddrs[0]
-			autoExitInterval = settings.AutoExitInterval
-		)
+		autoExitInterval := settings.AutoExitInterval
 		if autoExitInterval == 0 { // Don't linger around forever.
 			autoExitInterval = 30 * time.Second
 		}
-		pid, err := relaunchSelfAsService(autoExitInterval, localMaddr)
+		pid, serviceMaddr, err := relaunchSelfAsService(autoExitInterval)
 		if err != nil {
 			return nil, err
 		}
-		clientHost, clientOpts, err = parseCmdsClientOptions(localMaddr)
+		clientHost, clientOpts, err = parseCmdsClientOptions(serviceMaddr)
 		if err != nil {
 			return nil, err
 		}
+
 		// XXX: Don't look at this, and don't rely on it.
 		// `environment` will only be an int pointer in our `_test` package.
 		// This is not supported behaviour and for validation only.
@@ -146,16 +140,15 @@ func parseCmdsClientOptions(maddr multiaddr.Multiaddr) (clientHost string, clien
 	return clientHost, clientOpts, nil
 }
 
-func relaunchSelfAsService(exitInterval time.Duration,
-	serviceMaddrs ...multiaddr.Multiaddr) (*int, error) {
+func relaunchSelfAsService(exitInterval time.Duration) (*int, multiaddr.Multiaddr, error) {
 	// Initialize subprocess arguments and environment.
 	self, err := os.Executable()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	cmd := exec.Command(self, ServiceCommandName)
@@ -166,21 +159,16 @@ func relaunchSelfAsService(exitInterval time.Duration,
 			fmt.Sprintf("--%s=%s", fscmds.AutoExitInterval().CommandLine(), exitInterval),
 		)
 	}
-	for _, maddr := range serviceMaddrs {
-		cmd.Args = append(cmd.Args,
-			fmt.Sprintf("--%s=%s", fscmds.ServiceMaddrs().CommandLine(), maddr.String()),
-		)
-	}
 
 	// Setup IPC
 	servicePipe, err := cmd.StderrPipe()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Issue the command.
-	if err = cmd.Start(); err != nil {
-		return nil, err
+	if err := cmd.Start(); err != nil {
+		return nil, nil, err
 	}
 
 	// Communicate with subprocess.
@@ -189,45 +177,54 @@ func relaunchSelfAsService(exitInterval time.Duration,
 		proc      = cmd.Process
 		procState = cmd.ProcessState
 	)
-	if err := waitForService(servicePipe, startGrace); err != nil {
+	serviceMaddr, err := waitForService(servicePipe, startGrace)
+	if err != nil {
 		if procState != nil &&
 			!procState.Exited() {
 			// Subprocess is still running after a fault.
 			// Implementation fault in service command is implied.
-			kErr := proc.Kill() // Vae puer meus victis est.
-			if kErr != nil {
+			if procErr := proc.Kill(); procErr != nil {
 				err = fmt.Errorf("%w - additionally could not kill subprocess (PID:%d): %s",
-					err, proc.Pid, kErr)
+					err, proc.Pid, procErr)
 			}
 		}
-		return nil, fmt.Errorf("could not start background service: %w", err)
+		return nil, nil, fmt.Errorf("could not start background service: %w", err)
+	}
+
+	if !fscmds.ServerDialable(serviceMaddr) {
+		return nil, nil, fmt.Errorf("service said it was ready but we could not connect")
 	}
 
 	// Process passed our checks,
 	// release it and proceed ourselves.
 	releasedPid := proc.Pid
 	if err := proc.Release(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return &releasedPid, servicePipe.Close()
+	return &releasedPid, serviceMaddr, servicePipe.Close()
 }
 
 // waitForService scans the reader for signals from the service.
 // Returning after the service is ready, encounters an error, or we time out.
-func waitForService(input io.Reader, timeout time.Duration) error {
+func waitForService(input io.Reader, timeout time.Duration) (multiaddr.Multiaddr, error) {
 	var (
 		serviceScanner = bufio.NewScanner(input)
-		scannerErr     = make(chan error, 1)
+		serviceErr     = make(chan error, 1)
+		maddrChan      = make(chan multiaddr.Multiaddr, 1)
 		timeoutChan    <-chan time.Time
 	)
-	go func() {
-		defer close(scannerErr)
+
+	go func() { // STDIO handling.
 		serviceScanner.Scan()
 		{
 			text := serviceScanner.Text()
 			if !strings.Contains(text, StdHeader) {
-				scannerErr <- fmt.Errorf("unexpected process output: %s", text)
+				serviceErr <- fmt.Errorf("unexpected process output:"+
+					"\n\twanted: %s"+
+					"\n\tgot: %s",
+					StdHeader, text,
+				)
 				return
 			}
 		}
@@ -235,20 +232,34 @@ func waitForService(input io.Reader, timeout time.Duration) error {
 		var text string
 		for serviceScanner.Scan() {
 			text = serviceScanner.Text()
+			maddrIndex := strings.Index(text, StdGoodStatus)
+			if maddrIndex >= 0 {
+				maddrIndex += len(StdGoodStatus)
+				maddrString := text[maddrIndex:]
+				if maddr, err := multiaddr.NewMultiaddr(maddrString); err == nil {
+					maddrChan <- maddr
+				} else {
+					serviceErr <- fmt.Errorf("could not parse maddr received from server: %w", err)
+				}
+				return
+			}
 			if strings.Contains(text, StdReady) {
+				serviceErr <- fmt.Errorf("service reported ready with no listeners")
 				return
 			}
 		}
-		scannerErr <- fmt.Errorf("process output ended abruptly: %s", text)
+		serviceErr <- fmt.Errorf("process output ended abruptly: %s", text)
 	}()
 
 	if timeout > 0 {
 		timeoutChan = time.After(timeout)
 	}
 	select {
+	case maddr := <-maddrChan:
+		return maddr, nil
 	case <-timeoutChan:
-		return fmt.Errorf("timed out")
-	case err := <-scannerErr:
-		return err
+		return nil, fmt.Errorf("timed out")
+	case err := <-serviceErr:
+		return nil, err
 	}
 }
