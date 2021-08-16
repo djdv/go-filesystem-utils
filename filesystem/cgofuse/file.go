@@ -1,6 +1,7 @@
 package cgofuse
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -91,7 +92,7 @@ func releaseFile(table fileTable, handle uint64) (errNo, error) {
 }
 
 func (fs *hostBinding) Read(path string, buff []byte, ofst int64, fh uint64) int {
-	fs.log.Debugf("Read - HostRequest {%X|%d}%q", fh, ofst, path)
+	fs.log.Debugf("Read {%X|%d}%q", fh, ofst, path)
 
 	// TODO: [review] we need to do things on failure
 	// the OS typically triggers a close, but we shouldn't expect it to invalidate this record for us
@@ -133,18 +134,49 @@ func readFile(file fs.File, buff []byte, ofst int64) (errNo, error) {
 
 	// TODO: quick hack; do properly
 	// (consider if we want to use generic type+assert or hard type internally, cast during Open)
+	// ^ Let's hard cast up front. Same for directories.
 	seekerFile, ok := file.(io.Seeker)
 	if !ok {
-		panic("TODO: real Unix error value goes here")
+		return -fuselib.EIO, err
 	}
 
 	if _, err := seekerFile.Seek(ofst, io.SeekStart); err != nil {
 		return -fuselib.EIO, err
 	}
+	// TODO: lint; this is possible if a concurency issue is present
+	// 2 read ops colliding.
+	// if pos != ofst { error bad seek }
 
-	readBytes, err := file.Read(buff)
-	if err != nil && err != io.EOF {
-		readBytes = -fuselib.EIO // POSIX overloads this variable; at this point it becomes an error
+	var (
+		readBytes int
+		// TODO: [Ame] English.
+		// NOTE: [implementation:Fuse]
+		// This slice points into memory allocated by Fuse.
+		// (Implementation specific, but most likely a C void*)
+		// Before it's passed to us, it's cast by Go, as a pointer to a byte array
+		// the size of which should be considered arbitrary.
+		// That array is then sliced and passed to us.
+		// As a result, cap is forbidden in this function on that slice.
+		// Memory in the range of [len+1:cap] is not actually allocated,
+		// and writing to it will likely result in undefined behaviour.
+		// (Most likely a segfault, or worse, memory corruption if unguarded by the runtime)
+		bufferSize = len(buff)
+	)
+	for {
+		n, err := file.Read(buff)
+		readBytes += n // Always count'em.
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			// POSIX overloads this variable; at this point it becomes an error
+			readBytes = -fuselib.EIO
+			break
+		}
+		if readBytes == bufferSize {
+			break
+		}
+		buff = buff[n:]
 	}
 
 	// TODO: [Ame] spec-note+English
