@@ -22,7 +22,12 @@ func (r *rootDirectory) Read([]byte) (int, error) {
 	return -1, errors.New(op, errors.IsDir)
 }
 
-func (r *rootDirectory) ReadDir(n int) ([]fs.DirEntry, error) { return nil, io.EOF }
+func (r *rootDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
+	if count > 0 {
+		return nil, io.EOF
+	}
+	return nil, nil
+}
 
 func (r *rootDirectory) Close() error { return nil }
 
