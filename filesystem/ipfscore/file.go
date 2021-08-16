@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"reflect"
 
 	"github.com/djdv/go-filesystem-utils/filesystem/errors"
 	files "github.com/ipfs/go-ipfs-files"
@@ -85,11 +86,11 @@ func openUFSNode(ctx context.Context,
 		// We should return a unique standard error that they can .Is() against
 		// So that proper error values can be used with the host
 		// EISDIR, etc.
+		intfType := reflect.TypeOf(&fileNode).Elem()
 		return nil, errors.New(
 			errors.IsDir,
-			fmt.Errorf("Unexpected node type: %T (wanted: %T)",
-				apiNode, (*files.File)(nil),
-				// FIXME: This message lies; the type we expect is not a pointer
+			fmt.Errorf("Unexpected node type: %T (wanted: %s.%s)",
+				apiNode, intfType.PkgPath(), intfType.Name(),
 			),
 		)
 	}
