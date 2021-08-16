@@ -102,7 +102,9 @@ func (cd *coreDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	for ; count != 0; count-- {
 		ent, ok := <-entries
 		if !ok {
-			err = io.EOF
+			if count > 0 {
+				err = io.EOF
+			}
 			break
 		}
 		ents = append(ents, &ufsDirEntry{DirEntry: ent, crtime: crtime})

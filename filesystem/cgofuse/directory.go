@@ -1,8 +1,6 @@
 package cgofuse
 
 import (
-	"errors"
-	"io"
 	"io/fs"
 
 	fuselib "github.com/billziss-gh/cgofuse/fuse"
@@ -115,7 +113,7 @@ func (fuse *hostBinding) Readdir(path string,
 		fuse.log.Warn("good dir")
 	}
 	entries, err := dbgDir.ReadDir(0)
-	if !errors.Is(err, io.EOF) {
+	if err != nil {
 		fuse.log.Error(err)
 		return -fuselib.EIO // TODO: check POSIX spec; errno value
 	}
@@ -130,7 +128,12 @@ func (fuse *hostBinding) Readdir(path string,
 			}
 			mTime := fuselib.NewTimespec(goStat.ModTime())
 			stat = new(fuselib.Stat_t)
-			stat.Uid, stat.Gid, _ = fuselib.Getcontext()
+
+			// FIXME: These values must be obtained and stored during Opendir.
+			// They are NOT guaranteed to be valid within calls to Readdir.
+			// (some platforms may return data here)
+			//stat.Uid, stat.Gid, _ = fuselib.Getcontext()
+
 			stat.Mode = goToPosix(goStat.Mode()) |
 				IRXA&^(fuselib.S_IXOTH) // TODO: const permissions; used here and in getattr
 			stat.Size = goStat.Size()

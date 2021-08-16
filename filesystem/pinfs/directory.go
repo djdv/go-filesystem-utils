@@ -68,7 +68,9 @@ func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	for ; count != 0; count-- {
 		pin, ok := <-pins
 		if !ok {
-			err = io.EOF
+			if count > 0 {
+				err = io.EOF
+			}
 			break
 		}
 		ents = append(ents, &pinDirEntry{Pin: pin, ipfs: pd.ipfs})
