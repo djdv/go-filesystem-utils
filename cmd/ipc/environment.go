@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"reflect"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"github.com/kardianos/service"
 	"github.com/multiformats/go-multiaddr"
 	madns "github.com/multiformats/go-multiaddr-dns"
+	manet "github.com/multiformats/go-multiaddr/net"
 )
 
 type (
@@ -106,11 +109,38 @@ func ipfsClient(apiMaddr multiaddr.Multiaddr) (coreiface.CoreAPI, error) {
 	if err != nil {
 		return nil, err
 	}
-	return httpapi.NewApi(resolvedMaddr)
+
+	// TODO: I think the upstream package needs a patch to handle this internally.
+	// we'll hack around it for now. Investigate later.
+	// (When trying to use a unix socket for the IPFS maddr
+	// the client returned from httpapi.NewAPI will complain on requests - forgot to copy the error lol)
+	network, dialHost, err := manet.DialArgs(resolvedMaddr)
+	if err != nil {
+		return nil, err
+	}
+	switch network {
+	default:
+		return httpapi.NewApi(resolvedMaddr)
+	case "unix":
+		// TODO: consider patching cmds-lib
+		// we want to use the URL scheme "http+unix"
+		// as-is, it prefixes the value to be parsed by pkg `url` as "http://http+unix://"
+		var (
+			clientHost = "http://file-system-socket" // TODO: const + needs real name/value
+			netDialer  = new(net.Dialer)
+		)
+		return httpapi.NewURLApiWithClient(clientHost, &http.Client{
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+					return netDialer.DialContext(ctx, network, dialHost)
+				},
+			},
+		})
+	}
 }
 
-// lazy-alloc boilerplate
-// TODO: mutexes; we may be called from multiple processes
+// lazy-alloc boilerplate below
+// TODO: mutexes; multiple processes may communicate with the daemon at once.
 
 func (m *ipfsClientMap) Add(maddr multiaddr.Multiaddr, api coreiface.CoreAPI) {
 	clients := *m
