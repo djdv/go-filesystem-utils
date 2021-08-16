@@ -115,12 +115,16 @@ func safeMount(hostInterface *fuselib.FileSystemHost, fsid filesystem.ID,
 		// TODO: [port] hasty hacks right now
 		var fuseArgs []string
 		if runtime.GOOS == "windows" {
+			// TODO: reconsider where to do this
+			// Multiaddr inserts this into our `path` protocol values
+			target = strings.TrimPrefix(target, "/")
+
 			var (
 				opts  = "uid=-1,gid=-1"
 				isUNC = len(target) > 2 &&
 					(target)[:2] == `\\`
 			)
-			if fsid != 0 {
+			if fsid != 0 { // TODO if 0 we should error
 				opts += fmt.Sprintf(
 					",FileSystemName=%s,volname=%s",
 					fsid.String(),
@@ -136,10 +140,6 @@ func safeMount(hostInterface *fuselib.FileSystemHost, fsid filesystem.ID,
 				target = "" // target should not be supplied in addition to UNC args
 				// TODO: Double check docs for this ^ things may have changed.
 				fuseArgs = append(fuseArgs, fmt.Sprintf(`--VolumePrefix=%s`, uncTarget))
-			} else {
-				// TODO: reconsider where to do this
-				// Multiaddr inserts this into our `path` protocol values
-				target = strings.TrimPrefix(target, "/")
 			}
 		}
 
