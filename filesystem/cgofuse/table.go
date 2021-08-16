@@ -17,6 +17,31 @@ type (
 	fMap   map[handle]fs.File
 )
 
+/*
+type (
+	handle       = uint64
+	fileResource struct {
+		sync.Mutex
+		fs.File
+	}
+	fMap map[handle]fileResource
+
+	directoryResource struct {
+		sync.Mutex
+		// TODO: copy the note about implementation differences here
+		// Fuse only implies this context has to be valid for open and creation operations
+		// and thus some implementations return zero or garbage values
+		// during operations like readdir (where we might need them depending on the platform)
+		fuseContext struct {
+			uid, gid uint32
+			// pid omitted as it's currently unused
+		}
+		fs.ReadDirFile
+	}
+	dMap map[handle]directoryResource
+)
+*/
+
 var (
 	errInvalidHandle = errors.New("handle not found")
 	errFull          = errors.New("all slots filled")

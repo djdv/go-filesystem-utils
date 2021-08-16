@@ -66,6 +66,8 @@ func posixToGo(path string) (name string, _ error) {
 	case posixRoot:
 		return goRoot, nil
 	}
+
+	// TODO: does fuse guarantee slash prefixed paths?
 	return path[1:], nil
 }
 
