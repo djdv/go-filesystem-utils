@@ -33,6 +33,7 @@ type coreDirectory struct {
 	path    corepath.Path
 	entries <-chan coreiface.DirEntry
 	stat    statFunc
+	crtime  time.Time
 }
 
 // TODO: we should either implement this on the underlying type
@@ -45,13 +46,15 @@ func (dirents ufsByName) Swap(i, j int)      { dirents[i], dirents[j] = dirents[
 func (dirents ufsByName) Less(i, j int) bool { return dirents[i].Name() < dirents[j].Name() }
 
 func openIPFSDir(ctx context.Context,
-	core coreiface.CoreAPI, ipldNode ipld.Node, statFn statFunc) (fs.ReadDirFile, error) {
+	core coreiface.CoreAPI, ipldNode ipld.Node,
+	statFn statFunc, crtime time.Time) (fs.ReadDirFile, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	return &coreDirectory{
 		ctx: ctx, cancel: cancel,
-		core: core,
-		path: corepath.IpfsPath(ipldNode.Cid()),
-		stat: statFn,
+		core:   core,
+		path:   corepath.IpfsPath(ipldNode.Cid()),
+		stat:   statFn,
+		crtime: crtime,
 	}, nil
 }
 
@@ -98,7 +101,7 @@ func (cd *coreDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	// for IPFS we should use the mount time
 	// for everything else it should be generated now?
 	// For formats that have it (ufs1.5>=) we should pull it from the data.
-	crtime := time.Now()
+	crtime := cd.crtime
 	for ; count != 0; count-- {
 		ent, ok := <-entries
 		if !ok {

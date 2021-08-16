@@ -78,7 +78,7 @@ func (ci *coreInterface) Open(name string) (fs.File, error) {
 	case fs.FileMode(0):
 		file, fErr = openIPFSFile(ci.ctx, ci.core, ipldNode, statFn)
 	case fs.ModeDir:
-		file, fErr = openIPFSDir(ci.ctx, ci.core, ipldNode, statFn)
+		file, fErr = openIPFSDir(ci.ctx, ci.core, ipldNode, statFn, ci.creationTime)
 	default:
 		// TODO: real error value+message
 		fErr = errors.New("unsupported type")
@@ -133,7 +133,8 @@ func (ci *coreInterface) OpenDir(name string) (fs.ReadDirFile, error) {
 	}
 	statFn := ci.genStatFunc(name, stat)
 
-	directory, err := openIPFSDir(ci.ctx, ci.core, ipldNode, statFn)
+	// XXX: Look at this arity. No way dude. Databag them at least.
+	directory, err := openIPFSDir(ci.ctx, ci.core, ipldNode, statFn, ci.creationTime)
 	if err != nil {
 		return nil, errors.New(op,
 			errors.Path(name),

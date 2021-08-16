@@ -16,8 +16,10 @@ import (
 	corepath "github.com/ipfs/interface-go-ipfs-core/path"
 )
 
+// TODO: We should declare in the package that these are not thread safe.
+
 type coreFile struct {
-	stat   statFunc
+	statFn statFunc
 	f      files.File
 	cancel context.CancelFunc
 }
@@ -27,7 +29,7 @@ type coreFile struct {
 //func (cio *coreFile) Truncate(_ uint64) error       { return errReadOnly }
 
 func (cio *coreFile) Close() error                  { defer cio.cancel(); return cio.f.Close() }
-func (cio *coreFile) Stat() (fs.FileInfo, error)    { return cio.stat() }
+func (cio *coreFile) Stat() (fs.FileInfo, error)    { return cio.statFn() }
 func (cio *coreFile) Read(buff []byte) (int, error) { return cio.f.Read(buff) }
 func (cio *coreFile) Size() (int64, error)          { return cio.f.Size() }
 func (cio *coreFile) Seek(offset int64, whence int) (int64, error) {
@@ -77,11 +79,13 @@ func openUFSNode(ctx context.Context,
 	ctx, cancel := context.WithCancel(ctx)
 	apiNode, err := core.Unixfs().Get(ctx, path)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 
 	fileNode, ok := apiNode.(files.File)
 	if !ok {
+		cancel()
 		// TODO: make sure caller inspects our error value
 		// We should return a unique standard error that they can .Is() against
 		// So that proper error values can be used with the host
@@ -95,7 +99,7 @@ func openUFSNode(ctx context.Context,
 		)
 	}
 
-	return &coreFile{stat: stat, f: fileNode, cancel: cancel}, nil
+	return &coreFile{statFn: stat, f: fileNode, cancel: cancel}, nil
 }
 
 func openCborNode(cborNode *cbor.Node, stat statFunc,
