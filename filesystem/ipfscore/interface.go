@@ -59,7 +59,7 @@ func (ci *coreInterface) Open(name string) (fs.File, error) {
 		)
 	}
 
-	stat, err := statNode(ipldNode)
+	stat, err := ci.stat(name, ipldNode)
 	if err != nil {
 		return nil, errors.New(op,
 			errors.Path(name),
@@ -123,7 +123,7 @@ func (ci *coreInterface) OpenDir(name string) (fs.ReadDirFile, error) {
 		)
 	}
 
-	stat, err := statNode(ipldNode)
+	stat, err := ci.stat(name, ipldNode)
 	if err != nil {
 		return nil, errors.New(op,
 			errors.Path(name),

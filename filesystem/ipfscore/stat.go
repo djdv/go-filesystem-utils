@@ -1,12 +1,16 @@
 package ipfs
 
 import (
+	goerrors "errors"
 	"fmt"
 	"io/fs"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/filesystem"
 	"github.com/djdv/go-filesystem-utils/filesystem/errors"
+	cmds "github.com/ipfs/go-ipfs-cmds"
 	ipld "github.com/ipfs/go-ipld-format" // TODO: migrate to new standard
 	dag "github.com/ipfs/go-merkledag"
 	"github.com/ipfs/go-unixfs"
@@ -73,42 +77,68 @@ func (ci *coreInterface) Stat(name string) (fs.FileInfo, error) {
 		return (*rootStat)(&ci.creationTime), nil
 	}
 
-	ipfsPath := goToIPFSCore(ci.systemID, name)
-	ipldNode, err := resolveNode(ci.ctx, ci.core, ipfsPath)
+	stat, err := ci.stat(name, nil)
 	if err != nil {
+		// TODO: if the cmds lib doesn't have a typed error we can use with .Is
+		// one should be added for this. Checking messages like this is not stable.
+		cmdsErr := new(cmds.Error)
+		if goerrors.As(err, &cmdsErr) &&
+			strings.Contains(cmdsErr.Message, "no link named") {
+			return nil, errors.New(errors.NotExist, err)
+		}
+
 		return nil, errors.New(op,
 			errors.Path(name),
 			errors.IO, // TODO: [review] double check this Kind makes sense for this.
 			err,
 		)
 	}
-
-	stat, err := statNode(ipldNode)
-	if err != nil {
-		return nil, errors.New(op,
-			errors.Path(name),
-			errors.Other,
-			err,
-		)
-	}
 	return stat, nil
 }
 
-func statNode(ipldNode ipld.Node) (stat *stat, err error) {
+// TODO: reconsider if there's a better way to split up functions to
+// handle calling stat from other calls which may or may not already have a resolved node.
+// (Open+OpenDir will need one anyway; Stat itself won't)
+// This whole callchain looks too C-like and I hate it. But this might be how it has to be.
+// Otherwise callers will need to do too much manual data insertions on the stat struct
+// which is bound to cause inconsistencies (which are VERY BAD for the OS
+// and make debugging confusing)
+//
+// ipldNode is optional.
+func (ci *coreInterface) stat(name string, ipldNode ipld.Node) (*stat, error) {
+	if ipldNode == nil {
+		var (
+			err      error
+			ipfsPath = goToIPFSCore(ci.systemID, name)
+		)
+		if ipldNode, err = resolveNode(ci.ctx, ci.core, ipfsPath); err != nil {
+			return nil, err
+		}
+	}
+
+	stat := new(stat)
+	if err := statNode(ipldNode, stat); err != nil {
+		return nil, err
+	}
+	stat.crtime = ci.creationTime
+	stat.name = path.Base(name)
+	return stat, nil
+}
+
+// write: populates possible fields within stat, from node data.
+func statNode(ipldNode ipld.Node, stat *stat) error {
 	if typedNode, ok := ipldNode.(*dag.ProtoNode); ok {
 		ufsNode, err := unixfs.ExtractFSNode(typedNode)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		stat, err = unixFSAttr(ufsNode)
-	} else { //  *dag.RawNode, *cbor.Node
-		stat, err = genericAttr(ipldNode)
+		return unixFSAttr(ufsNode, stat)
 	}
-	return
+	//  *dag.RawNode, *cbor.Node
+	return genericAttr(ipldNode, stat)
 }
 
-func genericAttr(genericNode ipld.Node) (*stat, error) {
-	attr := new(stat)
+func genericAttr(genericNode ipld.Node, attr *stat) error {
 	// raw nodes only contain data so we'll treat them as a flat file
 	// cbor nodes are not currently supported via UnixFS so we assume them to contain only data
 	// TODO: review ^ is there some way we can implement this that won't blow up in the future?
@@ -117,33 +147,29 @@ func genericAttr(genericNode ipld.Node) (*stat, error) {
 
 	nodeStat, err := genericNode.Stat()
 	if err != nil {
-		return attr, err
+		return err
 	}
 
 	attr.size = uint64(nodeStat.CumulativeSize)
-	//attr.BlockSize= uint64(nodeStat.BlockSize)
+	attr.blockSize = uint64(nodeStat.BlockSize)
 
-	return attr, nil
+	return nil
 }
 
-func unixFSAttr(ufsNode *unixfs.FSNode) (*stat, error) {
-	var attr stat
+func unixFSAttr(ufsNode *unixfs.FSNode, attr *stat) error {
 	attr.typ = unixfsTypeToCoreType(ufsNode.Type())
 
-	/* TODO: [port]
-	// NOTE: we can't account for variable block size so we use the size of the first block only (if any)
 	blocks := len(ufsNode.BlockSizes())
 	if blocks > 0 {
-		attr.BlockSize = ufsNode.BlockSize(0)
-		attr.Blocks = uint64(blocks)
+		attr.blockSize = ufsNode.BlockSize(0)
+		attr.blocks = uint64(blocks)
 	}
-	*/
 
 	attr.size = ufsNode.FileSize()
 
 	// TODO [eventually]: handle time metadata in new UFS format standard
 
-	return &attr, nil
+	return nil
 }
 
 func unixfsTypeToCoreType(ut unixpb.Data_DataType) coreiface.FileType {
