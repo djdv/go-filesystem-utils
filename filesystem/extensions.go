@@ -2,6 +2,7 @@
 package filesystem
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -29,12 +30,6 @@ type RenameFS interface { // import "std/russ"
 
 type OpenDirFS interface {
 	fs.FS
-	// TODO: reconsider signature
-	// We should probably keep this but add another extension
-	// for streams too. E.g. (name string, output chan<- dirent).
-	// Or keep as-is and extend readdirfile into a directory stream.
-	// Allowing the caller to control the buffer size.
-	// dirfile.ReadStream(count int, bufferedChannel chan<-...)
 	OpenDir(name string) (fs.ReadDirFile, error)
 }
 
@@ -49,4 +44,43 @@ func Rename(fsys fs.FS, oldpath, newpath string) error {
 type IdentifiedFS interface {
 	fs.FS
 	ID() ID
+}
+
+// TODO: consider what to name these
+type (
+	StreamDirFile interface {
+		fs.File
+		StreamDir(context.Context, chan<- fs.DirEntry) <-chan error
+	}
+	StreamDirFS interface {
+		fs.FS
+		OpenStream(name string) (StreamDirFile, error)
+	}
+)
+
+// TODO: review; hasty
+func StreamDir(directory fs.ReadDirFile,
+	ctx context.Context, entries chan<- fs.DirEntry) <-chan error {
+	stream, ok := directory.(StreamDirFile)
+	if ok {
+		return stream.StreamDir(ctx, entries)
+	}
+
+	contents, err := directory.ReadDir(0)
+	if err != nil {
+		single := make(chan error, 1)
+		single <- err
+		close(single)
+		return single
+	}
+	go func() {
+		defer close(entries)
+		for _, ent := range contents {
+			if ctx.Err() != nil {
+				return
+			}
+			entries <- ent
+		}
+	}()
+	return nil
 }

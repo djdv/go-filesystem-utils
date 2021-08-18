@@ -1,6 +1,7 @@
 package cgofuse
 
 import (
+	"context"
 	"io/fs"
 
 	fuselib "github.com/billziss-gh/cgofuse/fuse"
@@ -95,60 +96,67 @@ func (fuse *hostBinding) Readdir(path string,
 		return -fuselib.EBADF
 	}
 
-	/* TODO: [port] - for now no seeking (one shot; and Fuselib controls cache)
-	errNo, err := fillDir(callCtx, directory, fill, ofst)
-	if err != nil {
-		fs.log.Error(err)
-	}
-	*/
+	const buffSize = 4 // TODO: figure out a good one
+	var (
+		// TODO: We should inherit a context from the host binding
+		// guarantee that we die on destroy at least.
+		readCtx, readCancel = context.WithCancel(context.TODO())
+		entries             = make(chan fs.DirEntry, buffSize)
+		// TODO: type saftey; revert this when the indexes are split
+		errs = filesystem.StreamDir(directory.(fs.ReadDirFile), readCtx, entries)
+	)
+	defer readCancel()
 
-	// TODO: Consider how best to handle this assertion + error.
-	// Right now we let it panic if the fs implimentation is bad
-	// We should check this up front on open, and maybe separate the file tables again.
-	//entries, err := directory.(fs.ReadDirFile).ReadDir(0)
-	dbgDir, ok := directory.(fs.ReadDirFile)
-	if !ok {
-		fuse.log.Error("⚠️ bad dir, we're about to panic ⚠️")
-	} else {
-		fuse.log.Warn("good dir")
-	}
-	entries, err := dbgDir.ReadDir(0)
-	if err != nil {
-		fuse.log.Error(err)
-		return -fuselib.EIO // TODO: check POSIX spec; errno value
-	}
+	var (
+		statFn = func(ent fs.DirEntry) *fuselib.Stat_t {
+			if !canReaddirPlus {
+				return nil
+			}
 
-	for _, ent := range entries {
-		var stat *fuselib.Stat_t
-		if canReaddirPlus {
 			goStat, err := ent.Info()
 			if err != nil {
 				fuse.log.Error(err)
-				return -fuselib.EIO // TODO: check POSIX spec; errno value
+				return nil
 			}
 			mTime := fuselib.NewTimespec(goStat.ModTime())
-			stat = new(fuselib.Stat_t)
 
-			// FIXME: These values must be obtained and stored during Opendir.
+			// FIXME: We need to obtain these values during Opendir.
+			// And assign them here.
 			// They are NOT guaranteed to be valid within calls to Readdir.
 			// (some platforms may return data here)
 			//stat.Uid, stat.Gid, _ = fuselib.Getcontext()
-
-			stat.Mode = goToPosix(goStat.Mode()) |
-				IRXA&^(fuselib.S_IXOTH) // TODO: const permissions; used here and in getattr
-			stat.Size = goStat.Size()
-			stat.Atim, // XXX: This shouldn't even be legal syntax.
-				stat.Mtim, // TODO: dedupe between this and getattr
-				stat.Ctim,
-				stat.Birthtim =
-				mTime,
-				mTime,
-				mTime,
-				mTime
+			return &fuselib.Stat_t{
+				Mode: goToPosix(goStat.Mode()) |
+					IRXA&^(fuselib.S_IXOTH), // TODO: const permissions; used here and in getattr
+				Size:     goStat.Size(),
+				Atim:     mTime,
+				Mtim:     mTime,
+				Ctim:     mTime,
+				Birthtim: mTime,
+			}
 		}
-		// TODO: fill in offset if we have persistent|consistent ordering.
-		if !fill(ent.Name(), stat, 0) {
-			break // fill asked us to stop filling
+	)
+
+	// TODO: The flow control here isn't as obvious or direct as it probably could be.
+	for entries != nil {
+		select {
+		case ent, ok := <-entries:
+			if !ok {
+				entries = nil
+				break
+			}
+			// TODO: fill in offset if we have persistent|consistent ordering.
+			// Right now we delegate offset responsibility to libfuse.
+			if !fill(ent.Name(), statFn(ent), 0) {
+				// fill asked us to stop filling
+				readCancel()
+			}
+		case err := <-errs:
+			fuse.log.Error(err)
+			return -fuselib.EIO // TODO: check spec
+
+		case <-readCtx.Done():
+			entries = nil
 		}
 	}
 
