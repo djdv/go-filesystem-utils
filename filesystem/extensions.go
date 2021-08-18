@@ -1,3 +1,4 @@
+// Package filesystem contains extensions to the Go file system interface.
 package filesystem
 
 import (
@@ -6,36 +7,6 @@ import (
 	"os"
 )
 
-// FS extends Go's FS interface.
-// NOTE: This interface predates the Go standard FS draft and implementation.
-// It is in the process of being migrated to conform to its ideals rather than the ad-hoc standards we created prior.
-type FS interface {
-	fs.FS
-	fs.StatFS
-
-	IdentifiedFS
-	OpenFileFS
-	RenameFS
-
-	// TODO: finish porting these to extensions
-
-	//ExtractLink(path string) (string, error)
-
-	// creation
-	//Make(path string) error
-	//MakeDirectory(path string) error
-	//MakeLink(path, target string) error
-
-	// removal
-	//Remove(path string) error
-	//RemoveDirectory(path string) error
-	//RemoveLink(path string) error
-
-	// node
-	//Close() error
-}
-
-// File System extensions.
 type OpenFileFS interface { // import "std/russ"
 	fs.FS
 	OpenFile(name string, flag int, perm os.FileMode) (fs.File, error)

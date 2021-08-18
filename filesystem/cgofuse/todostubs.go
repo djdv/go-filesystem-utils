@@ -16,17 +16,17 @@ func (fs *hostBinding) Create(path string, flags int, mode uint32) (int, uint64)
 }
 
 func (fs *hostBinding) Mknod(path string, mode uint32, dev uint64) int {
-	fs.log.Warnf("Mknod - HostRequest {%X|%d}%q", mode, dev, path)
+	fs.log.Warnf("Mknod {%X|%d}%q", mode, dev, path)
 	return -fuselib.ENOSYS
 }
 
 func (fs *hostBinding) Mkdir(path string, mode uint32) int {
-	fs.log.Warnf("Mkdir - HostRequest {%X}%q", mode, path)
+	fs.log.Warnf("Mkdir {%X}%q", mode, path)
 	return -fuselib.ENOSYS
 }
 
 func (fs *hostBinding) Symlink(target, newpath string) int {
-	fs.log.Warnf("Symlink - HostRequest %q->%q", newpath, target)
+	fs.log.Warnf("Symlink %q->%q", newpath, target)
 	return -fuselib.ENOSYS
 }
 
@@ -45,26 +45,26 @@ func (fs *hostBinding) Readlink(path string) (int, string) {
 }
 
 func (fs *hostBinding) Rename(oldpath, newpath string) int {
-	fs.log.Warnf("Rename - HostRequest %q->%q", oldpath, newpath)
+	fs.log.Warnf("Rename %q->%q", oldpath, newpath)
 	return -fuselib.ENOSYS
 }
 
 func (fs *hostBinding) Truncate(path string, size int64, fh uint64) int {
-	fs.log.Warnf("Truncate - HostRequest {%X|%d}%q", fh, size, path)
+	fs.log.Warnf("Truncate {%X|%d}%q", fh, size, path)
 	return -fuselib.ENOSYS
 }
 
 func (fs *hostBinding) Unlink(path string) int {
-	fs.log.Warnf("Unlink - HostRequest %q", path)
+	fs.log.Warnf("Unlink %q", path)
 	return -fuselib.ENOSYS
 }
 
 func (fs *hostBinding) Rmdir(path string) int {
-	fs.log.Warnf("Rmdir - HostRequest %q", path)
+	fs.log.Warnf("Rmdir %q", path)
 	return -fuselib.ENOSYS
 }
 
 func (fs *hostBinding) Statfs(path string, stat *fuselib.Statfs_t) int {
-	fs.log.Warnf("Statfs - HostRequest %q", path)
+	fs.log.Warnf("Statfs %q", path)
 	return -fuselib.ENOSYS
 }
