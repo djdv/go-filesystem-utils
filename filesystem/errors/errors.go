@@ -20,6 +20,12 @@ import (
 	"io/fs"
 )
 
+// TODO: Currently we're using some of the upspin errors code as-is.
+// But we need to write our own formatter for our own purpose
+// since they differ enough to warrant a split versus an import.
+// Right now things are copy pasted to get things building without looking too ugly.
+// It's likely going to be similar, but not exact. Lots of opinion overlap.
+
 type (
 	// TODO: we should probably note why this exists ✔️
 	// TODO: [Ame] English.
@@ -41,7 +47,6 @@ type (
 	}
 )
 
-// TODO: replace
 // pad appends str to the buffer if the buffer already has some data.
 func pad(b *bytes.Buffer, str string) {
 	if b.Len() == 0 {
@@ -50,12 +55,14 @@ func pad(b *bytes.Buffer, str string) {
 	b.WriteString(str)
 }
 
-// TODO: replace
+// TODO: replace - we shouldn't need something like this.
 func (e *Error) isZero() bool {
 	return e.Path == "" && e.Op == "" && e.Kind == 0 && e.Err == nil
 }
 
-// TODO: maybe replace
+// TODO: replace - we're not going to have dynamic separators at the pkg level,
+// at least not like this.
+//
 // separator is the string used to separate nested errors. By
 // default, to make errors easier on the eye, nested errors are
 // indented on a new line. A server may instead choose to keep each

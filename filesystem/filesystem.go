@@ -9,6 +9,10 @@ import (
 	"github.com/multiformats/go-multiaddr"
 )
 
+// TODO: I'm not sure if it makes sense to put these in this pkg.
+// They're kind of like extensions to file system paths, and the types describe file systems
+// but maybe it should go into fscmds somewhere instead.
+
 //go:generate stringer -type=API,ID -linecomment -output=filesystem_string.go
 type (
 	// API represents a particular host API (e.g. 9P, Fuse, et al.)

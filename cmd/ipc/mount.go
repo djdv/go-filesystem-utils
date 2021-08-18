@@ -75,6 +75,11 @@ func (env *daemonEnvironment) Mount(request *cmds.Request) ([]filesystem.MountPo
 		}
 	)
 
+	// FIXME: [Moe] if we have an existing binding for a pair e.g. {fuse:pinfs}
+	// we'll disregard the `--ipfs` argument for any subsequent request
+	// and always use the first working one that was stored/associated with it.
+	// This need to either be re-ordered, turned into a tuple, or something else.
+	// tc: --ipfs=a; --ipfs=b (<- currently this will use `IPFS maddr a` anyway)
 	var (
 		binding = binderPair{API: host, ID: fsid}
 		mounter = env.mounters.Get(binding)
