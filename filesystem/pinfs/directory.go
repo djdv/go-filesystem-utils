@@ -12,13 +12,21 @@ import (
 	coreoptions "github.com/ipfs/interface-go-ipfs-core/options"
 )
 
+// TODO: we should probablt split sequential directories from stream variants
+// one can embed the other - stream should be lighter and preferred (like the original was)
 type pinDirectory struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	stat   *rootStat
+	ipfs   fs.FS
+
+	// Used in Steam
 	pinAPI coreiface.PinAPI
 	pins   <-chan coreiface.Pin
-	ipfs   fs.FS
+
+	// Used in Read
+	transformed <-chan fs.DirEntry
+	errs        <-chan error
 }
 
 type pinsByName []fs.DirEntry
@@ -34,19 +42,68 @@ func (*pinDirectory) Read([]byte) (int, error) {
 	return -1, errors.New(op, errors.IsDir)
 }
 
-func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
-	const op errors.Op = "pinDirectory.ReadDir"
+func (pd *pinDirectory) StreamDir(ctx context.Context, output chan<- fs.DirEntry) <-chan error {
+	const op errors.Op = "pinDirectory.StreamDir"
 	pins := pd.pins
 	if pins == nil {
 		pinChan, err := pd.pinAPI.Ls(pd.ctx, coreoptions.Pin.Ls.Recursive())
 		if err != nil {
-			return nil, errors.New(op,
+			errs := make(chan error, 1)
+			errs <- errors.New(op,
 				errors.IO,
 				err,
 			)
+			close(errs)
+			return errs
 		}
 		pins = pinChan
 		pd.pins = pins
+	}
+
+	errs := make(chan error)
+	go func() {
+		defer close(output)
+		for pins != nil {
+			select {
+			case pin, ok := <-pins:
+				if !ok {
+					pins = nil
+					pd.pins = nil // FIXME: thread safety
+					break
+				}
+				if err := pin.Err(); err != nil {
+					select {
+					case errs <- err:
+						continue
+					case <-ctx.Done():
+						return
+					}
+				}
+				select {
+				case output <- &pinDirEntry{Pin: pin, ipfs: pd.ipfs}:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return errs
+}
+
+func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
+	const op errors.Op = "pinDirectory.ReadDir"
+	var (
+		entries = pd.transformed
+		errs    = pd.errs
+	)
+	if entries == nil {
+		output := make(chan fs.DirEntry, count)
+		errs = pd.StreamDir(pd.ctx, output)
+		pd.transformed = output
+		pd.errs = errs
 	}
 
 	var (
@@ -65,15 +122,20 @@ func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 		// and should be fixed caller side.
 		ents = make([]fs.DirEntry, 0, count)
 	}
+
 	for ; count != 0; count-- {
-		pin, ok := <-pins
-		if !ok {
-			if count > 0 {
-				err = io.EOF
+		select {
+		case ent, ok := <-entries:
+			if !ok {
+				if count > 0 {
+					err = io.EOF
+				}
+				break
 			}
-			break
+			ents = append(ents, ent)
+		case err := <-errs:
+			return ents, err
 		}
-		ents = append(ents, &pinDirEntry{Pin: pin, ipfs: pd.ipfs})
 	}
 
 	sort.Sort(pinsByName(ents))

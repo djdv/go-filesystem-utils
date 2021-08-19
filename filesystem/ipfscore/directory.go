@@ -31,18 +31,22 @@ func (r *rootDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 
 func (r *rootDirectory) Close() error { return nil }
 
+// TODO: we should probablt split sequential directories from stream variants
+// one can embed the other - stream should be lighter and preferred (like the original was)
 type coreDirectory struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	core    coreiface.CoreAPI
-	path    corepath.Path
-	entries <-chan coreiface.DirEntry
-
-	transformed <-chan fs.DirEntry
-	errs        <-chan error
-
+	ctx    context.Context
+	cancel context.CancelFunc
+	core   coreiface.CoreAPI
+	path   corepath.Path
 	stat   statFunc
 	crtime time.Time
+
+	// Used in Stream
+	entries <-chan coreiface.DirEntry
+
+	// Used in Read
+	transformed <-chan fs.DirEntry
+	errs        <-chan error
 }
 
 // TODO: we should either implement this on the underlying type
