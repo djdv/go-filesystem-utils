@@ -71,9 +71,9 @@ func posixToGo(path string) (name string, _ error) {
 	return path[1:], nil
 }
 
-// Do not pass Go, do not collect 200 Unix bits.
 type fuseFileType = uint32
 
+// Do not pass Go, do not collect 200 Unix bits.
 func goToPosix(m fs.FileMode) fuseFileType {
 	switch m.Type() {
 	case fs.ModeDir:
