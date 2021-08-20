@@ -27,8 +27,9 @@ func (fs *hostBinding) Readlink(path string) (int, string) {
 }
 */
 
-func (fs *hostBinding) Open(path string, flags int) (int, uint64) {
-	fs.log.Debugf("Open - {%X}%q", flags, path)
+func (fuse *hostBinding) Open(path string, flags int) (int, uint64) {
+	defer fuse.systemLock.Access(path)()
+	fuse.log.Debugf("Open - {%X}%q", flags, path)
 
 	// TODO: this when OpenDir is implimented
 	// if path == posixRoot {
@@ -39,21 +40,21 @@ func (fs *hostBinding) Open(path string, flags int) (int, uint64) {
 	goPath, err := posixToGo(path)
 	if err != nil {
 		// TODO: review; POSIX spec - make sure errno is appropriate for this op
-		fs.log.Error(err)
+		fuse.log.Error(err)
 		return interpretError(err), errorHandle
 	}
 
 	// TODO: port flags and use OpenFile
 	//file, err := fs.goFs.Open(path, ioFlagsFromFuse(flags))
-	file, err := fs.goFs.Open(goPath)
+	file, err := fuse.goFs.Open(goPath)
 	if err != nil {
-		fs.log.Error(err)
+		fuse.log.Error(err)
 		return interpretError(err), errorHandle
 	}
 
-	handle, err := fs.fileTable.Add(file)
+	handle, err := fuse.fileTable.Add(file)
 	if err != nil {
-		fs.log.Error(fuselib.Error(-fuselib.EMFILE))
+		fuse.log.Error(fuselib.Error(-fuselib.EMFILE))
 		return -fuselib.EMFILE, errorHandle
 	}
 
@@ -91,23 +92,24 @@ func releaseFile(table fileTable, handle uint64) (errNo, error) {
 	return operationSuccess, file.Close()
 }
 
-func (fs *hostBinding) Read(path string, buff []byte, ofst int64, fh uint64) int {
-	fs.log.Debugf("Read {%X|%d}%q", fh, ofst, path)
+func (fuse *hostBinding) Read(path string, buff []byte, ofst int64, fh uint64) int {
+	defer fuse.systemLock.Access(path)()
+	fuse.log.Debugf("Read {%X|%d}%q", fh, ofst, path)
 
 	// TODO: [review] we need to do things on failure
 	// the OS typically triggers a close, but we shouldn't expect it to invalidate this record for us
 	// we also might want to store a file cursor to reduce calls to seek
 	// the same thing already happens internally so it's at worst the overhead of a call right now
 
-	file, err := fs.fileTable.Get(fh)
+	file, err := fuse.fileTable.Get(fh)
 	if err != nil {
-		fs.log.Error(fuselib.Error(-fuselib.EBADF))
+		fuse.log.Error(fuselib.Error(-fuselib.EBADF))
 		return -fuselib.EBADF
 	}
 
 	retVal, err := readFile(file, buff, ofst)
 	if err != nil && err != io.EOF {
-		fs.log.Error(err)
+		fuse.log.Error(err)
 	}
 	return retVal
 }
@@ -187,23 +189,24 @@ func readFile(file fs.File, buff []byte, ofst int64) (errNo, error) {
 	return readBytes, err // EOF will be returned if it was provided
 }
 
-func (fs *hostBinding) Write(path string, buff []byte, ofst int64, fh uint64) int {
-	fs.log.Debugf("Write - HostRequest {%X|%d|%d}%q", fh, len(buff), ofst, path)
+func (fuse *hostBinding) Write(path string, buff []byte, ofst int64, fh uint64) int {
+	defer fuse.systemLock.Modify(path)()
+	fuse.log.Debugf("Write - HostRequest {%X|%d|%d}%q", fh, len(buff), ofst, path)
 
 	if path == "/" { // root Request; we're never a file
-		fs.log.Error(fuselib.Error(-fuselib.EBADF))
+		fuse.log.Error(fuselib.Error(-fuselib.EBADF))
 		return -fuselib.EBADF
 	}
 
-	file, err := fs.fileTable.Get(fh)
+	file, err := fuse.fileTable.Get(fh)
 	if err != nil {
-		fs.log.Error(fuselib.Error(-fuselib.EBADF))
+		fuse.log.Error(fuselib.Error(-fuselib.EBADF))
 		return -fuselib.EBADF
 	}
 
 	errNo, err := writeFile(file, buff, ofst)
 	if err != nil && err != io.EOF {
-		fs.log.Error(err)
+		fuse.log.Error(err)
 	}
 	return errNo
 }

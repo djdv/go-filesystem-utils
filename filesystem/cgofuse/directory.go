@@ -8,21 +8,22 @@ import (
 	"github.com/djdv/go-filesystem-utils/filesystem"
 )
 
-func (fs *hostBinding) Opendir(path string) (int, uint64) {
-	fs.log.Debugf("Opendir - %q", path)
+func (fuse *hostBinding) Opendir(path string) (int, uint64) {
+	defer fuse.systemLock.Access(path)()
+	fuse.log.Debugf("Opendir - %q", path)
 
-	openDirFS, ok := fs.goFs.(filesystem.OpenDirFS)
+	openDirFS, ok := fuse.goFs.(filesystem.OpenDirFS)
 	if !ok {
 		// NOTE: Most fuse implementations consider this to be final.
 		// And will never try this operation again.
-		fs.log.Warn("Opendir not supported by provided fs.FS") // TODO: better message
+		fuse.log.Warn("Opendir not supported by provided fs.FS") // TODO: better message
 		return -fuselib.ENOSYS, errorHandle
 	}
 
 	goPath, err := posixToGo(path)
 	if err != nil {
 		// TODO: review; POSIX spec - make sure errno is appropriate for this op
-		fs.log.Error(err)
+		fuse.log.Error(err)
 		return interpretError(err), errorHandle
 	}
 
@@ -42,7 +43,7 @@ func (fs *hostBinding) Opendir(path string) (int, uint64) {
 
 	directory, err := openDirFS.OpenDir(goPath)
 	if err != nil {
-		fs.log.Error(err)
+		fuse.log.Error(err)
 		return interpretError(err), errorHandle
 	}
 
@@ -59,9 +60,9 @@ func (fs *hostBinding) Opendir(path string) (int, uint64) {
 	}
 	*/
 
-	handle, err := fs.fileTable.Add(directory)
+	handle, err := fuse.fileTable.Add(directory)
 	if err != nil { // TODO: transform error
-		fs.log.Error(fuselib.Error(-fuselib.EMFILE))
+		fuse.log.Error(fuselib.Error(-fuselib.EMFILE))
 		return -fuselib.EMFILE, errorHandle
 	}
 
@@ -83,6 +84,7 @@ func (fuse *hostBinding) Readdir(path string,
 	fill func(name string, stat *fuselib.Stat_t, ofst int64) bool,
 	ofst int64,
 	fh uint64) int {
+	defer fuse.systemLock.Access(path)()
 	fuse.log.Debugf("Readdir - {%X|%d}%q", fh, ofst, path)
 
 	if fh == errorHandle {

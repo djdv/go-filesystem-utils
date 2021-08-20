@@ -26,8 +26,9 @@ const (
 type hostBinding struct {
 	//fuselib.FileSystemBase // TODO: remove this
 	fileTable
-	goFs fs.FS
-	log  logging.EventLogger // general operations log
+	systemLock operationsLock
+	goFs       fs.FS
+	log        logging.EventLogger // general operations log
 }
 
 func NewFuseInterface(fs fs.FS) (fuselib.FileSystemInterface, error) {
@@ -90,10 +91,12 @@ func goToPosix(m fs.FileMode) fuseFileType {
 func (fs *hostBinding) Init() {
 	fs.log.Debugf("Init")
 	fs.fileTable = newFileTable()
+	fs.systemLock = newOperationsLock()
 	defer fs.log.Debugf("Init finished")
 }
 
 func (fuse *hostBinding) Getattr(path string, stat *fuselib.Stat_t, fh uint64) int {
+	defer fuse.systemLock.Access(path)()
 	fuse.log.Debugf("Getattr - {%X}%q", fh, path)
 
 	goPath, err := posixToGo(path)
