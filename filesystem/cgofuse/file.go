@@ -89,7 +89,7 @@ func releaseFile(table fileTable, handle uint64) (errNo, error) {
 		return -fuselib.EBADF, err
 	}
 
-	return operationSuccess, file.Close()
+	return operationSuccess, file.goFile.Close()
 }
 
 func (fuse *hostBinding) Read(path string, buff []byte, ofst int64, fh uint64) int {
@@ -107,7 +107,10 @@ func (fuse *hostBinding) Read(path string, buff []byte, ofst int64, fh uint64) i
 		return -fuselib.EBADF
 	}
 
-	retVal, err := readFile(file, buff, ofst)
+	file.ioMu.Lock()
+	defer file.ioMu.Unlock()
+
+	retVal, err := readFile(file.goFile, buff, ofst)
 	if err != nil && err != io.EOF {
 		fuse.log.Error(err)
 	}
@@ -139,6 +142,7 @@ func readFile(file fs.File, buff []byte, ofst int64) (errNo, error) {
 	// ^ Let's hard cast up front. Same for directories.
 	seekerFile, ok := file.(io.Seeker)
 	if !ok {
+		err := fmt.Errorf("file is not a seeker: %#v", file)
 		return -fuselib.EIO, err
 	}
 
@@ -204,7 +208,7 @@ func (fuse *hostBinding) Write(path string, buff []byte, ofst int64, fh uint64) 
 		return -fuselib.EBADF
 	}
 
-	errNo, err := writeFile(file, buff, ofst)
+	errNo, err := writeFile(file.goFile, buff, ofst)
 	if err != nil && err != io.EOF {
 		fuse.log.Error(err)
 	}

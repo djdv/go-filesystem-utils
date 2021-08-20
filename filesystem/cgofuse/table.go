@@ -13,8 +13,12 @@ import (
 // TODO: review whole file; quickly ported
 
 type (
-	handle = uint64
-	fMap   map[handle]fs.File
+	handle     = uint64
+	fileHandle struct {
+		goFile fs.File
+		ioMu   sync.Mutex // TODO: name and responsibility; currently applies to the position cursor
+	}
+	fMap map[handle]*fileHandle
 )
 
 /*
@@ -47,13 +51,13 @@ var (
 	errFull          = errors.New("all slots filled")
 )
 
-func newFileTable() *fileTableStruct { return &fileTableStruct{files: make(fMap)} }
+func newFileTable() fileTable { return &fileTableStruct{files: make(fMap)} }
 
 type (
 	fileTable interface {
 		Add(fs.File) (handle, error)
 		Exists(handle) bool
-		Get(handle) (fs.File, error)
+		Get(handle) (*fileHandle, error)
 		Remove(handle) error
 		Length() int
 		Close() error
@@ -93,7 +97,7 @@ func (ft *fileTableStruct) Add(f fs.File) (handle, error) {
 	if _, ok := ft.files[ft.index]; ok {
 		panic("handle should be uninitialized but is in use")
 	}
-	ft.files[ft.index] = f
+	ft.files[ft.index] = &fileHandle{goFile: f}
 	return ft.index, nil
 }
 
@@ -104,7 +108,7 @@ func (ft *fileTableStruct) Exists(fh handle) bool {
 	return exists
 }
 
-func (ft *fileTableStruct) Get(fh handle) (fs.File, error) {
+func (ft *fileTableStruct) Get(fh handle) (*fileHandle, error) {
 	ft.RLock()
 	defer ft.RUnlock()
 	f, exists := ft.files[fh]
@@ -135,7 +139,7 @@ func (ft *fileTableStruct) Close() error {
 	defer ft.Unlock()
 	var err error
 	for _, f := range ft.files {
-		if cErr := f.Close(); cErr != nil {
+		if cErr := f.goFile.Close(); cErr != nil {
 			if err == nil {
 				err = fmt.Errorf("failed to close: %w", cErr)
 			} else {

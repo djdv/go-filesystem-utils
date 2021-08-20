@@ -105,7 +105,7 @@ func (fuse *hostBinding) Readdir(path string,
 		readCtx, readCancel = context.WithCancel(context.TODO())
 		entries             = make(chan fs.DirEntry, buffSize)
 		// TODO: type saftey; revert this when the indexes are split
-		errs = filesystem.StreamDir(directory.(fs.ReadDirFile), readCtx, entries)
+		errs = filesystem.StreamDir(directory.goFile.(fs.ReadDirFile), readCtx, entries)
 	)
 	defer readCancel()
 
