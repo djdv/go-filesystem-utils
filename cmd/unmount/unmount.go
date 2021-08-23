@@ -44,22 +44,26 @@ func unmountPreRun(*cmds.Request, cmds.Environment) error {
 }
 
 func unmountRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
-	var (
-		ctx             = request.Context
-		settings        = new(mount.Settings)
-		unsetArgs, errs = parameters.ParseSettings(ctx, settings,
-			parameters.SettingsFromCmds(request),
-			parameters.SettingsFromEnvironment(),
-		)
-	)
-	if _, err := parameters.AccumulateArgs(ctx, unsetArgs, errs); err != nil {
-		return err
-	}
+
+	// TODO: [continuity;IPC]
+	// We don't parse the request ourselves; we just pass it to the IPC server.
+	// Environment variables on the client are not going to exist there.
+	// This might be confusing.
+	// We should parse the request ourselves and pass arguments to ipc.Unmount
+	//
+	// This requires the environment interface to change / stabilise.
+	// Right now it's not clear what it should look like. But probably something like
+	// `Unmount(targets <-chan maddr, opts options...) mounted <-chan maddrs, errors <-chan error
+	// This is how the prototype did it and it made the most sense.
+	// It's a closer approximation to what's really happening (sequence of HTTP requests+response)
+	// and it's real-time rather than atomic.
+	// (results come back ASAP, as opposed to returning only after each one has been processed in bulk)
 
 	fsEnv, err := ipc.CastEnvironment(env)
 	if err != nil {
 		return err
 	}
+
 	formerTargets, err := fsEnv.Unmount(request)
 	if err != nil {
 		return err

@@ -3,13 +3,25 @@ package ipc
 import (
 	"fmt"
 
+	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
 )
 
-// TODO: --all flag
 // TODO: channel outputs
 func (env *daemonEnvironment) Unmount(request *cmds.Request) ([]multiaddr.Multiaddr, error) {
+	var (
+		ctx             = request.Context
+		settings        = new(UnmountSettings)
+		unsetArgs, errs = parameters.ParseSettings(ctx, settings,
+			parameters.SettingsFromCmds(request),
+			parameters.SettingsFromEnvironment(),
+		)
+	)
+	if _, err := parameters.AccumulateArgs(ctx, unsetArgs, errs); err != nil {
+		return nil, err
+	}
+
 	var (
 		args         = request.Arguments
 		targetMaddrs = make([]multiaddr.Multiaddr, len(args))

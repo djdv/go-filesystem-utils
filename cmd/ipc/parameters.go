@@ -74,6 +74,7 @@ func (*UnmountSettings) Parameters() parameters.Parameters {
 
 func All() parameters.Parameter {
 	return parameters.NewParameter(
-		"Unmount all mountpoints.", // TODO: WithShortFlag -a
+		"Unmount all mountpoints.",
+		parameters.WithNameAlias("a"),
 	)
 }
