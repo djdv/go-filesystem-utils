@@ -140,6 +140,8 @@ func (cs cmdsSettingsSource) setEach(ctx context.Context,
 					argsToSet = nil
 					continue
 				}
+				// NOTE: We don't check any name aliases.
+				// This is the responsibility of `Request.SetOption`, not us.
 				commandlineName := argument.Parameter.CommandLine()
 				cmdsArg, provided := options[commandlineName]
 				if provided {
@@ -238,6 +240,7 @@ func toCmdsOption(field reflect.StructField, parameter Parameter) cmds.Option {
 		goto ret
 	}
 
+	// Generic types.
 	switch optionKind := field.Type.Kind(); optionKind {
 	case cmds.Bool:
 		optionConstructor = cmds.BoolOption
@@ -273,12 +276,24 @@ func toCmdsOption(field reflect.StructField, parameter Parameter) cmds.Option {
 		)
 		panic(typeErr)
 	}
+
 ret:
-	return optionConstructor(
-		parameter.CommandLine(),
-		fmt.Sprintf("%s (Env: %s)",
+	var (
+		name        = parameter.CommandLine()
+		aliases     = parameter.CommandLineAliases()
+		description = fmt.Sprintf("%s (Env: %s)",
 			parameter.Description(),
 			parameter.Environment(),
-		),
+		)
+		optionCount = 2 + len(aliases) // 2: name+description.
+		optionSlice = make([]string, 0, optionCount)
 	)
+
+	// NOTE: cmds lib option constructor determines the purpose of these values by their order.
+	// Name is first, aliases follow, and the last argument is the description.
+	optionSlice = append(optionSlice, name)
+	optionSlice = append(optionSlice, aliases...)
+	optionSlice = append(optionSlice, description)
+
+	return optionConstructor(optionSlice...)
 }

@@ -28,6 +28,7 @@ type (
 		Description() string
 		// Key to use for command-line interfaces.
 		CommandLine() string
+		CommandLineAliases() []string
 		Environment() string
 	}
 	Parameters []Parameter
@@ -42,6 +43,7 @@ type (
 		name,
 		description,
 		envPrefix string
+		aliases []string
 	}
 )
 
@@ -72,7 +74,8 @@ func filter(components ...string) []string {
 	return filtered
 }
 
-func (parameter parameter) Description() string { return parameter.description }
+func (parameter parameter) Description() string          { return parameter.description }
+func (parameter parameter) CommandLineAliases() []string { return parameter.aliases }
 func (parameter parameter) CommandLine() string {
 	return strings.ToLower(
 		strings.Join(
@@ -169,6 +172,7 @@ type (
 
 	parameterNamespaceOpt string
 	parameterNameOpt      string
+	parameterNameAliasOpt string
 	parameterEnvprefixOpt string
 )
 
@@ -187,6 +191,14 @@ func WithRootNamespace() ParameterOption { return parameterNamespaceOpt("") }
 // rather than a generated one.
 func WithName(s string) ParameterOption               { return parameterNameOpt(s) }
 func (s parameterNameOpt) apply(parameter *parameter) { parameter.name = string(s) }
+
+// WithNameAlias provides alternate names that may be used to refer to the Parameter.
+// E.g. short-form versions of a command line name `parameter` with alias `p`.
+// TODO: currently ignored by env; and probably should remain that way but needs considering.
+func WithNameAlias(s string) ParameterOption { return parameterNameAliasOpt(s) }
+func (s parameterNameAliasOpt) apply(parameter *parameter) {
+	parameter.aliases = append(parameter.aliases, string(s))
+}
 
 // WithEnvironmentPrefix uses the provided prefix for the environment-variable
 // rather than one generated from the process name.
