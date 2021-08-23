@@ -7,11 +7,7 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/filesystem"
-	"github.com/djdv/go-filesystem-utils/filesystem/cgofuse"
-	ipfs "github.com/djdv/go-filesystem-utils/filesystem/ipfscore"
-	"github.com/djdv/go-filesystem-utils/filesystem/pinfs"
 	cmds "github.com/ipfs/go-ipfs-cmds"
-	coreiface "github.com/ipfs/interface-go-ipfs-core"
 	"github.com/multiformats/go-multiaddr"
 )
 
@@ -53,71 +49,47 @@ func (env *daemonEnvironment) Mount(request *cmds.Request) ([]filesystem.MountPo
 	}
 
 	var (
-		getIPFSClient = func() (coreiface.CoreAPI, error) {
-			ipfsMaddr := settings.IPFSMaddr
-			if ipfsMaddr == nil {
-				maddr, err := ipfsMaddrFromConfig()
-				if err != nil {
-					return nil, err
-				}
-				ipfsMaddr = maddr
-			}
-			coreAPI := env.ipfsClients.Get(ipfsMaddr)
-			if coreAPI == nil {
-				core, err := ipfsClient(ipfsMaddr)
-				if err != nil {
-					return nil, err
-				}
-				coreAPI = core
-				env.ipfsClients.Add(ipfsMaddr, coreAPI)
-			}
-			return coreAPI, nil
-		}
+		// TODO: Reconsider how to distinguish sets.
+		// We need some kind interface for this.
+		// myfs.uuid(), myfs.hashfn(somethingUnique), etc.
+		// Anything to split up things like IPFS targets used
+		// with the host API; but generic, not strictly a maddr.
+		fileSystem fs.FS
+		identifier string
 	)
-
-	// FIXME: [Moe] if we have an existing binding for a pair e.g. {fuse:pinfs}
-	// we'll disregard the `--ipfs` argument for any subsequent request
-	// and always use the first working one that was stored/associated with it.
-	// This need to either be re-ordered, turned into a tuple, or something else.
-	// tc: --ipfs=a; --ipfs=b (<- currently this will use `IPFS maddr a` anyway)
-	var (
-		binding = binderPair{API: host, ID: fsid}
-		mounter = env.mounters.Get(binding)
-	)
-	if mounter == nil {
+	switch fsid {
+	case filesystem.IPFS,
+		filesystem.IPNS,
+		filesystem.PinFS:
 		var (
-			fileSystem fs.FS
-			err        error
+			ipfsMaddr = settings.IPFSMaddr
+			err       error
 		)
-		switch fsid {
-		case filesystem.IPFS,
-			filesystem.IPNS:
-			coreAPI, err := getIPFSClient()
-			if err != nil {
+		if ipfsMaddr == nil {
+			if ipfsMaddr, err = ipfsMaddrFromConfig(); err != nil {
 				return nil, err
 			}
-			fileSystem = ipfs.NewInterface(env.Context, coreAPI, fsid)
-		case filesystem.PinFS:
-			coreAPI, err := getIPFSClient()
-			if err != nil {
-				return nil, err
-			}
-			fileSystem = pinfs.NewInterface(ctx, coreAPI)
-		default:
-			return nil, errors.New("TODO: real msg - fsid not supported")
 		}
-
-		switch host {
-		case filesystem.Fuse:
-			mounter, err = cgofuse.NewMounter(env.Context, fileSystem)
-		default:
-			err = errors.New("TODO: real msg - fsid not supported")
-		}
-		if err != nil {
+		identifier = ipfsMaddr.String() // delineate via the node maddr
+		if fileSystem, err = env.getIPFS(fsid, ipfsMaddr); err != nil {
 			return nil, err
 		}
+	default:
+		return nil, errors.New("TODO: real msg - fsid not supported")
+	}
 
-		env.mounters.Add(binding, mounter)
+	var (
+		mounter         filesystem.Mounter
+		mountIdentifier = binderPair{fsid: fsid, identifier: identifier}
+	)
+	switch host {
+	case filesystem.Fuse:
+		var err error
+		if mounter, err = env.getFuse(mountIdentifier, fileSystem); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, errors.New("TODO: real msg - fsid not supported")
 	}
 
 	mountPoints := make([]filesystem.MountPoint, 0, len(targetMaddrs))
@@ -136,7 +108,7 @@ func (env *daemonEnvironment) Mount(request *cmds.Request) ([]filesystem.MountPo
 
 	// Only store these after success mounting above.
 	for i, mountPoint := range mountPoints {
-		env.instances.Add(targetMaddrs[i], mountPoint)
+		env.hostInstances.Add(targetMaddrs[i], mountPoint)
 	}
 
 	return mountPoints, nil

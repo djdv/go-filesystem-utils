@@ -4,12 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"reflect"
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/filesystem"
+	"github.com/djdv/go-filesystem-utils/filesystem/cgofuse"
+	ipfs "github.com/djdv/go-filesystem-utils/filesystem/ipfscore"
+	"github.com/djdv/go-filesystem-utils/filesystem/pinfs"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	ipfsconfig "github.com/ipfs/go-ipfs-config"
 	ipfsconfigfile "github.com/ipfs/go-ipfs-config/serialize"
@@ -27,23 +31,29 @@ type (
 		Mount(*cmds.Request) ([]filesystem.MountPoint, error)
 		List(*cmds.Request) ([]multiaddr.Multiaddr, error)
 		Unmount(*cmds.Request) ([]multiaddr.Multiaddr, error)
-		//Manager()
-		//Mounter(*cmds.Request) (fscmds.Mounter, error)
+	}
+
+	fsidMap     map[filesystem.ID]fs.FS
+	ipfsBinding struct {
+		client  coreiface.CoreAPI
+		systems fsidMap
 	}
 
 	binderPair struct {
-		filesystem.API
-		filesystem.ID
+		fsid       filesystem.ID
+		identifier string
 	}
-	ipfsClientMap map[string]coreiface.CoreAPI
-	binderMap     map[binderPair]filesystem.Mounter
-	instanceMap   map[string]filesystem.MountPoint
+	binderMap map[binderPair]filesystem.Mounter
+
+	maddrString = string
+	ipfsMap     map[maddrString]*ipfsBinding
+	instanceMap map[string]filesystem.MountPoint
 
 	daemonEnvironment struct {
 		context.Context
-		ipfsClients ipfsClientMap
-		mounters    binderMap
-		instances   instanceMap
+		ipfsBindings  ipfsMap
+		hostBinders   binderMap
+		hostInstances instanceMap
 	}
 )
 
@@ -139,19 +149,64 @@ func ipfsClient(apiMaddr multiaddr.Multiaddr) (coreiface.CoreAPI, error) {
 	}
 }
 
-// lazy-alloc boilerplate below
-// TODO: mutexes; multiple processes may communicate with the daemon at once.
-
-func (m *ipfsClientMap) Add(maddr multiaddr.Multiaddr, api coreiface.CoreAPI) {
-	clients := *m
-	if clients == nil {
-		clients = make(ipfsClientMap)
-		*m = clients
+// TODO: [review] I hate all this map allocation business. See if we can simplify.
+// TODO: mutex concerns on map access when called from 2 processes at once.
+func (env *daemonEnvironment) getIPFS(fsid filesystem.ID, ipfsMaddr multiaddr.Multiaddr) (fs.FS, error) {
+	bindings := env.ipfsBindings
+	if bindings == nil {
+		bindings = make(ipfsMap)
+		env.ipfsBindings = bindings
 	}
-	clients[maddr.String()] = api
+	var (
+		nodeMaddr = ipfsMaddr.String()
+		binding   = bindings[nodeMaddr]
+	)
+	if binding == nil {
+		core, err := ipfsClient(ipfsMaddr)
+		if err != nil {
+			return nil, err
+		}
+		binding = &ipfsBinding{client: core, systems: make(fsidMap)}
+		bindings[nodeMaddr] = binding
+	}
+
+	fileSystem := binding.systems[fsid]
+	if fileSystem == nil {
+		ctx := env.Context
+		switch fsid {
+		case filesystem.IPFS,
+			filesystem.IPNS:
+			fileSystem = ipfs.NewInterface(ctx, binding.client, fsid)
+		case filesystem.PinFS:
+			fileSystem = pinfs.NewInterface(ctx, binding.client)
+		default:
+			return nil, errors.New("TODO: real msg - fsid not supported")
+		}
+		binding.systems[fsid] = fileSystem
+	}
+	return fileSystem, nil
 }
 
-func (m ipfsClientMap) Get(maddr multiaddr.Multiaddr) coreiface.CoreAPI { return m[maddr.String()] }
+func (env *daemonEnvironment) getFuse(bindKey binderPair, fileSystem fs.FS) (filesystem.Mounter, error) {
+	binders := env.hostBinders
+	if binders == nil {
+		binders = make(binderMap)
+		env.hostBinders = binders
+	}
+
+	binder := binders[bindKey]
+	if binder == nil {
+		var err error
+		if binder, err = cgofuse.NewMounter(env.Context, fileSystem); err != nil {
+			return nil, err
+		}
+	}
+
+	return binder, nil
+}
+
+// lazy-alloc boilerplate below
+// TODO: mutexes; multiple processes may communicate with the daemon at once.
 
 func (m *binderMap) Add(pair binderPair, mounter filesystem.Mounter) {
 	binder := *m

@@ -48,11 +48,11 @@ func (env *daemonEnvironment) Unmount(request *cmds.Request) ([]multiaddr.Multia
 	)
 	if all {
 		// TODO: alloc once
-		closed = make([]multiaddr.Multiaddr, 0, len(env.instances))
+		closed = make([]multiaddr.Multiaddr, 0, len(env.hostInstances))
 		// TODO: [port] make sure to prevent calling --all with args too
-		for _, mountPoint := range env.instances {
+		for _, mountPoint := range env.hostInstances {
 			target := mountPoint.Target()
-			if cErr := env.instances.Close(target); cErr != nil {
+			if cErr := env.hostInstances.Close(target); cErr != nil {
 				if err == nil {
 					err = fmt.Errorf("could not close: \"%s\" - %w", target, cErr)
 				} else {
@@ -65,7 +65,7 @@ func (env *daemonEnvironment) Unmount(request *cmds.Request) ([]multiaddr.Multia
 		return closed, err
 	}
 	for _, target := range targetMaddrs {
-		if cErr := env.instances.Close(target); cErr != nil {
+		if cErr := env.hostInstances.Close(target); cErr != nil {
 			if err == nil {
 				err = fmt.Errorf("could not close: \"%s\" - %w", target, cErr)
 			} else {

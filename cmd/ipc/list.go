@@ -9,7 +9,7 @@ import (
 func (env *daemonEnvironment) List(request *cmds.Request) ([]multiaddr.Multiaddr, error) {
 	var (
 		mIndex    int
-		instances = env.instances
+		instances = env.hostInstances
 		list      = make([]multiaddr.Multiaddr, len(instances))
 	)
 	for _, instance := range instances {
