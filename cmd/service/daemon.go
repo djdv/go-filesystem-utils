@@ -38,7 +38,6 @@ type (
 func (re *runEnvironment) Stop() error {
 	re.cancel()
 
-	// TODO: Don't use this prefix if we only get context errors.
 	var runtimeErrors error
 	for runErr := range re.runErrs {
 		if runtimeErrors == nil {
@@ -74,7 +73,6 @@ func (re *runEnvironment) Stop() error {
 type serviceDaemon struct {
 	context.Context
 	*fscmds.Settings
-	logger          logger
 	cmdsEnvironment cmds.Environment
 
 	// Shared storage for use by `Start` and `Stop`.
@@ -86,8 +84,7 @@ type serviceDaemon struct {
 	contextChan chan serviceContextPair
 }
 
-func newDaemon(ctx context.Context,
-	settings *fscmds.Settings, env cmds.Environment) *serviceDaemon {
+func newDaemon(ctx context.Context, settings *fscmds.Settings, env cmds.Environment) *serviceDaemon {
 	return &serviceDaemon{
 		Context:         ctx,
 		Settings:        settings,
@@ -103,17 +100,20 @@ func (daemon *serviceDaemon) Start(s service.Service) error {
 	daemon.runEnvironmentMu.Lock()
 	defer daemon.runEnvironmentMu.Unlock()
 
-	if err := daemon.startCheck(); err != nil {
-		daemon.logger.Errorf("Start requested but %w", err)
-		return err
-	}
-	if err := daemon.logger.Starting(); err != nil {
+	logger, err := s.Logger(nil)
+	if err != nil {
 		return err
 	}
 
+	if err := daemon.startCheck(); err != nil {
+		logger.Errorf("Start requested but %s", err)
+		return err
+	}
+	logger.Info(ipc.StdHeader)
+
 	listeners, serviceCleanup, err := getServiceListeners(daemon.ServiceMaddrs...)
 	if err != nil {
-		daemon.logger.Errorf("Service initialization error: %w", err)
+		logger.Errorf("Service initialization error: %s", err)
 		return err
 	}
 
@@ -152,7 +152,7 @@ func (daemon *serviceDaemon) Start(s service.Service) error {
 					// Don't consider this an error.
 				case <-runContext.Done():
 					ctxErr := runContext.Err()
-					daemon.logger.Warning("Interrupt: ", ctxErr)
+					logger.Warning("Interrupt: ", ctxErr)
 					// Start's caller canceled.
 					// Return the context error to them.
 					runErrs <- ctxErr
@@ -165,14 +165,14 @@ func (daemon *serviceDaemon) Start(s service.Service) error {
 			if idleErrs == nil {
 				return
 			}
-			daemon.logger.Infof("Requested to stop if not busy every %s",
+			logger.Infof("Requested to stop if not busy every %s",
 				serviceStopInterval)
 
 			runWg.Add(1)
 			go func() {
 				defer runWg.Done()
 				for err := range idleErrs {
-					daemon.logger.Errorf("Service idle-watcher err: %w", err)
+					logger.Error("Service idle-watcher err: ", err)
 					runCancel()
 					runErrs <- err
 				}
@@ -187,12 +187,12 @@ func (daemon *serviceDaemon) Start(s service.Service) error {
 				go func() {
 					defer runWg.Done()
 					for err := range serverErrs {
-						daemon.logger.Errorf("HTTP server error: %w", err)
+						logger.Error("HTTP server error: ", err)
 						runErrs <- err
 					}
 				}()
 
-				daemon.logger.Listener(listener.Multiaddr())
+				logger.Info(ipc.StdGoodStatus, listener.Multiaddr())
 			}
 		}
 	)
@@ -219,7 +219,12 @@ func (daemon *serviceDaemon) Start(s service.Service) error {
 		default:
 		}
 	}()
-	return daemon.logger.Ready()
+
+	if service.Interactive() {
+		defer logger.Info("Send interrupt to stop")
+	}
+
+	return logger.Info(ipc.StdReady)
 }
 
 // TODO: placeholder - move to _platform.go e.g. _systemd.go
@@ -401,17 +406,22 @@ func (daemon *serviceDaemon) Stop(s service.Service) error {
 	daemon.runEnvironmentMu.Lock()
 	defer daemon.runEnvironmentMu.Unlock()
 
+	logger, err := s.Logger(nil)
+	if err != nil {
+		return err
+	}
+
 	// Retrieve the shared memory set in Start.
 	runEnv := daemon.runEnvironment
 	if runEnv == nil {
 		err := errors.New("service is not running")
-		daemon.logger.Errorf("Stop requested but %w", err)
+		logger.Errorf("Stop requested but %s", err)
 		return err
 	}
 	defer func() { daemon.runEnvironment = nil }()
 
-	daemon.logger.Info("Stopping...")
-	defer daemon.logger.Info("Stopped")
+	logger.Info("Stopping...")
+	defer logger.Info("Stopped")
 
 	select {
 	case <-daemon.contextChan:
@@ -426,7 +436,7 @@ func (daemon *serviceDaemon) Stop(s service.Service) error {
 	if err := runEnv.Stop(); err != nil {
 		if !errors.Is(err, context.Canceled) &&
 			!errors.Is(err, context.DeadlineExceeded) {
-			daemon.logger.Errorf("Encountered error while stopping: %w", err)
+			logger.Errorf("Encountered error while stopping: %s", err)
 		}
 		return err
 	}
