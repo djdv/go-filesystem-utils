@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 	"strings"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	"github.com/djdv/go-filesystem-utils/cmd/ipc"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/cmd/service/control"
@@ -24,13 +27,18 @@ import (
 const Name = ipc.ServiceCommandName
 
 var Command = &cmds.Command{
-	NoRemote: true,
-	Run:      fileSystemServiceRun,
-	Options:  parameters.CmdsOptionsFrom((*Settings)(nil)),
-	Encoders: cmds.Encoders,
 	Helptext: cmds.HelpText{
 		Tagline: ipc.ServiceDescription,
 	},
+	NoRemote: true,
+	PreRun:   fileSystemServicePreRun,
+	Run:      fileSystemServiceRun,
+	PostRun: cmds.PostRunMap{
+		cmds.CLI: formatFileSystemService,
+	},
+	Options:  parameters.CmdsOptionsFrom((*Settings)(nil)),
+	Encoders: cmds.Encoders,
+	Type:     Response{},
 	Subcommands: func() map[string]*cmds.Command {
 		var (
 			actions     = service.ControlAction[:]
@@ -45,10 +53,28 @@ var Command = &cmds.Command{
 	}(),
 }
 
-func fileSystemServiceRun(request *cmds.Request, _ cmds.ResponseEmitter, env cmds.Environment) error {
-	if err := filesystem.RegisterPathMultiaddr(); err != nil {
-		return err
+type (
+	ResponseStatus uint
+	Response       struct {
+		Status ResponseStatus `json:",omitempty"`
+		// formats.Multiaddr?
+		ListenerMaddr multiaddr.Multiaddr `json:",omitempty"`
+		Info          string              `json:",omitempty"`
 	}
+)
+
+const (
+	_ ResponseStatus = iota
+	Starting
+	Ready
+	Stopped
+)
+
+func fileSystemServicePreRun(*cmds.Request, cmds.Environment) error {
+	return filesystem.RegisterPathMultiaddr()
+}
+
+func fileSystemServiceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
 	var (
 		ctx             = request.Context
 		settings        = new(Settings)
@@ -69,20 +95,41 @@ func fileSystemServiceRun(request *cmds.Request, _ cmds.ResponseEmitter, env cmd
 		return err
 	}
 
-	serviceDaemon := newDaemon(ctx, &settings.Settings, env)
-
-	return runService(request.Context, serviceConfig, serviceDaemon)
+	return runService(request.Context,
+		emitter, env,
+		&settings.Settings, serviceConfig,
+	)
 }
 
-func runService(ctx context.Context, config *service.Config, daemon *serviceDaemon) error {
-	fileSystemService, err := service.New(daemon, config)
+func runService(ctx context.Context,
+	emitter cmds.ResponseEmitter, env cmds.Environment,
+	settings *fscmds.Settings, serviceConfig *service.Config) error {
+	var (
+		serviceErrs   = make(chan error)
+		serviceDaemon = newDaemon(ctx, settings, env)
+	)
+	defer close(serviceErrs)
+
+	fileSystemService, err := service.New(serviceDaemon, serviceConfig)
 	if err != nil {
 		return err
 	}
+
 	if service.Interactive() {
-		return runInteractiveMode(ctx, fileSystemService, daemon)
+		serviceDaemon.logger = newCmdsLogger(emitter, serviceErrs)
+		go func() {
+			serviceErrs <- runInteractiveMode(ctx, fileSystemService, serviceDaemon)
+		}()
+	} else {
+		logger, err := newServiceLogger(fileSystemService, serviceErrs)
+		if err != nil {
+			return err
+		}
+		serviceDaemon.logger = logger
+		go func() { serviceErrs <- fileSystemService.Run() }()
 	}
-	return runServiceMode(ctx, fileSystemService)
+
+	return <-serviceErrs
 }
 
 func runInteractiveMode(ctx context.Context, systemService service.Service, daemon *serviceDaemon) error {
@@ -100,33 +147,6 @@ func runInteractiveMode(ctx context.Context, systemService service.Service, daem
 	}
 
 	return daemonContext.Err()
-}
-
-func runServiceMode(ctx context.Context, systemService service.Service) error {
-	serviceChan := make(chan error)
-	go func() { serviceChan <- systemService.Run() }()
-
-	select {
-	case runErr := <-serviceChan:
-		// service Run returned, likely from a Stop request
-		return runErr
-	case <-ctx.Done():
-		// Run has not returned, but we're canceled.
-		// Issue the stop control ourselves.
-		if stopErr := systemService.Stop(); stopErr != nil {
-			return fmt.Errorf("could not stop service process: %w", stopErr)
-		}
-
-		// NOTE [unstoppable]:
-		// If this blocks forever, it's an implementation error.
-		// However, if Run doesn't return soon,
-		// the service manager will kill the process anyway. ☠
-		if runErr := <-serviceChan; runErr != nil {
-			return runErr
-		}
-
-		return ctx.Err()
-	}
 }
 
 func getServiceListeners(providedMaddrs ...multiaddr.Multiaddr) (serviceListeners []manet.Listener,
@@ -192,4 +212,55 @@ func maybeGetUnixSocketDir(ma multiaddr.Multiaddr) (target string, hadUnixCompon
 		return false
 	})
 	return
+}
+
+func formatFileSystemService(response cmds.Response, emitter cmds.ResponseEmitter) error {
+	var (
+		request         = response.Request()
+		ctx             = request.Context
+		settings        = new(Settings)
+		unsetArgs, errs = parameters.ParseSettings(ctx, settings,
+			parameters.SettingsFromCmds(request),
+			parameters.SettingsFromEnvironment(),
+		)
+	)
+	if _, err := parameters.AccumulateArgs(ctx, unsetArgs, errs); err != nil {
+		return err
+	}
+
+	outputs := formats.MakeOptionalOutputs(response.Request(), emitter)
+
+	for {
+		untypedResponse, err := response.Next()
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				return err
+			}
+			return nil
+		}
+
+		response, ok := untypedResponse.(*Response)
+		if !ok {
+			return cmds.Errorf(cmds.ErrImplementation,
+				"emitter sent unexpected type+value: %#v", untypedResponse)
+		}
+
+		switch response.Status {
+		case Starting:
+			outputs.Print(ipc.StdHeader + "\n")
+		case Ready:
+			if response.ListenerMaddr != nil {
+				outputs.Print(fmt.Sprintf("%s%s\n", ipc.StdGoodStatus, response.ListenerMaddr))
+			} else {
+				outputs.Print(ipc.StdReady + "\n")
+				outputs.Print("Send interrupt to stop\n")
+			}
+		}
+
+		if response.Info != "" {
+			outputs.Print(response.Info + "\n")
+		}
+
+		outputs.Emit(response)
+	}
 }
