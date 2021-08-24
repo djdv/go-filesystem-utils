@@ -97,7 +97,7 @@ func formatUnmount(response cmds.Response, emitter cmds.ResponseEmitter) error {
 		}
 
 		// TODO: Format into table.
-		outputs.Print(response.Multiaddr.String())
+		outputs.Print(response.Multiaddr.String() + "\n")
 		outputs.Emit(response)
 	}
 }

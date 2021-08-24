@@ -77,7 +77,7 @@ out:
 		gotResponse = true
 
 		// TODO: Format into table.
-		outputs.Print(response.Multiaddr.String())
+		outputs.Print(response.Multiaddr.String() + "\n")
 		outputs.Emit(response)
 	}
 
