@@ -43,7 +43,7 @@ func (maddr *Multiaddr) UnmarshalText(b []byte) error {
 
 func (maddr Multiaddr) MarshalJSON() ([]byte, error) {
 	if maddr.Interface == nil {
-		return nil, fmt.Errorf("response's Request field must be populated")
+		return nil, fmt.Errorf("response's Interface field must be populated")
 	}
 	return json.Marshal(maddr.Interface.Bytes())
 }
