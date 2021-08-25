@@ -59,7 +59,8 @@ func (env *daemonEnvironment) Mount(request *cmds.Request) ([]filesystem.MountPo
 	switch fsid {
 	case filesystem.IPFS,
 		filesystem.IPNS,
-		filesystem.PinFS:
+		filesystem.PinFS,
+		filesystem.KeyFS:
 		var (
 			ipfsMaddr = settings.IPFSMaddr
 			err       error

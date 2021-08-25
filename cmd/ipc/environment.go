@@ -13,6 +13,7 @@ import (
 	"github.com/djdv/go-filesystem-utils/filesystem"
 	"github.com/djdv/go-filesystem-utils/filesystem/cgofuse"
 	ipfs "github.com/djdv/go-filesystem-utils/filesystem/ipfscore"
+	"github.com/djdv/go-filesystem-utils/filesystem/keyfs"
 	"github.com/djdv/go-filesystem-utils/filesystem/pinfs"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	ipfsconfig "github.com/ipfs/go-ipfs-config"
@@ -179,6 +180,8 @@ func (env *daemonEnvironment) getIPFS(fsid filesystem.ID, ipfsMaddr multiaddr.Mu
 			fileSystem = ipfs.NewInterface(ctx, binding.client, fsid)
 		case filesystem.PinFS:
 			fileSystem = pinfs.NewInterface(ctx, binding.client)
+		case filesystem.KeyFS:
+			fileSystem = keyfs.NewInterface(ctx, binding.client)
 		default:
 			return nil, fmt.Errorf("TODO: real msg - fsid \"%s\" not yet supported", fsid.String())
 		}

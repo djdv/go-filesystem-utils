@@ -62,6 +62,7 @@ func registerMountSubcommands(parent *cmds.Command) {
 			filesystem.IPFS,
 			filesystem.IPNS,
 			filesystem.PinFS,
+			filesystem.KeyFS,
 		} {
 			var (
 				goFSName  = strings.ToLower(id.String())
