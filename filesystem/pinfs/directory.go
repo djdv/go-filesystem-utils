@@ -93,6 +93,13 @@ func (pd *pinDirectory) StreamDir(ctx context.Context, output chan<- fs.DirEntry
 	return errs
 }
 
+func max(x, y int) int {
+	if x > y {
+		return x
+	}
+	return y
+}
+
 func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	const op errors.Op = "pinDirectory.ReadDir"
 	var (
@@ -100,10 +107,11 @@ func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 		errs    = pd.errs
 	)
 	if entries == nil {
-		output := make(chan fs.DirEntry, count)
+		output := make(chan fs.DirEntry, max(0, count))
 		errs = pd.StreamDir(pd.ctx, output)
 		pd.transformed = output
 		pd.errs = errs
+		entries = output
 	}
 
 	var (
@@ -123,6 +131,7 @@ func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 		ents = make([]fs.DirEntry, 0, count)
 	}
 
+out:
 	for ; count != 0; count-- {
 		select {
 		case ent, ok := <-entries:
@@ -130,7 +139,7 @@ func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 				if count > 0 {
 					err = io.EOF
 				}
-				break
+				break out
 			}
 			ents = append(ents, ent)
 		case err := <-errs:

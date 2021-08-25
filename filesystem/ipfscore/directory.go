@@ -135,6 +135,13 @@ func (cd *coreDirectory) StreamDir(ctx context.Context, output chan<- fs.DirEntr
 	return errs
 }
 
+func max(x, y int) int {
+	if x > y {
+		return x
+	}
+	return y
+}
+
 func (cd *coreDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	const op errors.Op = "coreDirectory.ReadDir"
 	var (
@@ -142,10 +149,11 @@ func (cd *coreDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 		errs    = cd.errs
 	)
 	if entries == nil {
-		output := make(chan fs.DirEntry, count)
+		output := make(chan fs.DirEntry, max(0, count))
 		errs = cd.StreamDir(cd.ctx, output)
 		cd.transformed = output
 		cd.errs = errs
+		entries = output
 	}
 
 	var (
@@ -165,6 +173,7 @@ func (cd *coreDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 		ents = make([]fs.DirEntry, 0, count)
 	}
 
+out:
 	for ; count != 0; count-- {
 		select {
 		case ent, ok := <-entries:
@@ -172,7 +181,7 @@ func (cd *coreDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 				if count > 0 {
 					err = io.EOF
 				}
-				break
+				break out
 			}
 			ents = append(ents, ent)
 		case err := <-errs:
