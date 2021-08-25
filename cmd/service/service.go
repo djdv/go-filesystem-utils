@@ -38,7 +38,7 @@ var Command = &cmds.Command{
 	},
 	Options:  parameters.CmdsOptionsFrom((*Settings)(nil)),
 	Encoders: cmds.Encoders,
-	Type:     Response{},
+	Type:     ipc.ServiceResponse{},
 	Subcommands: func() map[string]*cmds.Command {
 		var (
 			actions     = service.ControlAction[:]
@@ -52,23 +52,6 @@ var Command = &cmds.Command{
 		return subcommands
 	}(),
 }
-
-type (
-	ResponseStatus uint
-	Response       struct {
-		Status ResponseStatus `json:",omitempty"`
-		// formats.Multiaddr?
-		ListenerMaddr multiaddr.Multiaddr `json:",omitempty"`
-		Info          string              `json:",omitempty"`
-	}
-)
-
-const (
-	_ ResponseStatus = iota
-	Starting
-	Ready
-	Stopped
-)
 
 func fileSystemServicePreRun(*cmds.Request, cmds.Environment) error {
 	return filesystem.RegisterPathMultiaddr()
@@ -104,32 +87,23 @@ func fileSystemServiceRun(request *cmds.Request, emitter cmds.ResponseEmitter, e
 func runService(ctx context.Context,
 	emitter cmds.ResponseEmitter, env cmds.Environment,
 	settings *fscmds.Settings, serviceConfig *service.Config) error {
-	var (
-		serviceErrs   = make(chan error)
-		serviceDaemon = newDaemon(ctx, settings, env)
-	)
-	defer close(serviceErrs)
-
+	serviceDaemon := newDaemon(ctx, settings, env)
 	fileSystemService, err := service.New(serviceDaemon, serviceConfig)
 	if err != nil {
 		return err
 	}
 
 	if service.Interactive() {
-		serviceDaemon.logger = newCmdsLogger(emitter, serviceErrs)
-		go func() {
-			serviceErrs <- runInteractiveMode(ctx, fileSystemService, serviceDaemon)
-		}()
-	} else {
-		logger, err := newServiceLogger(fileSystemService, serviceErrs)
-		if err != nil {
-			return err
-		}
-		serviceDaemon.logger = logger
-		go func() { serviceErrs <- fileSystemService.Run() }()
+		serviceDaemon.logger = newCmdsLogger(emitter)
+		return runInteractiveMode(ctx, fileSystemService, serviceDaemon)
 	}
 
-	return <-serviceErrs
+	logger, err := newServiceLogger(fileSystemService)
+	if err != nil {
+		return err
+	}
+	serviceDaemon.logger = logger
+	return fileSystemService.Run()
 }
 
 func runInteractiveMode(ctx context.Context, systemService service.Service, daemon *serviceDaemon) error {
@@ -243,26 +217,32 @@ func formatFileSystemService(response cmds.Response, emitter cmds.ResponseEmitte
 			return nil
 		}
 
-		response, ok := untypedResponse.(*Response)
+		response, ok := untypedResponse.(*ipc.ServiceResponse)
 		if !ok {
 			return cmds.Errorf(cmds.ErrImplementation,
 				"emitter sent unexpected type+value: %#v", untypedResponse)
 		}
 
 		switch response.Status {
-		case Starting:
+		case ipc.ServiceStarting:
 			outputs.Print(ipc.StdHeader + "\n")
-		case Ready:
-			if response.ListenerMaddr != nil {
-				outputs.Print(fmt.Sprintf("%s%s\n", ipc.StdGoodStatus, response.ListenerMaddr))
+		case ipc.ServiceReady:
+			if encodedMaddr := response.ListenerMaddr; encodedMaddr != nil {
+				outputs.Print(fmt.Sprintf("%s%s\n", ipc.StdGoodStatus, encodedMaddr.Interface))
 			} else {
 				outputs.Print(ipc.StdReady + "\n")
 				outputs.Print("Send interrupt to stop\n")
 			}
-		}
-
-		if response.Info != "" {
-			outputs.Print(response.Info + "\n")
+		case ipc.ServiceError:
+			if errMsg := response.Info; errMsg == "" {
+				outputs.Error(errors.New("service responded with an error status, but no message\n"))
+			} else {
+				outputs.Error(errors.New(errMsg + "\n"))
+			}
+		default:
+			if response.Info != "" {
+				outputs.Print(response.Info + "\n")
+			}
 		}
 
 		outputs.Emit(response)

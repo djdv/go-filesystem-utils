@@ -104,7 +104,8 @@ func (daemon *serviceDaemon) Start(s service.Service) error {
 	defer daemon.runEnvironmentMu.Unlock()
 
 	if err := daemon.startCheck(); err != nil {
-		daemon.logger.Errorf("Start requested but %w", err)
+		err = fmt.Errorf("Start requested but %w", err)
+		daemon.logger.Error(err)
 		return err
 	}
 	if err := daemon.logger.Starting(); err != nil {
@@ -113,7 +114,8 @@ func (daemon *serviceDaemon) Start(s service.Service) error {
 
 	listeners, serviceCleanup, err := getServiceListeners(daemon.ServiceMaddrs...)
 	if err != nil {
-		daemon.logger.Errorf("Service initialization error: %w", err)
+		err = fmt.Errorf("Service initialization error: %w", err)
+		daemon.logger.Error(err)
 		return err
 	}
 
@@ -152,7 +154,7 @@ func (daemon *serviceDaemon) Start(s service.Service) error {
 					// Don't consider this an error.
 				case <-runContext.Done():
 					ctxErr := runContext.Err()
-					daemon.logger.Warning("Interrupt: ", ctxErr)
+					daemon.logger.Warningf("Interrupt: %s", ctxErr)
 					// Start's caller canceled.
 					// Return the context error to them.
 					runErrs <- ctxErr
@@ -165,14 +167,14 @@ func (daemon *serviceDaemon) Start(s service.Service) error {
 			if idleErrs == nil {
 				return
 			}
-			daemon.logger.Infof("Requested to stop if not busy every %s",
-				serviceStopInterval)
+			daemon.logger.Infof("Requested to stop if not busy every %s", serviceStopInterval)
 
 			runWg.Add(1)
 			go func() {
 				defer runWg.Done()
 				for err := range idleErrs {
-					daemon.logger.Errorf("Service idle-watcher err: %w", err)
+					err = fmt.Errorf("Service idle-watcher err: %w", err)
+					daemon.logger.Error(err)
 					runCancel()
 					runErrs <- err
 				}
@@ -187,7 +189,8 @@ func (daemon *serviceDaemon) Start(s service.Service) error {
 				go func() {
 					defer runWg.Done()
 					for err := range serverErrs {
-						daemon.logger.Errorf("HTTP server error: %w", err)
+						err = fmt.Errorf("HTTP server error: %w", err)
+						daemon.logger.Error(err)
 						runErrs <- err
 					}
 				}()
@@ -404,8 +407,8 @@ func (daemon *serviceDaemon) Stop(s service.Service) error {
 	// Retrieve the shared memory set in Start.
 	runEnv := daemon.runEnvironment
 	if runEnv == nil {
-		err := errors.New("service is not running")
-		daemon.logger.Errorf("Stop requested but %w", err)
+		err := errors.New("Stop requested but service is not running")
+		daemon.logger.Error(err)
 		return err
 	}
 	defer func() { daemon.runEnvironment = nil }()
@@ -426,7 +429,8 @@ func (daemon *serviceDaemon) Stop(s service.Service) error {
 	if err := runEnv.Stop(); err != nil {
 		if !errors.Is(err, context.Canceled) &&
 			!errors.Is(err, context.DeadlineExceeded) {
-			daemon.logger.Errorf("Encountered error while stopping: %w", err)
+			err = fmt.Errorf("Encountered error while stopping: %w", err)
+			daemon.logger.Error(err)
 		}
 		return err
 	}
