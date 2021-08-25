@@ -1,5 +1,17 @@
 package ipc
 
+import "github.com/djdv/go-filesystem-utils/cmd/formats"
+
+type (
+	//TODO: Document; servers are expected to emit a series of these in a particular way.
+	ServiceStatus   uint
+	ServiceResponse struct {
+		Status        ServiceStatus      `json:",omitempty"`
+		ListenerMaddr *formats.Multiaddr `json:",omitempty"`
+		Info          string             `json:",omitempty"`
+	}
+)
+
 const (
 	// Servers and clients should use these values as various rally points.
 	// Where servers expose them and clients look for them in relevant APIs.
@@ -21,12 +33,20 @@ const (
 	ServiceName = "FileSystem"
 
 	// ServiceDisplayName is the unrestricted / human friendly version of ServiceName.
-	ServiceDisplayName = "File System Service"
+	ServiceDisplayName = "File system service"
 
-	// NOTE: Used by the executor.
-	// To synchronize with a service subprocess that outputs to StdErr.
-	// TODO: document + names; this moved and was exported. Now needs to be canonized.
+	// TODO: document + names
+	// These values are expected to be printed on stdout by service servers.
+	// TODO: the stdio protocol explanation here; header first; anything; ready
+	// errors go to stderr.
 	StdHeader     = ServiceDisplayName + " starting..."
 	StdGoodStatus = "Listening on: "
 	StdReady      = ServiceDisplayName + " started"
+
+	// TODO: document + names + protocol
+	// These are non-text values to synchronize through other means (like JSON)
+	_ ServiceStatus = iota
+	ServiceStarting
+	ServiceReady
+	ServiceError
 )
