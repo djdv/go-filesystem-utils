@@ -15,21 +15,26 @@ type (
 	// and an `Emit` method which sends values to an encoder
 	// which matching the requested type.
 	OptionalOutputs interface {
-		Emit(v interface{}) error
-		Print(s string) (err error)
+		Emit(interface{}) error
+		Print(string) error
+		Error(error) error
 		Console() io.Writer
 	}
 	optionalOutputs struct {
-		emit    cmdsEmitFunc
-		console io.Writer
+		emit            cmdsEmitFunc
+		console, stderr io.Writer
 	}
 
 	cmdsEmitFunc func(interface{}) error
 )
 
+func (oo *optionalOutputs) Console() io.Writer         { return oo.console }
 func (oo *optionalOutputs) Emit(v interface{}) error   { return oo.emit(v) }
 func (oo *optionalOutputs) Print(s string) (err error) { _, err = oo.console.Write([]byte(s)); return }
-func (oo *optionalOutputs) Console() io.Writer         { return oo.console }
+func (oo *optionalOutputs) Error(err error) (writeErr error) {
+	_, writeErr = oo.stderr.Write([]byte(err.Error()))
+	return
+}
 
 // TODO: Name.
 func MakeOptionalOutputs(request *cmds.Request, re cmds.ResponseEmitter) OptionalOutputs {
@@ -44,12 +49,14 @@ func MakeOptionalOutputs(request *cmds.Request, re cmds.ResponseEmitter) Optiona
 		// let console formatters write directly to the console,
 		// emitter will discard input
 		outs.console = console.Stdout()
+		outs.stderr = console.Stderr()
 		outs.emit = func(interface{}) error { return nil }
 	} else {
 		// otherwise give emitter passed to us, exclusive access
 		// to the value stream.
 		// discard decoration text
 		outs.console = io.Discard
+		outs.stderr = io.Discard
 		outs.emit = re.Emit
 	}
 	return &outs
