@@ -30,7 +30,7 @@ func NewInterface(ctx context.Context, core coreiface.CoreAPI) fs.FS {
 	}
 }
 
-func (pi *pinInterface) ID() filesystem.ID { return filesystem.PinFS }
+func (*pinInterface) ID() filesystem.ID { return filesystem.PinFS }
 
 func (pi *pinInterface) Open(name string) (fs.File, error) {
 	const op errors.Op = "pinfs.Open"

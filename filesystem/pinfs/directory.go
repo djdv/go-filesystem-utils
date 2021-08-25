@@ -157,7 +157,7 @@ type pinDirEntry struct {
 	ipfs fs.FS
 }
 
-func (pe *pinDirEntry) Name() string { return path.Base(pe.Path().String()) }
+func (pe *pinDirEntry) Name() string { return path.Base(pe.Pin.Path().String()) }
 
 func (pe *pinDirEntry) Info() (fs.FileInfo, error) {
 	return fs.Stat(pe.ipfs, pe.Pin.Path().Cid().String())
