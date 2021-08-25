@@ -171,36 +171,40 @@ func interactiveListeners(providedMaddrs ...multiaddr.Multiaddr) (serviceListene
 	// First suggestion should be most local to the user that launched us.
 	suggestedMaddr := localDefaults[0]
 
-	unixSocketDir, hadUnixSocket := maybeGetUnixSocketDir(suggestedMaddr)
+	unixSocketPath, hadUnixSocket := maybeGetUnixSocketPath(suggestedMaddr)
 	if hadUnixSocket {
-		// If it contains a Unix socket, make the parent directory for it
-		// and allow it to be deleted when the caller is done with it.
-		if err = os.MkdirAll(unixSocketDir, 0o775); err != nil {
+		if _, err = os.Stat(unixSocketPath); err == nil {
+			err = fmt.Errorf("socket file already exists: \"%s\"", unixSocketPath)
 			return
 		}
-		serviceCleanup = func() error { return os.Remove(unixSocketDir) }
+		// If it contains a Unix socket, make the parent directory for it
+		// and allow it to be deleted when the caller is done with it.
+		parent := filepath.Dir(unixSocketPath)
+		if err = os.MkdirAll(parent, 0o775); err != nil {
+			return
+		}
+		serviceCleanup = func() error { return os.Remove(parent) }
 	}
 
 	serviceListeners, err = listen(suggestedMaddr)
 	if err != nil && serviceCleanup != nil {
 		if cErr := serviceCleanup(); cErr != nil {
-			err = fmt.Errorf("%w - could not cleanup: %s", err, cErr)
+			err = fmt.Errorf("%w - could not cleanup: %T", err, cErr)
 		}
 	}
 
 	return
 }
 
-// maybeGetUnixSocketDir returns the parent directory
+// maybeGetUnixSocketPath returns the path
 // of the first Unix domain socket within the multiaddr (if any).
-func maybeGetUnixSocketDir(ma multiaddr.Multiaddr) (target string, hadUnixComponent bool) {
+func maybeGetUnixSocketPath(ma multiaddr.Multiaddr) (target string, hadUnixComponent bool) {
 	multiaddr.ForEach(ma, func(comp multiaddr.Component) bool {
 		if hadUnixComponent = comp.Protocol().Code == multiaddr.P_UNIX; hadUnixComponent {
 			target = comp.Value()
 			if runtime.GOOS == "windows" { // `/C:\path` -> `C:\path`
 				target = strings.TrimPrefix(target, `/`)
 			}
-			target = filepath.Dir(target)
 			return true
 		}
 		return false
