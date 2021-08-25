@@ -110,12 +110,12 @@ func runService(ctx context.Context,
 	}
 
 	if service.Interactive() {
-		serviceDaemon.logger = newCmdsLogger(emitter, serviceErrs)
+		serviceDaemon.logger = newCmdsLogger(emitter)
 		go func() {
 			serviceErrs <- runInteractiveMode(ctx, fileSystemService, serviceDaemon)
 		}()
 	} else {
-		logger, err := newServiceLogger(fileSystemService, serviceErrs)
+		logger, err := newServiceLogger(fileSystemService)
 		if err != nil {
 			return err
 		}
