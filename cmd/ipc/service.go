@@ -9,20 +9,6 @@ import (
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
-	"github.com/multiformats/go-multiaddr"
-)
-
-type (
-	SystemController struct {
-		service.Status
-		Error error
-	}
-
-	// TODO: Text encoder.
-	ServiceStatus struct {
-		Listeners []multiaddr.Multiaddr
-		SystemController
-	}
 )
 
 func (env *daemonEnvironment) ServiceConfig(request *cmds.Request) (*service.Config, error) {

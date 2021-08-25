@@ -28,6 +28,17 @@ func (*controller) Stop(service.Service) error  { return errControlOnly }
 
 const Name = "status"
 
+type (
+	SystemController struct {
+		service.Status
+		Error error
+	}
+	Response struct {
+		Listeners []multiaddr.Multiaddr
+		SystemController
+	}
+)
+
 // Status queries the status of the service daemon
 // and the operating system's own service manager.
 var Command = &cmds.Command{
@@ -36,7 +47,7 @@ var Command = &cmds.Command{
 	},
 	NoRemote: true,
 	Encoders: cmds.Encoders,
-	Type:     ipc.ServiceStatus{},
+	Type:     Response{},
 	Run: func(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
 		var (
 			ctx             = request.Context
@@ -45,7 +56,7 @@ var Command = &cmds.Command{
 				parameters.SettingsFromCmds(request),
 				parameters.SettingsFromEnvironment(),
 			)
-			statusResponse ipc.ServiceStatus
+			statusResponse Response
 		)
 		if _, err := parameters.AccumulateArgs(ctx, unsetArgs, errs); err != nil {
 			return err
@@ -67,7 +78,7 @@ var Command = &cmds.Command{
 
 		{
 			controllerStatus, svcErr := serviceClient.Status()
-			statusResponse.SystemController = ipc.SystemController{
+			statusResponse.SystemController = SystemController{
 				Status: controllerStatus,
 				Error:  svcErr,
 			}
@@ -130,7 +141,7 @@ func formatStatus(response cmds.Response, emitter cmds.ResponseEmitter) error {
 			return err
 		}
 
-		responseValue, ok := untypedResponse.(*ipc.ServiceStatus)
+		responseValue, ok := untypedResponse.(*Response)
 		if !ok {
 			return cmds.Errorf(cmds.ErrImplementation,
 				"emitter sent unexpected type+value: %#v", untypedResponse)
