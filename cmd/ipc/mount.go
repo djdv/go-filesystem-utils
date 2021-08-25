@@ -1,7 +1,6 @@
 package ipc
 
 import (
-	"errors"
 	"fmt"
 	"io/fs"
 
@@ -75,7 +74,7 @@ func (env *daemonEnvironment) Mount(request *cmds.Request) ([]filesystem.MountPo
 			return nil, err
 		}
 	default:
-		return nil, errors.New("TODO: real msg - fsid not supported")
+		return nil, fmt.Errorf("TODO: real msg - fsid \"%s\" not yet supported", fsid)
 	}
 
 	var (
@@ -89,7 +88,7 @@ func (env *daemonEnvironment) Mount(request *cmds.Request) ([]filesystem.MountPo
 			return nil, err
 		}
 	default:
-		return nil, errors.New("TODO: real msg - fsid not supported")
+		return nil, fmt.Errorf("TODO: real msg - host API \"%s\" not yet supported", host)
 	}
 
 	mountPoints := make([]filesystem.MountPoint, 0, len(targetMaddrs))

@@ -180,7 +180,7 @@ func (env *daemonEnvironment) getIPFS(fsid filesystem.ID, ipfsMaddr multiaddr.Mu
 		case filesystem.PinFS:
 			fileSystem = pinfs.NewInterface(ctx, binding.client)
 		default:
-			return nil, errors.New("TODO: real msg - fsid not supported")
+			return nil, fmt.Errorf("TODO: real msg - fsid \"%s\" not yet supported", fsid.String())
 		}
 		binding.systems[fsid] = fileSystem
 	}
