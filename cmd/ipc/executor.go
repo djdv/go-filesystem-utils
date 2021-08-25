@@ -2,14 +2,15 @@ package ipc
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
-	"strings"
 	"time"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
@@ -156,14 +157,43 @@ func relaunchSelfAsService(exitInterval time.Duration) (*int, multiaddr.Multiadd
 	cmd.Env = os.Environ()
 	if exitInterval != 0 {
 		cmd.Args = append(cmd.Args,
-			fmt.Sprintf("--%s=%s", fscmds.AutoExitInterval().CommandLine(), exitInterval),
+			fmt.Sprintf("--%s=%s",
+				fscmds.AutoExitInterval().CommandLine(), exitInterval,
+			),
+			fmt.Sprintf("--%s=%s",
+				cmds.EncShort, cmds.JSON,
+			),
 		)
 	}
 
 	// Setup IPC
-	servicePipe, err := cmd.StderrPipe()
+	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, nil, err
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	closePipes := func() error {
+		var (
+			err       error
+			stdoutErr = stdoutPipe.Close()
+			stderrErr = stderrPipe.Close()
+		)
+		if stdoutErr != nil {
+			err = fmt.Errorf("could not close stdout: %w", stdoutErr)
+		}
+		if stderrErr != nil {
+			stderrErr = fmt.Errorf("could not close stderr: %w", stderrErr)
+			if err == nil {
+				err = stderrErr
+			} else {
+				err = fmt.Errorf("%w - %s", err, stderrErr)
+			}
+		}
+		return err
 	}
 
 	// Issue the command.
@@ -177,10 +207,14 @@ func relaunchSelfAsService(exitInterval time.Duration) (*int, multiaddr.Multiadd
 		proc      = cmd.Process
 		procState = cmd.ProcessState
 	)
-	serviceMaddr, err := waitForService(servicePipe, startGrace)
+	serviceMaddr, err := waitForService(stdoutPipe, stderrPipe, startGrace)
 	if err != nil {
 		if procState != nil &&
-			!procState.Exited() {
+			!procState.Exited() { // XXX: The error formatting here could be better.
+			if pipeErrs := closePipes(); pipeErrs != nil {
+				err = fmt.Errorf("%w - additionally could not close subprocess pipes: %s",
+					err, pipeErrs)
+			}
 			// Subprocess is still running after a fault.
 			// Implementation fault in service command is implied.
 			if procErr := proc.Kill(); procErr != nil {
@@ -202,53 +236,74 @@ func relaunchSelfAsService(exitInterval time.Duration) (*int, multiaddr.Multiadd
 		return nil, nil, err
 	}
 
-	return &releasedPid, serviceMaddr, servicePipe.Close()
+	return &releasedPid, serviceMaddr, closePipes()
 }
 
 // waitForService scans the reader for signals from the service.
 // Returning after the service is ready, encounters an error, or we time out.
-func waitForService(input io.Reader, timeout time.Duration) (multiaddr.Multiaddr, error) {
+func waitForService(stdout, stderr io.Reader, timeout time.Duration) (multiaddr.Multiaddr, error) {
 	var (
-		serviceScanner = bufio.NewScanner(input)
+		stdoutBuff     bytes.Buffer
+		stdoutTee      = io.TeeReader(stdout, &stdoutBuff)
+		serviceDecoder = json.NewDecoder(stdoutTee)
 		serviceErr     = make(chan error, 1)
 		maddrChan      = make(chan multiaddr.Multiaddr, 1)
 		timeoutChan    <-chan time.Time
 	)
 
-	go func() { // STDIO handling.
-		serviceScanner.Scan()
-		{
-			text := serviceScanner.Text()
-			if !strings.Contains(text, StdHeader) {
-				serviceErr <- fmt.Errorf("unexpected process output:"+
-					"\n\twanted: %s"+
-					"\n\tgot: %s",
-					StdHeader, text,
-				)
+	go func() {
+		for i := 0; ; i++ {
+			var serviceResponse ServiceResponse
+			if err := serviceDecoder.Decode(&serviceResponse); err == io.EOF {
+				break
+			} else if err != nil {
+				serviceErr <- err
 				return
 			}
-		}
+			stdoutBuff.Reset()
 
-		var text string
-		for serviceScanner.Scan() {
-			text = serviceScanner.Text()
-			maddrIndex := strings.Index(text, StdGoodStatus)
-			if maddrIndex >= 0 {
-				maddrIndex += len(StdGoodStatus)
-				maddrString := text[maddrIndex:]
-				if maddr, err := multiaddr.NewMultiaddr(maddrString); err == nil {
-					maddrChan <- maddr
-				} else {
-					serviceErr <- fmt.Errorf("could not parse maddr received from server: %w", err)
+			if i == 0 {
+				if serviceResponse.Status != ServiceStarting {
+					expectedJson, err := json.Marshal(&ServiceResponse{Status: ServiceStarting})
+					if err != nil {
+						serviceErr <- fmt.Errorf("implementation error: %w", err)
+						return
+					}
+					serviceErr <- fmt.Errorf("unexpected process output"+
+						"\n\tExpected: %s"+
+						"\n\tGot: %s",
+						expectedJson,
+						stdoutBuff.String(),
+					)
+					return
 				}
-				return
+				continue
 			}
-			if strings.Contains(text, StdReady) {
+
+			if serviceResponse.Status != ServiceReady {
+				continue
+			}
+
+			encodedMaddr := serviceResponse.ListenerMaddr
+			if encodedMaddr == nil {
 				serviceErr <- fmt.Errorf("service reported ready with no listeners")
 				return
 			}
+			maddrChan <- encodedMaddr.Interface
+			return
 		}
-		serviceErr <- fmt.Errorf("process output ended abruptly: %s", text)
+		serviceErr <- fmt.Errorf("process output ended abruptly - last response: %s",
+			stdoutBuff.String(),
+		)
+	}()
+	go func() {
+		errScanner := bufio.NewScanner(stderr)
+		if !errScanner.Scan() {
+			return
+		}
+		text := errScanner.Text()
+		serviceErr <- fmt.Errorf("got error from stderr: %s", text)
+		return
 	}()
 
 	if timeout > 0 {
