@@ -148,7 +148,9 @@ func interactiveListeners(providedMaddrs ...multiaddr.Multiaddr) (serviceListene
 
 	unixSocketPath, hadUnixSocket := maybeGetUnixSocketPath(suggestedMaddr)
 	if hadUnixSocket {
-		if _, err = os.Stat(unixSocketPath); err == nil {
+		// TODO: switch this back to regular Stat when this is merged
+		// https://go-review.googlesource.com/c/go/+/338069/
+		if _, err = os.Lstat(unixSocketPath); err == nil {
 			err = fmt.Errorf("socket file already exists: \"%s\"", unixSocketPath)
 			return
 		}
@@ -164,7 +166,7 @@ func interactiveListeners(providedMaddrs ...multiaddr.Multiaddr) (serviceListene
 	serviceListeners, err = listen(suggestedMaddr)
 	if err != nil && serviceCleanup != nil {
 		if cErr := serviceCleanup(); cErr != nil {
-			err = fmt.Errorf("%w - could not cleanup: %T", err, cErr)
+			err = fmt.Errorf("%w - could not cleanup: %s", err, cErr)
 		}
 	}
 
