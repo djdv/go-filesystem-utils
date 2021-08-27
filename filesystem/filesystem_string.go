@@ -34,12 +34,13 @@ func _() {
 	_ = x[Files-3]
 	_ = x[PinFS-4]
 	_ = x[KeyFS-5]
-	_ = x[idEnd-6]
+	_ = x[MFS-6]
+	_ = x[idEnd-7]
 }
 
-const _ID_name = "idStartIPFSIPNSFilesPinFSKeyFSidEnd"
+const _ID_name = "idStartIPFSIPNSFilesPinFSKeyFSMFSidEnd"
 
-var _ID_index = [...]uint8{0, 7, 11, 15, 20, 25, 30, 35}
+var _ID_index = [...]uint8{0, 7, 11, 15, 20, 25, 30, 33, 38}
 
 func (i ID) String() string {
 	if i >= ID(len(_ID_index)-1) {

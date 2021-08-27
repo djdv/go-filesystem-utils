@@ -7,6 +7,7 @@ require (
 	github.com/billziss-gh/cgofuse v1.5.0
 	github.com/coreos/go-systemd v0.0.0-20191104093116-d3cd4ed1dbcf
 	github.com/fatih/camelcase v1.0.0
+	github.com/ipfs/go-cid v0.0.7
 	github.com/ipfs/go-ipfs v0.9.1
 	github.com/ipfs/go-ipfs-chunker v0.0.5
 	github.com/ipfs/go-ipfs-cmds v0.6.0

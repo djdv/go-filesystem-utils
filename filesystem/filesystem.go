@@ -45,6 +45,7 @@ const (
 	Files
 	PinFS
 	KeyFS
+	MFS
 	idEnd
 
 	// Existing Multicodec standards:
