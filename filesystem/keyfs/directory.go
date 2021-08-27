@@ -18,6 +18,7 @@ type keyDirectory struct {
 	stat   *rootStat
 	ipns   fs.FS
 	keyAPI coreiface.KeyAPI
+	keys   []coreiface.Key
 }
 
 type keysByName []fs.DirEntry
@@ -42,9 +43,14 @@ func max(x, y int) int {
 
 func (kd *keyDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	const op errors.Op = "keyDirectory.ReadDir"
-	entries, err := kd.keyAPI.List(kd.ctx)
-	if err != nil {
-		return nil, err
+	entries := kd.keys
+	if entries == nil {
+		keys, err := kd.keyAPI.List(kd.ctx)
+		if err != nil {
+			return nil, err
+		}
+		entries = keys
+		kd.keys = entries
 	}
 
 	var ents []fs.DirEntry
@@ -69,10 +75,11 @@ func (kd *keyDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 		ents = append(ents, &keyDirEntry{Key: key, ipns: kd.ipns})
 		count--
 	}
+	kd.keys = entries[len(ents):]
 
 	sort.Sort(keysByName(ents))
 
-	return ents, err
+	return ents, nil
 }
 
 type keyDirEntry struct {
@@ -100,7 +107,7 @@ func (ke *keyDirEntry) Type() fs.FileMode {
 func (ke *keyDirEntry) IsDir() bool { return ke.Type()&fs.ModeDir != 0 }
 
 func (kd *keyDirectory) Close() error {
-	const op errors.Op = "keyfs.Close"
+	const op errors.Op = "keyDirectory.Close"
 	cancel := kd.cancel
 	kd.cancel = nil
 	if cancel == nil {
