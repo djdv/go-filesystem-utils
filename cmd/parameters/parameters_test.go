@@ -360,7 +360,7 @@ func TestEnvironment(t *testing.T) {
 			F: multiaddr.StringCast("/ip4/0.0.0.7"),
 			G: []string{"8", "9"},
 		}
-		// XXX: lazy magic - not particular safe
+		// XXX: lazy magic - not particularly safe
 		insertInEnv = func(set parameters.Settings, offset int, params []parameters.Parameter) {
 			var (
 				setValue = reflect.ValueOf(set).Elem()
@@ -386,7 +386,7 @@ func TestEnvironment(t *testing.T) {
 		pkgParams  = validSettings.Parameters()[len(rootParams):]
 	)
 	const (
-		// XXX: magic because lazy tests, don't mimick this.
+		// XXX: magic because lazy tests, don't mimic this.
 		unrelatedRootPadding = 4
 		paddingAndRoot       = 2
 	)
