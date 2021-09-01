@@ -542,16 +542,7 @@ func TestInvalidArguments(t *testing.T) {
 			nil, nil, &cmds.Command{})
 	)
 
-	argumentTests := append([]invalidInterfaceSet{
-		{
-			"mismatched types",
-			new(testBadSettingsWrongType),
-			"struct fields have different types than the source provides",
-		}},
-		invalidInterfaces...,
-	)
-
-	for _, test := range argumentTests {
+	for _, test := range invalidInterfaces {
 		var (
 			testName = test.name
 			settings = test.settingsIntf

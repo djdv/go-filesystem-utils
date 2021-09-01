@@ -266,51 +266,15 @@ func argumentFieldIn(settingsType reflect.Type) (*reflect.StructField, error) {
 	)
 }
 
-func expandArgument(argument *Argument) (*reflect.Value, reflect.Type, error) {
-	var (
-		leftValue = reflect.ValueOf(argument.ValueReference)
-		leftType  = leftValue.Type()
-		assignErr = func() error {
-			return fmt.Errorf(
-				"cannot assign to argument `%s` reference `%T`",
-				argument.CommandLine(),
-				argument.ValueReference,
-			)
-		}
-	)
-	if leftKind := leftType.Kind(); leftKind != reflect.Ptr {
-		return nil, nil, fmt.Errorf("%w - expecting pointer, got: %v",
-			assignErr(), leftKind,
-		)
-	}
-	if isNil := leftValue.IsNil(); isNil {
-		return nil, nil, fmt.Errorf("%w.IsNil() returned %t",
-			assignErr(), isNil)
-	}
-
-	leftValue = leftValue.Elem()
-	leftType = leftValue.Type()
-
-	if canSet := leftValue.CanSet(); !canSet {
-		return nil, nil, fmt.Errorf("%w.CanSet() returned %t",
-			assignErr(), canSet,
-		)
-	}
-
-	return &leftValue, leftType, nil
-}
-
 func assignToArgument(argument *Argument, value interface{}) error {
 	var (
-		leftValue, leftType, err = expandArgument(argument)
-		rightValue               = reflect.ValueOf(value)
-		rightType                = rightValue.Type()
+		leftValue  = reflect.ValueOf(argument.ValueReference).Elem()
+		leftType   = leftValue.Type()
+		rightValue = reflect.ValueOf(value)
+		rightType  = rightValue.Type()
 
 		durationKind = reflect.TypeOf((*time.Duration)(nil)).Elem().Kind()
 	)
-	if err != nil {
-		return err
-	}
 
 	// TODO: [Ame] Sloppy. Handling for special cases could be better.
 	switch leftType.Kind() {
@@ -333,8 +297,9 @@ func assignToArgument(argument *Argument, value interface{}) error {
 				)
 			}
 			for i, maddr := range maddrStrings {
-				if maddrs[i], err = multiaddr.NewMultiaddr(maddr); err != nil {
-					return err
+				var maddrErr error
+				if maddrs[i], maddrErr = multiaddr.NewMultiaddr(maddr); maddrErr != nil {
+					return maddrErr
 				}
 			}
 			value = maddrs
@@ -363,13 +328,8 @@ func assignToArgument(argument *Argument, value interface{}) error {
 		rightType = leftType
 	}
 
-	assignableTo := rightType.AssignableTo(leftType)
-	if !assignableTo {
-		return fmt.Errorf("`%v`.AssignableTo(`%v`) returned %t",
-			rightType, leftType, assignableTo,
-		)
-	}
 	leftValue.Set(rightValue)
+
 	return nil
 }
 
