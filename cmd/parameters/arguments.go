@@ -167,9 +167,7 @@ func referenceFromField(field reflect.StructField, fieldValue reflect.Value) (in
 			"field (of type `%s`) is not settable",
 			field.Type.Name(),
 		)
-		// TODO: When Go 1.17 is released
-		// if !field.IsExported() {
-		if field.PkgPath != "" {
+		if !field.IsExported() {
 			err = fmt.Errorf("%w (the field is not exported)",
 				err)
 		}

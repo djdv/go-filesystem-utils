@@ -212,9 +212,7 @@ func toCmdsOption(field reflect.StructField, parameter Parameter) cmds.Option {
 
 		durationType = reflect.TypeOf((*time.Duration)(nil)).Elem()
 	)
-	// TODO: When Go 1.17 is released
-	// if !field.IsExported() {
-	if field.PkgPath != "" {
+	if !field.IsExported() {
 		panic(fmt.Errorf(
 			"field `%s` is not exported and thus not settable - refusing to create option",
 			field.Name),
