@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/adrg/xdg"
@@ -35,13 +34,7 @@ func UserServiceMaddrs() ([]multiaddr.Multiaddr, error) {
 // SystemServiceMaddrs returns a list of multiaddrs that servers and client commands
 // may try to use when hosting or querying a system-level file system service.
 func SystemServiceMaddrs() ([]multiaddr.Multiaddr, error) {
-	if runtime.GOOS == "darwin" {
-		return servicePathsToServiceMaddrs(
-			"/Library/Application Support", // NeXT
-			"/var/run",                     // BSD UNIX
-		)
-	}
-	return servicePathsToServiceMaddrs(xdg.ConfigDirs...)
+	return systemServiceMaddrs() // Platform specific.
 }
 
 func servicePathsToServiceMaddrs(servicePaths ...string) ([]multiaddr.Multiaddr, error) {
