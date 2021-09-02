@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
@@ -75,6 +76,24 @@ func embeddedParam3() parameters.Parameter {
 	)
 }
 
+func embeddedParam4() parameters.Parameter {
+	return parameters.NewParameter(
+		"I'm a parameter for a settings struct that gets embedded",
+	)
+}
+
+func embeddedParam5() parameters.Parameter {
+	return parameters.NewParameter(
+		"I'm a parameter for a settings struct that gets embedded",
+	)
+}
+
+func embeddedParam6() parameters.Parameter {
+	return parameters.NewParameter(
+		"I'm a parameter for a settings struct that gets embedded",
+	)
+}
+
 // This is just an arbitrary struct that's not part of the parameter settings
 // but is part of the setting struct. It's here just to satisfy the tests and can be ignored.
 type unrelatedEmbed struct {
@@ -135,9 +154,12 @@ type (
 	}
 
 	testEmbed struct {
-		H bool
-		I int
-		J uint
+		H multiaddr.Multiaddr
+		I []multiaddr.Multiaddr
+		J time.Duration
+		K bool
+		L int
+		M uint
 	}
 
 	// Settings intended to be relevant to functions in this pkg,
@@ -167,6 +189,9 @@ func (*testEmbed) Parameters() parameters.Parameters {
 		embeddedParam1(),
 		embeddedParam2(),
 		embeddedParam3(),
+		embeddedParam4(),
+		embeddedParam5(),
+		embeddedParam6(),
 	}
 }
 
@@ -193,7 +218,8 @@ func (*testSettings) Parameters() parameters.Parameters {
 
 func TestArguments(t *testing.T) {
 	var (
-		ctx = context.Background()
+		ctx          = context.Background()
+		stringMaddrs = []string{"/ip4/0.6.4.0", "/ip4/6.0.0.4", "/tcp/64"}
 
 		// Values to test. (Assign and compare)
 		paramValue   = true
@@ -208,14 +234,19 @@ func TestArguments(t *testing.T) {
 			C:               64,
 			D:               64.0,
 			E:               "sixty four",
-			F:               multiaddr.StringCast("/ip4/0.6.4.0"),
+			F:               multiaddr.StringCast(stringMaddrs[0]),
 			G:               []rune{'6', '4'},
 		}
-
 		embeddedValue = testEmbed{
-			H: true,
-			I: 1234,
-			J: 7,
+			H: multiaddr.StringCast(stringMaddrs[0]),
+			I: []multiaddr.Multiaddr{
+				multiaddr.StringCast(stringMaddrs[1]),
+				multiaddr.StringCast(stringMaddrs[2]),
+			},
+			J: time.Duration(64 * time.Second),
+			K: true,
+			L: 1234,
+			M: 7,
 		}
 
 		// Create a cmds-lib request, utilizing the keys provided
@@ -227,9 +258,12 @@ func TestArguments(t *testing.T) {
 				complexParam().CommandLine():       complexValue,
 				simpleParam().CommandLine():        simpleValue,
 				nestedComplexParam().CommandLine(): veryComplexValue,
-				embeddedParam1().CommandLine():     embeddedValue.H,
-				embeddedParam2().CommandLine():     embeddedValue.I,
-				embeddedParam3().CommandLine():     embeddedValue.J,
+				embeddedParam1().CommandLine():     stringMaddrs[0],
+				embeddedParam2().CommandLine():     stringMaddrs[1:],
+				embeddedParam3().CommandLine():     embeddedValue.J.String(),
+				embeddedParam4().CommandLine():     embeddedValue.K,
+				embeddedParam5().CommandLine():     embeddedValue.L,
+				embeddedParam6().CommandLine():     embeddedValue.M,
 			},
 			nil, nil, &cmds.Command{})
 		// Instantiate the settings struct we need for this function.

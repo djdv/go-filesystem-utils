@@ -290,8 +290,9 @@ func assignToArgument(argument *Argument, value interface{}) error {
 				maddrs           = make([]multiaddr.Multiaddr, len(maddrStrings))
 			)
 			if !ok {
-				return fmt.Errorf("left value (%#v) is a slice, right value (%#v) is not",
-					argument, value,
+				return fmt.Errorf("left value is a maddr slice, "+
+					"right value (%#v) is expected to be slice of strings",
+					value,
 				)
 			}
 			for i, maddr := range maddrStrings {
@@ -310,7 +311,10 @@ func assignToArgument(argument *Argument, value interface{}) error {
 		}
 		durationString, isString := value.(string)
 		if !isString {
-			return fmt.Errorf("expected %T, got %T", durationString, value)
+			return fmt.Errorf("left value is time.Duration, "+
+				"right value (%#v) is expected to be a string",
+				value,
+			)
 		}
 		duration, err := time.ParseDuration(durationString)
 		if err != nil {
