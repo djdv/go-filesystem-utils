@@ -352,40 +352,48 @@ func TestArguments(t *testing.T) {
 		}
 	})
 	t.Run("cancel context", func(t *testing.T) {
-		expectedErr := context.Canceled
+		var (
+			expectedErr = context.Canceled
+			checkErr    = func(err error) {
+				t.Helper()
+				if !errors.Is(err, expectedErr) {
+					t.Errorf("error value does not match"+
+						"\n\twanted: %v"+
+						"\n\tgot: %v",
+						expectedErr, err,
+					)
+				}
+			}
+		)
 		t.Run("parse", func(t *testing.T) {
 			testContext, testCancel := context.WithCancel(ctx)
 			testCancel()
-			unsetArgs, errs = parameters.ParseSettings(testContext, settings,
-				parameters.SettingsFromCmds(request),
-				parameters.SettingsFromEnvironment(),
-			)
-			_, err := parameters.AccumulateArgs(testContext, unsetArgs, errs)
-			if !errors.Is(err, expectedErr) {
-				t.Fatalf("error value does not match"+
-					"\n\twanted: %v"+
-					"\n\tgot: %v",
-					expectedErr, err,
+			t.Run("cmds", func(t *testing.T) {
+				unsetArgs, errs = parameters.ParseSettings(testContext, settings,
+					parameters.SettingsFromCmds(request),
 				)
-			}
+				_, err := parameters.AccumulateArgs(testContext, unsetArgs, errs)
+				checkErr(err)
+			})
+			t.Run("env", func(t *testing.T) {
+				unsetArgs, errs = parameters.ParseSettings(testContext, settings,
+					parameters.SettingsFromEnvironment(),
+				)
+				_, err := parameters.AccumulateArgs(testContext, unsetArgs, errs)
+				checkErr(err)
+			})
 		})
 		t.Run("accumulate", func(t *testing.T) {
 			var (
-				testContext, testCancel = context.WithCancel(ctx)
-				unsetArgs, errs         = parameters.ParseSettings(testContext, settings,
+				unsetArgs, errs = parameters.ParseSettings(ctx, settings,
 					parameters.SettingsFromCmds(request),
 					parameters.SettingsFromEnvironment(),
 				)
+				testContext, testCancel = context.WithCancel(ctx)
 			)
 			testCancel()
 			_, err := parameters.AccumulateArgs(testContext, unsetArgs, errs)
-			if !errors.Is(err, expectedErr) {
-				t.Fatalf("error value does not match"+
-					"\n\twanted: %v"+
-					"\n\tgot: %v",
-					expectedErr, err,
-				)
-			}
+			checkErr(err)
 		})
 	})
 }
