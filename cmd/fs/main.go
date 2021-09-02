@@ -33,9 +33,9 @@ func main() {
 		)
 	)
 	if err != nil {
-		cliError := new(cli.ExitError)
-		if errors.As(err, cliError) {
-			os.Exit(int(*cliError))
+		var cliError cli.ExitError
+		if errors.As(err, &cliError) {
+			os.Exit(int(cliError))
 		}
 	}
 }
