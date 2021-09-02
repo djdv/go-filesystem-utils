@@ -161,6 +161,10 @@ func toCmdsOption(field reflect.StructField, parameter Parameter) cmds.Option {
 	var (
 		optionConstructor func(...string) cmds.Option
 
+		// time.Duration gets a special case.
+		// (Its Kind overlaps with int64)
+		// We also prefer input to be in string format.
+		// `param=3s` not `param=3000000000`.
 		durationType = reflect.TypeOf((*time.Duration)(nil)).Elem()
 	)
 	if !field.IsExported() {
@@ -171,10 +175,6 @@ func toCmdsOption(field reflect.StructField, parameter Parameter) cmds.Option {
 	}
 
 	if field.Type == durationType {
-		// time.Duration gets a special case.
-		// (Its Kind overlaps with int64)
-		// We also prefer input to be in string format.
-		// `param=3s` not `param=3000000000`.
 		optionConstructor = cmds.StringOption
 		goto ret
 	}
