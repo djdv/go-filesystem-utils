@@ -76,17 +76,19 @@ func argumentsFrom(ctx context.Context,
 	go func() {
 		defer close(argumentList)
 		defer close(argumentErrs)
-		// TODO: [Ame] Review - all
-		// Separate any nested containers from their field's offset.
+		// Flatten any nested containers via the index value.
+		// Separating the field offset, from the container's offset.
+		// E.g.
 		// index-value: [1][2][3]
-		// iteration 0: [1][2] <- subcontainer [3] <- offset within container 2
-		// iter 1: [1] subcontainer [2] offset within container 1
-		// iter 2: [1] offset within container that was passed to the function
+		// iteration 0: [1][2] <- subcontainer [3] <- field offset within container 2.
+		// iteration 1: [1] subcontainer [2] <- field offset within container 1.
+		// iteration 2: [1] <- field offset within container that was passed to the function.
 		for sil := len(settingsIndex); argumentsBound != parameterCount &&
 			sil != 0; sil = len(settingsIndex) {
+			// Pop the offset value from the index
+			// and shift the index leftward.
 			offset := settingsIndex[sil-1]
 			settingsIndex = settingsIndex[:sil-1]
-			// Flatten all nested containers via the index value.
 			var (
 				container                     = settingsType.FieldByIndex(settingsIndex).Type
 				containerCtx, containerCancel = context.WithCancel(ctx)
@@ -106,23 +108,21 @@ func argumentsFrom(ctx context.Context,
 					if field.Type.Kind() == reflect.Struct &&
 						field.Anonymous {
 						if field.Type == taggedType {
-							// TODO: [Ame] English.
-							// If the tagged container was embedded,
-							// we already flattened it up front.
-							// And the parent will always contain it,
-							// so skip it when we encounter it again
-							// (while processing its parent).
+							// If the tagged container is embedded
+							// in another container, it implies we
+							// already processed it (first).
+							// Its parent container will always contain that same field,
+							// so skip it when we see it a second time
+							// (while processing the parent container).
 							continue
 						}
-						// Expand in place.
+						// Expand embedded container's fields (in-place).
 						fields = fieldsFrom(containerCtx,
 							field.Type, 0)
 						settingsIndex = append(settingsIndex, field.Index...)
 						continue
 					}
-					// Finally Index into the struct value
-					// (rather than just the type)
-					// and get the address for its actual field.
+					// Index into the struct to get the address for its field value.
 					var (
 						fieldIndex          = append(settingsIndex, field.Index...)
 						fieldValue          = settingsValue.FieldByIndex(fieldIndex)
