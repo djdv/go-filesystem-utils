@@ -124,56 +124,7 @@ func (cs cmdsSettingsSource) setEach(ctx context.Context,
 		// Relaying our inputs as our outputs.
 		return argsToSet, inputErrors
 	}
-	var (
-		unsetArgs = make(chan *Argument, cap(argsToSet))
-		errors    = make(chan error, cap(inputErrors))
-	)
-	go func() {
-		defer close(unsetArgs)
-		defer close(errors)
-		for argsToSet != nil ||
-			inputErrors != nil {
-			select {
-			case argument, ok := <-argsToSet:
-				if !ok {
-					argsToSet = nil
-					continue
-				}
-				commandlineName := argument.Parameter.CommandLine()
-				cmdsArg, provided := options[commandlineName]
-				if provided {
-					if err := assignToArgument(argument, cmdsArg); err != nil {
-						select {
-						case errors <- fmt.Errorf(
-							"parameter `%s`: couldn't assign value: %w",
-							commandlineName, err):
-						case <-ctx.Done():
-						}
-					}
-					continue
-				}
-				select { // Relay parameter to next source.
-				case unsetArgs <- argument:
-				case <-ctx.Done():
-				}
-			case err, ok := <-inputErrors:
-				if !ok {
-					inputErrors = nil
-					continue
-				}
-				// If we encounter an input error,
-				// relay it and keep processing.
-				// The caller may decide to cancel or not afterwards.
-				select {
-				case errors <- err:
-				case <-ctx.Done():
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return unsetArgs, errors
+	return setEach(ctx, fromRequest(options), argsToSet, inputErrors)
 }
 
 func hasUserDefinedOptions(options cmds.OptMap) bool {

@@ -162,6 +162,23 @@ func argumentsFrom(ctx context.Context,
 	return argumentList, argumentErrs
 }
 
+func fromRequest(options cmds.OptMap) providedFunc {
+	return func(argument *Argument) (provided bool, err error) {
+		var (
+			cmdsArg         interface{}
+			commandlineName = argument.Parameter.CommandLine()
+		)
+		if cmdsArg, provided = options[commandlineName]; provided {
+			if err = assignToArgument(argument, cmdsArg); err != nil {
+				err = fmt.Errorf(
+					"parameter `%s`: couldn't assign value: %w",
+					commandlineName, err)
+			}
+		}
+		return
+	}
+}
+
 func referenceFromField(field reflect.StructField, fieldValue reflect.Value) (interface{}, error) {
 	if !fieldValue.CanSet() {
 		err := fmt.Errorf(
