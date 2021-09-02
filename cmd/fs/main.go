@@ -24,7 +24,8 @@ func main() {
 		// cmdline[0] is used literally in helptext generation.
 		ourName = filepath.Base(os.Args[0]) // We set it to the program's name.
 		cmdline = append([]string{          // (sans path, extension, etc.)
-			strings.TrimSuffix(ourName, filepath.Ext(ourName))},
+			strings.TrimSuffix(ourName, filepath.Ext(ourName)),
+		},
 			os.Args[1:]...,
 		)
 		err = cli.Run(ctx, root, cmdline,
