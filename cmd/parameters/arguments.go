@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
 )
 
@@ -266,49 +267,17 @@ func argumentFieldIn(settingsType reflect.Type) (*reflect.StructField, error) {
 
 func assignToArgument(argument *Argument, value interface{}) error {
 	var (
-		leftValue  = reflect.ValueOf(argument.ValueReference).Elem()
-		leftType   = leftValue.Type()
-		rightValue = reflect.ValueOf(value)
-		rightType  = rightValue.Type()
-
-		durationKind = reflect.TypeOf((*time.Duration)(nil)).Elem().Kind()
+		leftValue = reflect.ValueOf(argument.ValueReference).Elem()
+		leftType  = leftValue.Type()
 	)
 
-	// TODO: [Ame] Sloppy. Handling for special cases could be better.
-	switch leftType.Kind() {
-	case reflect.Interface:
-		intfVal, intfType, err := expandInterfaceArgument(leftType, value)
-		if err != nil {
-			return err
+	// Special type cases.
+	switch argument.ValueReference.(type) {
+	case *time.Duration:
+		if _, isDuration := value.(time.Duration); isDuration {
+			break // Direct assign, no parsing.
 		}
-		rightValue, rightType = *intfVal, intfType
-	case reflect.Slice:
-		maddrType := reflect.TypeOf((*multiaddr.Multiaddr)(nil)).Elem()
-		if leftType.Elem().Implements(maddrType) {
-			var (
-				maddrStrings, ok = value.([]string)
-				maddrs           = make([]multiaddr.Multiaddr, len(maddrStrings))
-			)
-			if !ok {
-				return fmt.Errorf("left value is a maddr slice, "+
-					"right value (%#v) is expected to be slice of strings",
-					value,
-				)
-			}
-			for i, maddr := range maddrStrings {
-				var maddrErr error
-				if maddrs[i], maddrErr = multiaddr.NewMultiaddr(maddr); maddrErr != nil {
-					return maddrErr
-				}
-			}
-			value = maddrs
-			rightValue = reflect.ValueOf(value)
-			rightType = rightValue.Type()
-		}
-	case durationKind:
-		if _, isDuration := leftValue.Interface().(time.Duration); !isDuration {
-			break // Argument is an int64, not specifically a time.Duration.
-		}
+
 		durationString, isString := value.(string)
 		if !isString {
 			return fmt.Errorf("left value is time.Duration, "+
@@ -321,38 +290,78 @@ func assignToArgument(argument *Argument, value interface{}) error {
 			return err
 		}
 		value = duration
-		rightValue = reflect.ValueOf(value)
-		rightType = rightValue.Type()
+	case *multiaddr.Multiaddr:
+		if _, isMaddr := value.(multiaddr.Multiaddr); isMaddr {
+			break // Direct assign, no parsing.
+		}
+
+		maddrString, isString := value.(string)
+		if !isString {
+			return fmt.Errorf("Expected multiaddr string, got: %T", value)
+		}
+		maddr, err := multiaddr.NewMultiaddr(maddrString)
+		if err != nil {
+			return err
+		}
+		value = maddr
+	case *[]multiaddr.Multiaddr:
+		if _, isMaddrSlice := value.([]multiaddr.Multiaddr); isMaddrSlice {
+			break // Direct assign, no parsing.
+		}
+		var (
+			maddrStrings, ok = value.([]string)
+			maddrs           = make([]multiaddr.Multiaddr, len(maddrStrings))
+		)
+		if !ok {
+			return fmt.Errorf("left value is a maddr slice, "+
+				"right value (%#v) is expected to be slice of strings",
+				value,
+			)
+		}
+		for i, maddr := range maddrStrings {
+			var maddrErr error
+			if maddrs[i], maddrErr = multiaddr.NewMultiaddr(maddr); maddrErr != nil {
+				return maddrErr
+			}
+		}
+		value = maddrs
 	}
 
-	if convertableTo := rightType.ConvertibleTo(leftType); convertableTo {
-		rightValue = rightValue.Convert(leftType)
-		rightType = leftType
+	var (
+		rightValue = reflect.ValueOf(value)
+		rightType  = rightValue.Type()
+	)
+	switch kind := leftType.Kind(); kind {
+	case cmds.Bool,
+		cmds.Int,
+		cmds.Uint,
+		cmds.Int64,
+		cmds.Uint64,
+		cmds.Float,
+		cmds.String,
+		cmds.Strings,
+		reflect.Uint16,
+		reflect.Uint32,
+		reflect.Int16,
+		reflect.Int32,
+		reflect.Struct,
+		reflect.Slice,
+		reflect.Interface:
+		if convertableTo := rightType.ConvertibleTo(leftType); convertableTo {
+			rightValue = rightValue.Convert(leftType)
+			rightType = leftType
+		}
+	case reflect.Ptr:
+		return fmt.Errorf("left value (%#v) uses multiple layers of indirection (not allowed)",
+			value,
+		)
+	default:
+		return fmt.Errorf("left value (%#v) has unexpected kind (%v)",
+			value, kind,
+		)
 	}
 
 	leftValue.Set(rightValue)
 
 	return nil
-}
-
-func expandInterfaceArgument(leftType reflect.Type, value interface{}) (rightValue *reflect.Value,
-	rightType reflect.Type, err error) {
-	maddrType := reflect.TypeOf((*multiaddr.Multiaddr)(nil)).Elem()
-	if leftType.Implements(maddrType) {
-		var (
-			maddrString, isString = value.(string)
-			maddr                 multiaddr.Multiaddr
-		)
-		if !isString {
-			err = fmt.Errorf("Expected multiaddr string, got: %T", value)
-			return
-		}
-		if maddr, err = multiaddr.NewMultiaddr(maddrString); err != nil {
-			return
-		}
-		maddrValue := reflect.ValueOf(maddr)
-		rightValue = &maddrValue
-		rightType = rightValue.Type()
-	}
-	return
 }

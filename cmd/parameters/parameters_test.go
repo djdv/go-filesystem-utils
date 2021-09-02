@@ -302,6 +302,36 @@ func TestArguments(t *testing.T) {
 			validSettings, settings)
 	}
 
+	t.Run("direct assign", func(t *testing.T) {
+		request.SetOption(embeddedParam1().CommandLine(), validSettings.testEmbed.H)
+		request.SetOption(embeddedParam2().CommandLine(), validSettings.testEmbed.I)
+		request.SetOption(embeddedParam3().CommandLine(), validSettings.testEmbed.J)
+
+		settings.testEmbed.H = nil
+		settings.testEmbed.I = nil
+		settings.testEmbed.J = 0
+
+		unsetArgs, errs = parameters.ParseSettings(ctx, settings,
+			parameters.SettingsFromCmds(request),
+			parameters.SettingsFromEnvironment(),
+		)
+		// Actually start the processing of the sources,
+		// returning a slice of arguments that were not set (ignored here),
+		// and an error if encountered.
+		if _, err := parameters.AccumulateArgs(ctx, unsetArgs, errs); err != nil {
+			t.Fatal(err)
+		}
+
+		if !reflect.DeepEqual(validSettings, settings) {
+			t.Fatalf("settings field values do not match input values"+
+				"\n\twanted:"+
+				"\n\t%#v"+ // These long structs get their own lines.
+				"\n\tgot:"+
+				"\n\t%#v",
+				validSettings, settings)
+		}
+	})
+
 	t.Run("skip cmds", func(t *testing.T) {
 		// This will only show up in tracing, like the test coverage report.
 		// When we determine no parameter options are in the cmds request,
@@ -507,6 +537,16 @@ type (
 		testField  bool `settings:"arguments"`
 		testField2 bool
 	}
+	testBadSettingsUnhandledType1 struct {
+		TestField  interface{} `settings:"arguments"`
+		TestField2 *interface{}
+	}
+	// NOTE: This could be made to work,
+	// but the cmds lib currently doesn't account for these.
+	testBadSettingsUnhandledType2 struct {
+		TestField  complex128 `settings:"arguments"`
+		TestField2 complex64
+	}
 	// NOTE: This could be made to work,
 	// but currently there's no obvious need for it.
 	testNotAStruct bool
@@ -524,6 +564,8 @@ func (*testBadSettingsNonStandardTag) Parameters() parameters.Parameters { retur
 func (*testBadSettingsShort) Parameters() parameters.Parameters          { return invalidParamSet() }
 func (*testBadSettingsWrongType) Parameters() parameters.Parameters      { return invalidParamSet() }
 func (*testBadSettingsUnassignable) Parameters() parameters.Parameters   { return invalidParamSet() }
+func (*testBadSettingsUnhandledType1) Parameters() parameters.Parameters { return invalidParamSet() }
+func (*testBadSettingsUnhandledType2) Parameters() parameters.Parameters { return invalidParamSet() }
 func (testNotAStruct) Parameters() parameters.Parameters                 { return invalidParamSet() }
 
 type invalidInterfaceSet struct {
@@ -557,6 +599,16 @@ var invalidInterfaces = []invalidInterfaceSet{
 		"invalid concrete type",
 		new(testNotAStruct),
 		"this Settings interface is not a struct",
+	},
+	{
+		"uses unhandled types",
+		new(testBadSettingsUnhandledType1),
+		"this Settings interface contains types we don't account for",
+	},
+	{
+		"uses unhandled types",
+		new(testBadSettingsUnhandledType2),
+		"this Settings interface contains types we don't account for",
 	},
 	{
 		"invalid concrete type",
@@ -636,6 +688,57 @@ func TestInvalidArguments(t *testing.T) {
 					"\n\thave: %v",
 					e, err)
 			}
+		}
+	})
+
+	t.Run("bad special values", func(t *testing.T) {
+		// Magic: We only allow this to error (instead of panic)
+		// for types that have special handlers/parsers.
+		// Like time.Duration, multiaddr, etc.
+		// Otherwise this will panic, as it should.
+		var (
+			settings   = new(testSettings)
+			request, _ = cmds.NewRequest(ctx, nil,
+				cmds.OptMap{
+					embeddedParam1().CommandLine(): "not a maddr",
+					embeddedParam2().CommandLine(): []string{"not a maddr"},
+					embeddedParam3().CommandLine(): "not a duration",
+				},
+				nil, nil, &cmds.Command{})
+			unsetArgs, errs = parameters.ParseSettings(ctx, settings,
+				parameters.SettingsFromCmds(request),
+				parameters.SettingsFromEnvironment(),
+			)
+			_, err = parameters.AccumulateArgs(ctx, unsetArgs, errs)
+		)
+		if err == nil {
+			t.Error("expected error but got none (non-parseable special values)")
+		}
+	})
+
+	t.Run("conflicting value typed", func(t *testing.T) {
+		// Magic: We only allow this to error (instead of panic)
+		// for types that have special handlers/parsers.
+		// Like time.Duration, multiaddr, etc.
+		// Otherwise this will panic, as it should.
+		var (
+			settings   = new(testSettings)
+			badValue   = true
+			request, _ = cmds.NewRequest(ctx, nil,
+				cmds.OptMap{
+					embeddedParam1().CommandLine(): badValue,
+					embeddedParam2().CommandLine(): badValue,
+					embeddedParam3().CommandLine(): badValue,
+				},
+				nil, nil, &cmds.Command{})
+			unsetArgs, errs = parameters.ParseSettings(ctx, settings,
+				parameters.SettingsFromCmds(request),
+				parameters.SettingsFromEnvironment(),
+			)
+			_, err = parameters.AccumulateArgs(ctx, unsetArgs, errs)
+		)
+		if err == nil {
+			t.Error("expected error but got none (value types mismatch)")
 		}
 	})
 }
