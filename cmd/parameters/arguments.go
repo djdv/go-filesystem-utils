@@ -299,7 +299,9 @@ func assignToArgument(argument *Argument, value interface{}) error {
 		}
 		duration, err := time.ParseDuration(durationString)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to parse time for %s - %w",
+				argument.CommandLine(), err,
+			)
 		}
 		value = duration
 	case *multiaddr.Multiaddr:
@@ -313,7 +315,9 @@ func assignToArgument(argument *Argument, value interface{}) error {
 		}
 		maddr, err := multiaddr.NewMultiaddr(maddrString)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to parse maddr for %s - %w",
+				argument.CommandLine(), err,
+			)
 		}
 		value = maddr
 	case *[]multiaddr.Multiaddr:
@@ -339,10 +343,7 @@ func assignToArgument(argument *Argument, value interface{}) error {
 		value = maddrs
 	}
 
-	var (
-		rightValue = reflect.ValueOf(value)
-		rightType  = rightValue.Type()
-	)
+	rightValue := reflect.ValueOf(value)
 	switch kind := leftType.Kind(); kind {
 	case cmds.Bool,
 		cmds.Int,
@@ -359,9 +360,9 @@ func assignToArgument(argument *Argument, value interface{}) error {
 		reflect.Struct,
 		reflect.Slice,
 		reflect.Interface:
+		rightType := rightValue.Type()
 		if convertableTo := rightType.ConvertibleTo(leftType); convertableTo {
 			rightValue = rightValue.Convert(leftType)
-			rightType = leftType
 		}
 	case reflect.Ptr:
 		return fmt.Errorf("left value (%#v) uses multiple layers of indirection (not allowed)",
