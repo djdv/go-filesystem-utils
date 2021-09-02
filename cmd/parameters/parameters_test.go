@@ -656,13 +656,18 @@ func TestInvalidArguments(t *testing.T) {
 		})
 	}
 	t.Run("nil inputs", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected to panic but did not - " +
+					"argument generator provided nil argument")
+			} else {
+				t.Log("recovered from panic:\n\t", r)
+			}
+		}()
 		args := make(chan *parameters.Argument, 1)
 		args <- (*parameters.Argument)(nil)
 		close(args)
-		if _, err := parameters.AccumulateArgs(ctx, args, nil); err == nil {
-			t.Error("expected an error but did not receive one - " +
-				"argument generator provided nil argument")
-		}
+		parameters.AccumulateArgs(ctx, args, nil)
 	})
 
 	t.Run("multiple errors", func(t *testing.T) {

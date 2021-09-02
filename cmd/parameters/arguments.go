@@ -3,7 +3,6 @@ package parameters
 import (
 	"context"
 	"encoding/csv"
-	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -218,11 +217,7 @@ func AccumulateArgs(ctx context.Context,
 				continue
 			}
 			if argument == nil {
-				// NOTE: This implies an implementation fault
-				// exists in the input generator.
-				errs = append(errs,
-					errors.New("nil argument was received - aborting"))
-				return unset, flattenErrs(errs...)
+				panic("nil argument was received")
 			}
 			unset = append(unset, *argument)
 		case e, ok := <-inputErrs:
