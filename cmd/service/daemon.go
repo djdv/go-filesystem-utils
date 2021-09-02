@@ -10,6 +10,9 @@ import (
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
 	"github.com/djdv/go-filesystem-utils/cmd/ipc"
+	"github.com/djdv/go-filesystem-utils/cmd/list"
+	"github.com/djdv/go-filesystem-utils/cmd/mount"
+	"github.com/djdv/go-filesystem-utils/cmd/unmount"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	cmdshttp "github.com/ipfs/go-ipfs-cmds/http"
 	"github.com/kardianos/service"
@@ -120,6 +123,11 @@ func (daemon *serviceDaemon) Start(s service.Service) error {
 			Helptext: cmds.HelpText{
 				Tagline: "File system service client.",
 			},
+			Subcommands: map[string]*cmds.Command{
+				mount.Name:   mount.Command,
+				unmount.Name: unmount.Command,
+				list.Name:    list.Command,
+			},
 		}
 		serviceContext, serviceCancel = context.WithCancel(daemon.Context)
 
@@ -153,7 +161,7 @@ func (daemon *serviceDaemon) Start(s service.Service) error {
 		}
 
 		watchIdle = func() {
-			idleErrs, serviceStopInterval := daemon.stopIfNotBusy(runContext)
+			idleErrs, serviceStopInterval := daemon.stopIfNotBusy(runContext, clientRoot)
 			if idleErrs == nil {
 				return
 			}
@@ -307,17 +315,35 @@ func acceptCmdsHTTP(ctx context.Context,
 // If it's not, context.DeadlineExceeded will be sent to the channel.
 // Otherwise, the service will be checked again next interval.
 // (If a service error is encountered, it will be sent to the channel.)
-func (daemon *serviceDaemon) stopIfNotBusy(ctx context.Context) (<-chan error, time.Duration) {
+func (daemon *serviceDaemon) stopIfNotBusy(ctx context.Context,
+	clientRoot *cmds.Command) (<-chan error, time.Duration) {
 	serviceStopInterval := daemon.Settings.AutoExitInterval
 	if serviceStopInterval == 0 {
 		return nil, 0
 	}
 
 	var (
-		stopTicker = time.NewTicker(serviceStopInterval)
-		busyErrs   = make(chan error, 1)
-		// NOTE [placeholder]: this build is never busy
-		checkIfBusy     = func() (bool, error) { return false, nil }
+		stopTicker  = time.NewTicker(serviceStopInterval)
+		busyErrs    = make(chan error, 1)
+		checkIfBusy = func() (isBusy bool, _ error) {
+			fsEnv, err := ipc.CastEnvironment(daemon.cmdsEnvironment)
+			if err != nil {
+				return false, err
+			}
+			req, err := cmds.NewRequest(ctx,
+				[]string{list.Name},
+				nil, nil, nil,
+				clientRoot,
+			)
+			if err != nil {
+				return false, err
+			}
+			instances, err := fsEnv.List(req)
+			if err != nil {
+				return false, err
+			}
+			return len(instances) > 0, nil
+		}
 		queryTheService = func() {
 			defer stopTicker.Stop()
 			defer close(busyErrs)

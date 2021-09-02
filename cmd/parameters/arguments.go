@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/djdv/go-filesystem-utils/filesystem"
 	"github.com/multiformats/go-multiaddr"
 )
 
@@ -305,8 +306,6 @@ func assignToArgument(argument *Argument, value interface{}) error {
 		leftValue, leftType, err = expandArgument(argument)
 		rightValue               = reflect.ValueOf(value)
 		rightType                = rightValue.Type()
-
-		durationKind = reflect.TypeOf((*time.Duration)(nil)).Elem().Kind()
 	)
 	if err != nil {
 		return err
@@ -341,21 +340,54 @@ func assignToArgument(argument *Argument, value interface{}) error {
 			rightValue = reflect.ValueOf(value)
 			rightType = rightValue.Type()
 		}
-	case durationKind:
-		if _, isDuration := leftValue.Interface().(time.Duration); !isDuration {
-			break // Argument is an int64, not specifically a time.Duration.
+	}
+
+	var (
+		toString = func(value interface{}) (string, error) {
+			typedString, isString := value.(string)
+			if !isString {
+				return "", fmt.Errorf("expected %T, got %T", typedString, value)
+			}
+			return typedString, nil
 		}
-		durationString, isString := value.(string)
-		if !isString {
-			return fmt.Errorf("expected %T, got %T", durationString, value)
+		resetArgs = func(newValue interface{}) {
+			value = newValue
+			rightValue = reflect.ValueOf(value)
+			rightType = rightValue.Type()
+		}
+	)
+
+	switch leftValue.Interface().(type) {
+	case time.Duration:
+		durationString, err := toString(value)
+		if err != nil {
+			return err
 		}
 		duration, err := time.ParseDuration(durationString)
 		if err != nil {
 			return err
 		}
-		value = duration
-		rightValue = reflect.ValueOf(value)
-		rightType = rightValue.Type()
+		resetArgs(duration)
+	case filesystem.ID:
+		idString, err := toString(value)
+		if err != nil {
+			return err
+		}
+		id, err := filesystem.StringToID(idString)
+		if err != nil {
+			return err
+		}
+		resetArgs(id)
+	case filesystem.API:
+		apiString, err := toString(value)
+		if err != nil {
+			return err
+		}
+		api, err := filesystem.StringToAPI(apiString)
+		if err != nil {
+			return err
+		}
+		resetArgs(api)
 	}
 
 	if convertableTo := rightType.ConvertibleTo(leftType); convertableTo {

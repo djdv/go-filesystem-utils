@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/djdv/go-filesystem-utils/filesystem"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -215,6 +216,9 @@ func toCmdsOption(field reflect.StructField, parameter Parameter) cmds.Option {
 		// We also prefer input to be in string format.
 		// `param=3s` not `param=3000000000`.
 		durationType = reflect.TypeOf((*time.Duration)(nil)).Elem()
+		// Simple strings <-> enum types
+		fsIDType   = reflect.TypeOf((*filesystem.ID)(nil)).Elem()
+		hostIDType = reflect.TypeOf((*filesystem.API)(nil)).Elem()
 	)
 	// TODO: When Go 1.17 is released
 	// if !field.IsExported() {
@@ -225,7 +229,11 @@ func toCmdsOption(field reflect.StructField, parameter Parameter) cmds.Option {
 		)
 	}
 
-	if field.Type == durationType {
+	// Special type cases
+	switch field.Type {
+	case durationType,
+		fsIDType,
+		hostIDType:
 		optionConstructor = cmds.StringOption
 		goto ret
 	}

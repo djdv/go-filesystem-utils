@@ -14,6 +14,7 @@ import (
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/cmd/service/control"
 	"github.com/djdv/go-filesystem-utils/cmd/service/status"
+	"github.com/djdv/go-filesystem-utils/filesystem"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
 	"github.com/multiformats/go-multiaddr"
@@ -45,6 +46,9 @@ var Command = &cmds.Command{
 }
 
 func fileSystemServiceRun(request *cmds.Request, _ cmds.ResponseEmitter, env cmds.Environment) error {
+	if err := filesystem.RegisterPathMultiaddr(); err != nil {
+		return err
+	}
 	var (
 		ctx             = request.Context
 		settings        = new(Settings)

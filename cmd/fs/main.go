@@ -9,7 +9,10 @@ import (
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
 	"github.com/djdv/go-filesystem-utils/cmd/ipc"
+	"github.com/djdv/go-filesystem-utils/cmd/list"
+	"github.com/djdv/go-filesystem-utils/cmd/mount"
 	"github.com/djdv/go-filesystem-utils/cmd/service"
+	"github.com/djdv/go-filesystem-utils/cmd/unmount"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
 )
@@ -24,6 +27,9 @@ func main() {
 			},
 			Subcommands: map[string]*cmds.Command{
 				service.Name: service.Command,
+				mount.Name:   mount.Command,
+				list.Name:    list.Command,
+				unmount.Name: unmount.Command,
 			},
 		}
 		// cmdline[0] is used literally in helptext generation.
