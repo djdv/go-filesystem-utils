@@ -35,7 +35,7 @@ var Command = &cmds.Command{
 		cmds.CLI: formatFileSystemService,
 	},
 	Options:  parameters.CmdsOptionsFrom((*Settings)(nil)),
-	Encoders: cmds.Encoders,
+	Encoders: formats.CmdsEncoders,
 	Type:     ipc.ServiceResponse{},
 	Subcommands: func() map[string]*cmds.Command {
 		var (
@@ -50,7 +50,6 @@ var Command = &cmds.Command{
 		return subcommands
 	}(),
 }
-
 
 func fileSystemServiceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
 	var (
