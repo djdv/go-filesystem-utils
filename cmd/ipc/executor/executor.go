@@ -1,4 +1,4 @@
-package ipc
+package executor
 
 import (
 	"bufio"
@@ -11,10 +11,13 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	"github.com/djdv/go-filesystem-utils/cmd/ipc"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
+	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	cmdshttp "github.com/ipfs/go-ipfs-cmds/http"
 	"github.com/multiformats/go-multiaddr"
@@ -72,13 +75,24 @@ func MakeExecutor(request *cmds.Request, environment interface{}) (cmds.Executor
 		tryLaunching = true
 	}
 
+	// TODO: we need a special handler for this
+	// stop should stop all --api's that are dialable.
+	// is there some kind of client plexer?
+	// We may have to wrap one
+	if request.Command == stop.Command {
+		// Don't spawn an instance just to stop it.
+		tryLaunching = false
+	}
+
 	var (
+		tried       = make([]string, len(serviceMaddrs))
 		clientHost  string
 		clientOpts  []cmdshttp.ClientOpt
 		foundServer bool
 	)
-	for _, serviceMaddr := range serviceMaddrs {
+	for i, serviceMaddr := range serviceMaddrs {
 		if !fscmds.ServerDialable(serviceMaddr) {
+			tried[i] = serviceMaddr.String()
 			continue
 		}
 		clientHost, clientOpts, err = parseCmdsClientOptions(serviceMaddr)
@@ -89,7 +103,11 @@ func MakeExecutor(request *cmds.Request, environment interface{}) (cmds.Executor
 		break
 	}
 
-	if !foundServer && tryLaunching {
+	if foundServer {
+		return cmdshttp.NewClient(clientHost, clientOpts...), nil
+	}
+
+	if tryLaunching {
 		autoExitInterval := settings.AutoExitInterval
 		if autoExitInterval == 0 { // Don't linger around forever.
 			autoExitInterval = 30 * time.Second
@@ -109,9 +127,13 @@ func MakeExecutor(request *cmds.Request, environment interface{}) (cmds.Executor
 		if pidPtr, ok := environment.(*int); ok {
 			*pidPtr = *pid
 		}
+		return cmdshttp.NewClient(clientHost, clientOpts...), nil
 	}
 
-	return cmdshttp.NewClient(clientHost, clientOpts...), nil
+	return nil, fmt.Errorf("Could not connect to remote API, tried: %s",
+		strings.Join(tried, ", "),
+	)
+
 }
 
 func parseCmdsClientOptions(maddr multiaddr.Multiaddr) (clientHost string, clientOpts []cmdshttp.ClientOpt, err error) {
@@ -152,7 +174,9 @@ func relaunchSelfAsService(exitInterval time.Duration) (*int, multiaddr.Multiadd
 		return nil, nil, err
 	}
 
-	cmd := exec.Command(self, ServiceCommandName)
+	// TODO: this but dynamic
+	//cmd := exec.Command(self, ServiceCommandName)
+	cmd := exec.Command(self, "service", "daemon")
 	cmd.Dir = cwd
 	cmd.Env = os.Environ()
 	if exitInterval != 0 {
@@ -253,7 +277,7 @@ func waitForService(stdout, stderr io.Reader, timeout time.Duration) (multiaddr.
 
 	go func() {
 		for i := 0; ; i++ {
-			var serviceResponse ServiceResponse
+			var serviceResponse ipc.ServiceResponse
 			if err := serviceDecoder.Decode(&serviceResponse); err == io.EOF {
 				break
 			} else if err != nil {
@@ -263,8 +287,10 @@ func waitForService(stdout, stderr io.Reader, timeout time.Duration) (multiaddr.
 			stdoutBuff.Reset()
 
 			if i == 0 {
-				if serviceResponse.Status != ServiceStarting {
-					expectedJson, err := json.Marshal(&ServiceResponse{Status: ServiceStarting})
+				if serviceResponse.Status != ipc.ServiceStarting {
+					expectedJson, err := json.Marshal(&ipc.ServiceResponse{
+						Status: ipc.ServiceStarting,
+					})
 					if err != nil {
 						serviceErr <- fmt.Errorf("implementation error: %w", err)
 						return
@@ -280,7 +306,7 @@ func waitForService(stdout, stderr io.Reader, timeout time.Duration) (multiaddr.
 				continue
 			}
 
-			if serviceResponse.Status != ServiceReady {
+			if serviceResponse.Status != ipc.ServiceReady {
 				continue
 			}
 

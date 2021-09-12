@@ -14,8 +14,10 @@ import (
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	"github.com/djdv/go-filesystem-utils/cmd/ipc"
+	"github.com/djdv/go-filesystem-utils/cmd/ipc/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/cmd/service/control"
+	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/service/status"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
@@ -44,6 +46,7 @@ var Command = &cmds.Command{
 			subcommands = make(map[string]*cmds.Command, len(controls)+1)
 		)
 		subcommands[status.Name] = status.Command
+		subcommands[daemon.Name] = daemon.Command
 		for i, action := range actions {
 			subcommands[action] = controls[i]
 		}
@@ -52,6 +55,7 @@ var Command = &cmds.Command{
 }
 
 func fileSystemServiceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
+	return errors.New("wrong server command used, this is the deprecated one")
 	var (
 		ctx             = request.Context
 		settings        = new(Settings)
@@ -63,11 +67,12 @@ func fileSystemServiceRun(request *cmds.Request, emitter cmds.ResponseEmitter, e
 	if _, err := parameters.AccumulateArgs(ctx, unsetArgs, errs); err != nil {
 		return err
 	}
-	fsEnv, err := ipc.CastEnvironment(env)
+
+	fsEnv, err := environment.CastEnvironment(env)
 	if err != nil {
 		return err
 	}
-	serviceConfig, err := fsEnv.ServiceConfig(request)
+	serviceConfig, err := fsEnv.Service().Config(request)
 	if err != nil {
 		return err
 	}

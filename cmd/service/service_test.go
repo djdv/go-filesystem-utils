@@ -21,67 +21,6 @@ func TestServiceRun(t *testing.T) {
 			service.Name: service.Command,
 		},
 	}
-	callServiceMethod := func(ctx context.Context, optMap cmds.OptMap) (<-chan error, context.CancelFunc, error) {
-		request, err := cmds.NewRequest(ctx, []string{service.Name},
-			optMap, nil, nil, root)
-		if err != nil {
-			return nil, nil, err
-		}
-		environment, err := ipc.MakeEnvironment(ctx, request)
-		if err != nil {
-			return nil, nil, err
-		}
-		executor, err := ipc.MakeExecutor(request, environment)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		// HACK:
-		// chanresponse's emitter will return a context error
-		// if it's request context is canceled.
-		// We need to test the response value
-		// from the command only. Which could also be a context error.
-		// So the test gets its own cancelFunc.
-		var (
-			testContext, testCancel = context.WithCancel(context.Background())
-			testRequest             = *request
-
-			execChan = make(chan error, 1)
-			respChan = make(chan error, 1)
-			testChan = make(chan error, 1)
-		)
-		testRequest.Context = testContext
-
-		emitter, response := cmds.NewChanResponsePair(&testRequest)
-		go func() { execChan <- executor.Execute(request, emitter, environment) }()
-		go func() { _, err := response.Next(); respChan <- err }()
-		go func() {
-			defer close(testChan)
-			for execChan != nil ||
-				respChan != nil {
-				select {
-				case <-testContext.Done():
-					testChan <- fmt.Errorf("test canceled before service returned")
-					return
-				case execErr := <-execChan:
-					if err != nil {
-						testChan <- fmt.Errorf("failed to execute service command: %w",
-							execErr)
-					}
-					execChan = nil
-				case responseErr := <-respChan:
-					expectedErr := io.EOF
-					if !errors.Is(responseErr, expectedErr) {
-						testChan <- fmt.Errorf("service run failed\n\texpected %v\n\tgot: %w",
-							expectedErr, responseErr)
-					}
-					respChan = nil
-				}
-			}
-		}()
-
-		return testChan, testCancel, nil
-	}
 
 	t.Run("Cancel", func(t *testing.T) {
 		var (
@@ -197,4 +136,69 @@ func TestServiceRun(t *testing.T) {
 			t.Fatal("unexpected service error:", err)
 		}
 	})
+}
+
+func startService(ctx context.Context,
+	cmdsRoot *cmds.Command, optMap cmds.OptMap) (<-chan error, context.CancelFunc, error) {
+	request, err := cmds.NewRequest(ctx, []string{service.Name},
+		optMap, nil, nil, cmdsRoot)
+	if err != nil {
+		return nil, nil, err
+	}
+	environment, err := ipc.MakeEnvironment(ctx, request)
+	if err != nil {
+		return nil, nil, err
+	}
+	executor, err := ipc.MakeExecutor(request, environment)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// TODO: I don't think this is intentional - this might be a bug upstream.
+	// HACK:
+	// chanresponse's emitter will return a context error (instantly)
+	// when it's `Request.Context` is canceled.
+	// We do want the emitter's internal value, we want
+	// the error value that the service command itself returns.
+	// So tests get their own cancelFunc that cancels the emitter.
+	// While the context passed to use is used to cancel the command.
+	var (
+		testContext, testCancel = context.WithCancel(context.Background())
+		testRequest             = *request
+
+		execChan = make(chan error, 1)
+		respChan = make(chan error, 1)
+		testChan = make(chan error, 1)
+	)
+	testRequest.Context = testContext
+
+	emitter, response := cmds.NewChanResponsePair(&testRequest)
+	go func() { execChan <- executor.Execute(request, emitter, environment) }()
+	go func() { _, err := response.Next(); respChan <- err }()
+	go func() {
+		defer close(testChan)
+		for execChan != nil ||
+			respChan != nil {
+			select {
+			case <-testContext.Done():
+				testChan <- fmt.Errorf("test canceled before service returned")
+				return
+			case execErr := <-execChan:
+				if err != nil {
+					testChan <- fmt.Errorf("failed to execute service command: %w",
+						execErr)
+				}
+				execChan = nil
+			case responseErr := <-respChan:
+				expectedErr := io.EOF
+				if !errors.Is(responseErr, expectedErr) {
+					testChan <- fmt.Errorf("service run failed\n\texpected %v\n\tgot: %w",
+						expectedErr, responseErr)
+				}
+				respChan = nil
+			}
+		}
+	}()
+
+	return testChan, testCancel, nil
 }

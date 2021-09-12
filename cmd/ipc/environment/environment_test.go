@@ -1,10 +1,10 @@
-package ipc_test
+package environment_test
 
 import (
 	"context"
 	"testing"
 
-	"github.com/djdv/go-filesystem-utils/cmd/ipc"
+	"github.com/djdv/go-filesystem-utils/cmd/ipc/environment"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -19,16 +19,16 @@ func TestEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	env, err := ipc.MakeEnvironment(ctx, request)
+	env, err := environment.MakeEnvironment(ctx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := ipc.CastEnvironment(env); err != nil {
+	if _, err := environment.CastEnvironment(env); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := ipc.CastEnvironment(nil); err == nil {
+	if _, err := environment.CastEnvironment(nil); err == nil {
 		t.Fatal("expected to error but did not - nil environment provided")
 	}
 }

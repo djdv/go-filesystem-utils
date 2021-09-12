@@ -8,7 +8,7 @@ import (
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc"
+	"github.com/djdv/go-filesystem-utils/cmd/ipc/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
@@ -63,11 +63,11 @@ var Command = &cmds.Command{
 		}
 
 		// Query the host system service manager.
-		fsEnv, err := ipc.CastEnvironment(env)
+		fsEnv, err := environment.CastEnvironment(env)
 		if err != nil {
 			return err
 		}
-		serviceConfig, err := fsEnv.ServiceConfig(request)
+		serviceConfig, err := fsEnv.Service().Config(request)
 		if err != nil {
 			return err
 		}

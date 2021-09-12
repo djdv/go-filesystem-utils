@@ -1,4 +1,4 @@
-package ipc
+package service
 
 import (
 	"os"
@@ -6,15 +6,28 @@ import (
 	"strings"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	"github.com/djdv/go-filesystem-utils/cmd/ipc"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
 )
 
-func (env *daemonEnvironment) ServiceConfig(request *cmds.Request) (*service.Config, error) {
+type (
+	Service interface {
+		// Config parses host specific options from the client request.
+		// (currently the host and client OS/machine are always the same,
+		// so this distinction doesn't matter yet)
+		Config(*cmds.Request) (*service.Config, error)
+	}
+	serviceEnvironment struct{}
+)
+
+func NewServiceEnvironment() Service { return &serviceEnvironment{} }
+
+func (env serviceEnvironment) Config(request *cmds.Request) (*service.Config, error) {
 	var (
 		ctx             = request.Context
-		settings        = new(HostService)
+		settings        = new(ipc.HostService)
 		unsetArgs, errs = parameters.ParseSettings(ctx, settings,
 			parameters.SettingsFromCmds(request),
 			parameters.SettingsFromEnvironment(),
@@ -24,9 +37,9 @@ func (env *daemonEnvironment) ServiceConfig(request *cmds.Request) (*service.Con
 		return nil, err
 	}
 	return &service.Config{
-		Name:        ServiceName,
-		DisplayName: ServiceDisplayName,
-		Description: ServiceDescription,
+		Name:        ipc.ServiceName,
+		DisplayName: ipc.ServiceDisplayName,
+		Description: ipc.ServiceDescription,
 		UserName:    settings.Username,
 		Option:      serviceKeyValueFrom(&settings.PlatformSettings),
 		Arguments:   serviceArgs(),
@@ -38,7 +51,7 @@ func (env *daemonEnvironment) ServiceConfig(request *cmds.Request) (*service.Con
 // The caller should store them in the service.Config,
 // so that the service manager can use them when starting the process itself.
 func serviceArgs() (serviceArgs []string) {
-	serviceArgs = []string{ServiceCommandName}
+	serviceArgs = []string{ipc.ServiceCommandName}
 	var (
 		params = []string{
 			fscmds.ServiceMaddrs().CommandLine(),
@@ -67,10 +80,10 @@ func serviceArgs() (serviceArgs []string) {
 	return serviceArgs
 }
 
-// NOTE: Field names and data types in the setting's struct declaration -
-// must match the map key names defined in the `service.KeyValue` pkg documentation.
-func serviceKeyValueFrom(platformSettings *PlatformSettings) service.KeyValue {
+func serviceKeyValueFrom(platformSettings *ipc.PlatformSettings) service.KeyValue {
 	var (
+		// NOTE: Field names and data types in this setting's struct's declaration;
+		// must match the map key names and types defined in the `service.KeyValue` pkg documentation.
 		settingsValue   = reflect.ValueOf(platformSettings).Elem()
 		settingsType    = settingsValue.Type()
 		settingsCount   = settingsType.NumField()

@@ -3,7 +3,21 @@ package ipc
 import "github.com/djdv/go-filesystem-utils/cmd/formats"
 
 type (
-	//TODO: Document; servers are expected to emit a series of these in a particular way.
+	// TODO: [Ame] Finalize protocols + English in documentation.
+	// Probably best to do this in a human document and reference it here.
+	// E.g. `IPC protocol.svg`
+	//
+	// The data representation does not matter as long as servers and clients understand them.
+	// Only the sequence is important.
+	// Our implementation uses Go structures in memory,
+	// JSON over HTTP, and plain text over stdio, to coordinate between
+	// client and server processes - depending on the context/request.
+	/*
+		Sequence init      = Starting;
+		Sequence listeners = Starting, {Listener};
+		Sequence end       = Ready;
+		Sequence           = Sequence init, {Sequence listeners}, Sequence end;
+	*/
 	ServiceStatus   uint
 	ServiceResponse struct {
 		Status        ServiceStatus      `json:",omitempty"`
@@ -16,13 +30,21 @@ const (
 	// Servers and clients should use these values as various rally points.
 	// Where servers expose them and clients look for them in relevant APIs.
 
-	// ServiceCommandName is the API endpoint for the hosting command itself.
+	// TODO: This has to change (to `daemon`, and needs a sister function.
+	// ServiceCommandPath() { return []string{argv[0], "service", "daemon"} }
+	// Maybe declared in the daemon pkg?
+	// Some of these should be dropped like the display name
+	// The stdio and status values should probably go into a sub-pkg too.
+	// Just keep everything explicitly separate.
+	//
+	// TODO: [Ame] English.
+	// ServiceCommandName should be used as the name for commands
+	// which expose the file system commands API.
 	// Typically the final component in the command line, HTTP path, etc. before arguments.
-	// E.g. `program parentCommand service --parameter="argument"`,
-	// `/parentCommand/service?parameter=argument`, etc.
+	// E.g. `programName someSubcommand $ServiceCommandName --parameter="argument"`,
+	// `/someSubCommand/$ServiceCommandName?parameter=argument`, etc.
 	ServiceCommandName = "service"
 
-	// ServiceDescription should be self explanatory ;^)
 	ServiceDescription = "Manages active file system requests and instances."
 
 	// ServiceName is a generic short-and-safe name which describes the purpose of the service.
@@ -43,6 +65,7 @@ const (
 	StdGoodStatus = "Listening on: "
 	StdReady      = ServiceDisplayName + " started"
 
+	// TODO: move to ipc/env/service?
 	// TODO: document + names + protocol
 	// These are non-text values to synchronize through other means (like JSON)
 	_ ServiceStatus = iota
