@@ -27,11 +27,6 @@ on files underneath the service directory.
 */
 func systemListeners(providedMaddrs ...multiaddr.Multiaddr) (serviceListeners []manet.Listener,
 	cleanup func() error, err error) {
-	if len(providedMaddrs) != 0 {
-		serviceListeners, err = listen(providedMaddrs...)
-		return
-	}
-
 	var (
 		systemSid          *windows.SID
 		dacl               *windows.ACL
@@ -78,12 +73,16 @@ func systemListeners(providedMaddrs ...multiaddr.Multiaddr) (serviceListeners []
 		socketPath      = filepath.Join(serviceDir, fscmds.ServerName)
 		multiaddrString = "/unix/" + socketPath
 		serviceMaddr    multiaddr.Multiaddr
+		listener        manet.Listener
 	)
 	if serviceMaddr, err = multiaddr.NewMultiaddr(multiaddrString); err != nil {
 		return
 	}
-	serviceListeners, err = listen(serviceMaddr)
+	if listener, err = manet.Listen(serviceMaddr); err != nil {
+		return
+	}
 
+	serviceListeners = []manet.Listener{listener}
 	return
 }
 

@@ -62,7 +62,7 @@ const (
 	// TODO: the stdio protocol explanation here; header first; anything; ready
 	// errors go to stderr.
 	StdHeader     = ServiceDisplayName + " starting..."
-	StdGoodStatus = "Listening on: "
+	StdGoodStatus = "Listening on:"
 	StdReady      = ServiceDisplayName + " started"
 
 	// TODO: move to ipc/env/service?

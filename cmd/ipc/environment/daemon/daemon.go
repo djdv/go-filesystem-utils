@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,11 +15,11 @@ type (
 	StopReason uint
 	Response   struct {
 		Status        Status             `json:",omitempty"`
-		Reason        StopReason         `json:",omitempty"`
+		StopReason    StopReason         `json:",omitempty"`
 		ListenerMaddr *formats.Multiaddr `json:",omitempty"`
 		Info          string             `json:",omitempty"`
 	}
-	Daemon interface {
+	Environment interface {
 		// TODO: Initalizer / Start() needs to return a channel of "reason"
 		// So that when the root context is canceled, daemon.Run can catch it
 		// "we were canceled, stop execution"
@@ -28,10 +29,12 @@ type (
 		// trap { select { httpError? ... , envStop? why?(reason) => maybeErrorValue } }
 		// This also allows an external command to call env.Stop(requestedToStop)
 		// which returns no error from daemon.Run
-		Initialize() (<-chan StopReason, error)
+		//
+		InitializeStop(context.Context) (<-chan StopReason, error)
 		Stop(StopReason) error
 	}
 	daemonEnvironment struct {
+		stopCtx  context.Context
 		stopChan chan StopReason
 	}
 )
@@ -60,7 +63,8 @@ func HandleInitSequence(response cmds.Response, callback ResponseHandlerFunc) er
 		}
 		if !sawHeader {
 			if response.Status != Starting {
-				return sequenceErr
+				return fmt.Errorf("%w - got response before \"starting\": %#v",
+					sequenceErr, response)
 			}
 			sawHeader = true
 			if err := callback(response); err != nil {
@@ -83,7 +87,12 @@ func HandleInitSequence(response cmds.Response, callback ResponseHandlerFunc) er
 			}
 			return errors.New("daemon responded with an error status, but no message\n")
 		default:
-			return sequenceErr
+			if err := callback(response); err != nil {
+				return err
+			}
+			// TODO: stubbed for debugging sysservice
+			//return fmt.Errorf("%w - got unexpected response type: %#v",
+			//	sequenceErr, response)
 		}
 	}
 }
@@ -109,7 +118,7 @@ func HandleRunningSequence(response cmds.Response, callback ResponseHandlerFunc)
 	}
 }
 
-func NewDaemonEnvironment() Daemon { return &daemonEnvironment{} }
+func NewDaemonEnvironment() Environment { return &daemonEnvironment{} }
 
 //go:generate stringer -type=StopReason -linecomment
 const (
@@ -127,28 +136,30 @@ const (
 	Error
 )
 
-func (de *daemonEnvironment) Initialize() (<-chan StopReason, error) {
+func (de *daemonEnvironment) InitializeStop(ctx context.Context) (<-chan StopReason, error) {
 	if de.stopChan != nil {
 		return nil, fmt.Errorf("environment already initialized") // TODO: error message
 	}
 	stopChan := make(chan StopReason)
 	de.stopChan = stopChan
+	de.stopCtx = ctx
 	return stopChan, nil
 }
 
 func (de *daemonEnvironment) Stop(reason StopReason) error {
-	// TODO: `service` needs to set a bool `isServiceInstance` or something.
-	// We don't want to allow this command to shut down that instance.
-	// The system service manager should be the one to call stop, internally.
-	// I.e. `fs service stop`, not `fs service daemon stop`.
-	// Keep these distinct.
-
-	stopChan := de.stopChan
+	var (
+		ctx      = de.stopCtx
+		stopChan = de.stopChan
+	)
 	if stopChan == nil {
 		return fmt.Errorf("environment not initialized") // TODO: error message+value
 	}
 	de.stopChan = nil
-	stopChan <- reason
-	close(stopChan)
-	return nil
+	defer close(stopChan)
+	select {
+	case stopChan <- reason:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

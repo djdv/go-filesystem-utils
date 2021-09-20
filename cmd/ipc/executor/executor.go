@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -23,6 +24,8 @@ import (
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
 )
+
+var ErrCouldNotConnect = errors.New("could not connect to remote API")
 
 // MakeExecutor constructs a cmds-lib executor; which parses the Request and
 // determines whether to execute the Command within the same local process,
@@ -130,8 +133,8 @@ func MakeExecutor(request *cmds.Request, environment interface{}) (cmds.Executor
 		return cmdshttp.NewClient(clientHost, clientOpts...), nil
 	}
 
-	return nil, fmt.Errorf("Could not connect to remote API, tried: %s",
-		strings.Join(tried, ", "),
+	return nil, fmt.Errorf("%w (tried: %s)",
+		ErrCouldNotConnect, strings.Join(tried, ", "),
 	)
 
 }

@@ -1,27 +1,20 @@
 package service
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"io"
-	"os"
-	"os/signal"
-	"path/filepath"
-	"runtime"
-	"strings"
 
-	fscmds "github.com/djdv/go-filesystem-utils/cmd"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	"github.com/djdv/go-filesystem-utils/cmd/ipc"
 	"github.com/djdv/go-filesystem-utils/cmd/ipc/environment"
+	daemonenv "github.com/djdv/go-filesystem-utils/cmd/ipc/environment/daemon"
+	"github.com/djdv/go-filesystem-utils/cmd/ipc/executor"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/cmd/service/control"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/service/status"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
-	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
 )
 
@@ -32,9 +25,9 @@ var Command = &cmds.Command{
 		Tagline: ipc.ServiceDescription,
 	},
 	NoRemote: true,
-	Run:      fileSystemServiceRun,
+	Run:      systemServiceRun,
 	PostRun: cmds.PostRunMap{
-		cmds.CLI: formatFileSystemService,
+		cmds.CLI: formatSystemService,
 	},
 	Options:  parameters.CmdsOptionsFrom((*Settings)(nil)),
 	Encoders: formats.CmdsEncoders,
@@ -54,19 +47,15 @@ var Command = &cmds.Command{
 	}(),
 }
 
-func fileSystemServiceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
-	return errors.New("wrong server command used, this is the deprecated one")
-	var (
-		ctx             = request.Context
-		settings        = new(Settings)
-		unsetArgs, errs = parameters.ParseSettings(ctx, settings,
-			parameters.SettingsFromCmds(request),
-			parameters.SettingsFromEnvironment(),
-		)
-	)
-	if _, err := parameters.AccumulateArgs(ctx, unsetArgs, errs); err != nil {
-		return err
+func systemServiceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
+	if service.Interactive() {
+		return errors.New("This version of the daemon is intended for use by the host service manager" +
+			"use `service daemon` for interactive use",
+		) // TODO: we need to get the dynamic cmdsPath from a function
 	}
+
+	// NOTE: We can't get the systemlogger yet
+	// So these errors aren't going to show up anywhere besides a debugger.
 
 	fsEnv, err := environment.CastEnvironment(env)
 	if err != nil {
@@ -77,175 +66,281 @@ func fileSystemServiceRun(request *cmds.Request, emitter cmds.ResponseEmitter, e
 		return err
 	}
 
-	return runService(request.Context,
-		emitter, env,
-		&settings.Settings, serviceConfig,
-	)
-}
+	serviceInterface := &cmdsServiceWrapper{
+		request:     request,
+		emitter:     emitter,
+		environment: env,
+	}
 
-func runService(ctx context.Context,
-	emitter cmds.ResponseEmitter, env cmds.Environment,
-	settings *fscmds.Settings, serviceConfig *service.Config) error {
-	serviceDaemon := newDaemon(ctx, settings, env)
-	fileSystemService, err := service.New(serviceDaemon, serviceConfig)
+	serviceController, err := service.New(serviceInterface, serviceConfig)
 	if err != nil {
 		return err
 	}
 
-	if service.Interactive() {
-		serviceDaemon.logger = newCmdsLogger(emitter)
-		return runInteractiveMode(ctx, fileSystemService, serviceDaemon)
-	}
-
-	logger, err := newServiceLogger(fileSystemService)
+	sysLog, err := serviceController.SystemLogger(nil)
 	if err != nil {
 		return err
 	}
-	serviceDaemon.logger = logger
-	return fileSystemService.Run()
-}
 
-func runInteractiveMode(ctx context.Context, systemService service.Service, daemon *serviceDaemon) error {
-	if startInitErr := daemon.Start(systemService); startInitErr != nil {
-		return startInitErr
+	serviceListeners, cleanup, err := systemListeners()
+	if err != nil {
+		return logErr(sysLog, err)
 	}
 
-	daemonContext, daemonCancel := signal.NotifyContext(ctx, os.Interrupt)
-	defer daemonCancel()
+	serviceInterface.sysLog = sysLog
+	serviceInterface.sysListeners = serviceListeners
 
-	<-daemon.waitForRun(daemonContext).Done()
-
-	if runErr := daemon.Stop(systemService); runErr != nil {
-		return runErr
-	}
-
-	return daemonContext.Err()
-}
-
-func getServiceListeners(providedMaddrs ...multiaddr.Multiaddr) (serviceListeners []manet.Listener,
-	serviceCleanup cleanupFunc, err error) {
-	if service.Interactive() {
-		return interactiveListeners(providedMaddrs...)
-	}
-	return systemListeners(providedMaddrs...)
-}
-
-// interactiveListeners returns a list of listeners,
-// as well as a cleanup function which should be called
-// after all listeners are no longer in use.
-// If no multiaddrs are provided, platform specific default values will be used instead.
-func interactiveListeners(providedMaddrs ...multiaddr.Multiaddr) (serviceListeners []manet.Listener,
-	serviceCleanup cleanupFunc, err error) {
-	if len(providedMaddrs) != 0 {
-		// NOTE: if maddrs were provided, we expect the environment to be ready for the target(s).
-		// We do not set up or destroy anything in this case. (`serviceCleanup` remains nil)
-		serviceListeners, err = listen(providedMaddrs...)
-		return
-	}
-
-	var localDefaults []multiaddr.Multiaddr
-	if localDefaults, err = fscmds.UserServiceMaddrs(); err != nil {
-		return
-	}
-	// First suggestion should be most local to the user that launched us.
-	suggestedMaddr := localDefaults[0]
-
-	unixSocketPath, hadUnixSocket := maybeGetUnixSocketPath(suggestedMaddr)
-	if hadUnixSocket {
-		// TODO: switch this back to regular Stat when this is merged
-		// https://go-review.googlesource.com/c/go/+/338069/
-		if _, err = os.Lstat(unixSocketPath); err == nil {
-			err = fmt.Errorf("socket file already exists: \"%s\"", unixSocketPath)
-			return
-		}
-		// If it contains a Unix socket, make the parent directory for it
-		// and allow it to be deleted when the caller is done with it.
-		parent := filepath.Dir(unixSocketPath)
-		if err = os.MkdirAll(parent, 0o775); err != nil {
-			return
-		}
-		serviceCleanup = func() error { return os.Remove(parent) }
-	}
-
-	serviceListeners, err = listen(suggestedMaddr)
-	if err != nil && serviceCleanup != nil {
-		if cErr := serviceCleanup(); cErr != nil {
-			err = fmt.Errorf("%w - could not cleanup: %s", err, cErr)
-		}
-	}
-
-	return
-}
-
-// maybeGetUnixSocketPath returns the path
-// of the first Unix domain socket within the multiaddr (if any).
-func maybeGetUnixSocketPath(ma multiaddr.Multiaddr) (target string, hadUnixComponent bool) {
-	multiaddr.ForEach(ma, func(comp multiaddr.Component) bool {
-		if hadUnixComponent = comp.Protocol().Code == multiaddr.P_UNIX; hadUnixComponent {
-			target = comp.Value()
-			if runtime.GOOS == "windows" { // `/C:\path` -> `C:\path`
-				target = strings.TrimPrefix(target, `/`)
-			}
-			return true
-		}
-		return false
-	})
-	return
-}
-
-func formatFileSystemService(response cmds.Response, emitter cmds.ResponseEmitter) error {
 	var (
-		request         = response.Request()
-		ctx             = request.Context
-		settings        = new(Settings)
-		unsetArgs, errs = parameters.ParseSettings(ctx, settings,
-			parameters.SettingsFromCmds(request),
-			parameters.SettingsFromEnvironment(),
-		)
+		runErr     = serviceController.Run()
+		cleanupErr = cleanup()
+		loggerErr  error
 	)
-	if _, err := parameters.AccumulateArgs(ctx, unsetArgs, errs); err != nil {
+	if cleanupErr != nil {
+		loggerErr = logErr(sysLog, cleanupErr)
+	}
+
+	{
+		var err error
+		for _, e := range []error{runErr, cleanupErr, loggerErr} {
+			switch {
+			case e == nil:
+				continue
+			case err == nil:
+				err = e
+			case err != nil:
+				err = fmt.Errorf("%w\n%s", err, e)
+			}
+		}
 		return err
 	}
+}
 
-	outputs := formats.MakeOptionalOutputs(response.Request(), emitter)
+type (
+	cmdsServiceWrapper struct {
+		request      *cmds.Request
+		emitter      cmds.ResponseEmitter
+		environment  cmds.Environment
+		sysListeners []manet.Listener
 
-	for {
-		untypedResponse, err := response.Next()
-		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				return err
-			}
-			return nil
-		}
-
-		response, ok := untypedResponse.(*ipc.ServiceResponse)
-		if !ok {
-			return cmds.Errorf(cmds.ErrImplementation,
-				"emitter sent unexpected type+value: %#v", untypedResponse)
-		}
-
-		switch response.Status {
-		case ipc.ServiceStarting:
-			outputs.Print(ipc.StdHeader + "\n")
-		case ipc.ServiceReady:
-			if encodedMaddr := response.ListenerMaddr; encodedMaddr != nil {
-				outputs.Print(fmt.Sprintf("%s%s\n", ipc.StdGoodStatus, encodedMaddr.Interface))
-			} else {
-				outputs.Print(ipc.StdReady + "\n")
-				outputs.Print("Send interrupt to stop\n")
-			}
-		case ipc.ServiceError:
-			if errMsg := response.Info; errMsg == "" {
-				outputs.Error(errors.New("service responded with an error status, but no message\n"))
-			} else {
-				outputs.Error(errors.New(errMsg + "\n"))
-			}
-		default:
-			if response.Info != "" {
-				outputs.Print(response.Info + "\n")
-			}
-		}
-
-		outputs.Emit(response)
+		sysLog  service.Logger
+		runErrs <-chan error
+		cleanup func() error
 	}
+)
+
+func logErr(logger service.Logger, err error) error {
+	if logErr := logger.Error(err); logErr != nil {
+		return fmt.Errorf("%w - %s", err, logErr)
+	}
+	return err
+}
+
+func (svc *cmdsServiceWrapper) Start(svcIntf service.Service) error {
+	if svc.runErrs != nil {
+		return errors.New("already started") // TODO: err msg
+	}
+
+	var (
+		sysLog = svc.sysLog
+		ctx    = svc.request.Context
+	)
+
+	// TODO: use the function to get the cmd path
+	daemonRequest, err := cmds.NewRequest(ctx, []string{"service", "daemon"},
+		svc.request.Options, nil, nil, svc.request.Root)
+	if err != nil {
+		return logErr(sysLog, err)
+	}
+	// HACK: This is not a real solution, we need to do arguments properly (later)
+	extra := new(cmds.Extra)
+	extra.SetValue("magic", svc.sysListeners)
+	//daemonRequest.Command.Extra = extra
+
+	inprocExecutor, err := executor.MakeExecutor(daemonRequest, svc.environment)
+	if err != nil {
+		return logErr(sysLog, err)
+	}
+
+	var (
+		daemonEmitter, daemonResponse = cmds.NewChanResponsePair(daemonRequest)
+		execChan                      = make(chan error)
+
+		initChan        = make(chan error)
+		responseHandler = func(response *daemonenv.Response) (err error) {
+			switch response.Status {
+			case daemonenv.Starting:
+				err = sysLog.Info(ipc.StdHeader)
+			case daemonenv.Ready:
+				if encodedMaddr := response.ListenerMaddr; encodedMaddr != nil {
+					err = sysLog.Infof("%s %s", ipc.StdGoodStatus, encodedMaddr.Interface)
+				} else {
+					err = sysLog.Info(ipc.StdReady)
+				}
+			case daemonenv.Stopping:
+				err = sysLog.Infof("Stopping: %s", response.StopReason.String())
+			case daemonenv.Error:
+				if errMsg := response.Info; errMsg == "" {
+					err = errors.New("service responded with an error status, but no message")
+				} else {
+					err = errors.New(errMsg)
+				}
+				err = logErr(sysLog, err)
+			default:
+				if response.Info != "" {
+					err = sysLog.Info(response.Info)
+				} else {
+					err = logErr(sysLog,
+						fmt.Errorf("service responded with an unexpected response: %#v",
+							response,
+						),
+					)
+				}
+			}
+			return err
+		}
+	)
+
+	// We're going to `Execute` the daemon command,
+	// which should block until the daemon stops listening.
+	// The daemon will emit responses while it's running, before `Execute` returns.
+	go func() {
+		defer close(execChan)
+		execChan <- inprocExecutor.Execute(daemonRequest, daemonEmitter, svc.environment)
+	}()
+	go func() {
+		defer close(initChan)
+		initChan <- daemonenv.HandleInitSequence(daemonResponse, responseHandler)
+	}()
+
+	// We check to make sure exec doesn't return early with an error,
+	// as well as checking the daemon init sequence.
+	var initErr error
+	select {
+	case initErr = <-execChan: // Failed to execute.
+	case initErr = <-initChan: // Daemon initialization error.
+	}
+	if initErr != nil {
+		return logErr(sysLog, initErr)
+	}
+
+	// Handle any post-init messages from the daemon.
+	daemonErrs := make(chan error)
+	go func() {
+		defer close(daemonErrs)
+		if err := daemonenv.HandleRunningSequence(daemonResponse, responseHandler); err != nil {
+			daemonErrs <- err
+		}
+	}()
+
+	// Splice errors from the exec call with the daemon responder.
+	runErrs := make(chan error)
+	go func() {
+		defer close(runErrs)
+		for daemonErrs != nil &&
+			execChan != nil {
+			var (
+				err error
+				ok  bool
+			)
+			select {
+			case err, ok = <-daemonErrs:
+				if !ok {
+					daemonErrs = nil
+					continue
+				}
+				err = fmt.Errorf("daemon response error: %w", err)
+			case err, ok = <-execChan:
+				if !ok {
+					execChan = nil
+					continue
+				}
+				err = fmt.Errorf("execute error: %w", err)
+			}
+			runErrs <- err
+		}
+	}()
+
+	// We've started successfully.
+	// Store the error channel so that `Stop`
+	// may return any errors encountered during runtime.
+	svc.runErrs = runErrs
+	return nil
+}
+
+func (svc *cmdsServiceWrapper) Stop(svcIntf service.Service) error {
+	var (
+		runErrs = svc.runErrs
+		sysLog  = svc.sysLog
+		ctx     = svc.request.Context
+	)
+	if runErrs == nil {
+		return logErr(sysLog, errors.New("service wasn't started")) // TODO: err msg
+	}
+	svc.runErrs = nil
+
+	// If runtime errors were encountered, the daemon is already stopping/stopped.
+	select {
+	case err := <-runErrs:
+		for e := range runErrs {
+			err = fmt.Errorf("%w - %s", err, e)
+		}
+		return err
+	default:
+	}
+
+	// TODO: command path needs to be from a function
+	// Ask the daemon to stop gracefully.
+	stopRequest, err := cmds.NewRequest(ctx, []string{"service", "daemon", "stop"},
+		svc.request.Options, nil, nil, svc.request.Root)
+	if err != nil {
+		return logErr(sysLog, err)
+	}
+
+	// TODO: none of this
+	// we can just retain the env, and call stop directly ourselves
+	//
+	// TODO: we need to execute stop in a goroutine
+	// if the daemon.Run already returned (due to an error) this will block forever
+	// we need to select on it here
+	// select stopErr | runErrs; if runErrs, return bad
+	// otherwise, drain runErrs
+
+	var (
+		executor = cmds.NewExecutor(svc.request.Root)
+		stopErrs = make(chan error)
+	)
+	go func() {
+		defer close(stopErrs)
+		if err := executor.Execute(stopRequest, svc.emitter, svc.environment); err != nil {
+			stopErrs <- err
+		}
+	}()
+
+	select {
+	case err := <-runErrs:
+		return logErr(sysLog, err)
+	case err := <-stopErrs:
+		if err != nil {
+			return logErr(sysLog, err)
+		}
+	}
+
+	{ // TODO: Gross. Nil+close check should be sender side.
+		var err error
+		for e := range runErrs {
+			switch {
+			case e == nil:
+				continue
+			case err == nil:
+				err = e
+			case err != nil:
+				err = fmt.Errorf("%w\n%s", err, e)
+			}
+		}
+		if err != nil {
+			return logErr(sysLog, err)
+		}
+	}
+
+	return nil
 }

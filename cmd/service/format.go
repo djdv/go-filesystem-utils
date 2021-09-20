@@ -1,4 +1,4 @@
-package daemon
+package service
 
 import (
 	"errors"
@@ -7,12 +7,16 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	"github.com/djdv/go-filesystem-utils/cmd/ipc"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc/environment/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
-func formatDaemon(response cmds.Response, emitter cmds.ResponseEmitter) error {
+// TODO: not this
+// Either make a custom emitter that wraps chanemitter
+// or just emit to the syslog in the handler funcs
+// ^ this seems more sensible; construct the syslog on run and attach it to the service interface
+// ^^ or just use the one passed to us on Start()
+func formatSystemService(response cmds.Response, emitter cmds.ResponseEmitter) error {
 	var (
 		request         = response.Request()
 		ctx             = request.Context
@@ -37,25 +41,23 @@ func formatDaemon(response cmds.Response, emitter cmds.ResponseEmitter) error {
 			return nil
 		}
 
-		response, ok := untypedResponse.(*daemon.Response)
+		response, ok := untypedResponse.(*ipc.ServiceResponse)
 		if !ok {
 			return cmds.Errorf(cmds.ErrImplementation,
 				"emitter sent unexpected type+value: %#v", untypedResponse)
 		}
 
 		switch response.Status {
-		case daemon.Starting:
+		case ipc.ServiceStarting:
 			outputs.Print(ipc.StdHeader + "\n")
-		case daemon.Ready:
+		case ipc.ServiceReady:
 			if encodedMaddr := response.ListenerMaddr; encodedMaddr != nil {
-				outputs.Print(fmt.Sprintf("%s %s\n", ipc.StdGoodStatus, encodedMaddr.Interface))
+				outputs.Print(fmt.Sprintf("%s%s\n", ipc.StdGoodStatus, encodedMaddr.Interface))
 			} else {
 				outputs.Print(ipc.StdReady + "\n")
 				outputs.Print("Send interrupt to stop\n")
 			}
-		case daemon.Stopping:
-			outputs.Print("Stopping: " + response.StopReason.String() + "\n")
-		case daemon.Error:
+		case ipc.ServiceError:
 			if errMsg := response.Info; errMsg == "" {
 				outputs.Error(errors.New("service responded with an error status, but no message\n"))
 			} else {

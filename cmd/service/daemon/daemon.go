@@ -2,17 +2,10 @@ package daemon
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
-	"strings"
-	"sync"
-	"time"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
@@ -22,7 +15,6 @@ import (
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
 	cmds "github.com/ipfs/go-ipfs-cmds"
-	cmdshttp "github.com/ipfs/go-ipfs-cmds/http"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
 )
@@ -50,8 +42,6 @@ var Command = &cmds.Command{
 
 type cleanupFunc func() error
 
-var ErrIdle = errors.New("service exited because it was idle")
-
 func clientRoot() *cmds.Command {
 	return &cmds.Command{
 		Options: fscmds.RootOptions(),
@@ -60,7 +50,7 @@ func clientRoot() *cmds.Command {
 		},
 		Subcommands: map[string]*cmds.Command{
 			"service": {
-				// TODO: add stub info
+				// TODO : add stub info
 				// this command only exists for its path to `stop`
 				Subcommands: map[string]*cmds.Command{
 					Name: {
@@ -71,6 +61,17 @@ func clientRoot() *cmds.Command {
 				},
 			},
 		},
+	}
+}
+
+func maybeAppendError(origErr, newErr error) error {
+	switch {
+	case origErr == nil:
+		return newErr
+	case newErr == nil:
+		return origErr
+	default:
+		return fmt.Errorf("%w - %s", origErr, newErr)
 	}
 }
 
@@ -95,94 +96,85 @@ func daemonRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Env
 		return err
 	}
 
-	// TODO: emitter loop goes here?
-	// some kind of channel returned from runService?
-	// if emit errors, stop the service?
-	// ^ yeah, let's
-
-	stopWatcher, err := ipcEnv.Daemon().Initialize()
-	if err != nil {
-		return err
-	}
-
-	listeners, cleanup, err := getListeners(request.Command.Extra, settings.ServiceMaddrs...)
-	if err != nil {
-		return err
-	}
-
 	var (
-		daemonCtx, daemonCancel  = signal.NotifyContext(ctx, os.Interrupt)
-		serverCtx, serverCancel  = context.WithCancel(daemonCtx)
-		clientRoot               = clientRoot()
-		serverMaddrs, serverErrs = serveCmdsHTTP(serverCtx, clientRoot, env, listeners...)
-
-		wrapAndCleanup = func(err error) error {
-			if cleanup != nil {
-				if cErr := cleanup(); cErr != nil {
-					return fmt.Errorf("%w - could not cleanup: %s", err, cErr)
-				}
+		unwind  []func() error
+		cleanup = func() error {
+			var err error
+			for i := len(unwind) - 1; i != -1; i-- {
+				err = maybeAppendError(err, unwind[i]())
 			}
 			return err
 		}
-		serverWrapAndCleanup = func(err error) error {
-			// Cancel the server(s) and wait for listener(s) to close
-			// (by blocking on their error channel).
-			serverCancel()
-			for sErr := range serverErrs {
-				err = fmt.Errorf("%w - %s", err, sErr)
-			}
-			return wrapAndCleanup(err)
-		}
 	)
-	defer daemonCancel()
-	defer serverCancel()
+
+	// Setup and handle daemonEnv.Stop().
+	daemonEnv := ipcEnv.Daemon()
+	stopReasons, err := daemonEnv.InitializeStop(ctx)
+	if err != nil {
+		return err
+	}
+	stopCtx, stopErrs := watchForStopReasons(ctx, stopReasons, emitter)
+	unwind = append(unwind, errChanToUnwindFunc(stopErrs))
+
+	// Call daemonEnv.Stop() when this context is canceled.
+	// (But not if we already stopped for some other reason)
+	var (
+		stopTriggerCtx, stopTriggerCancel = signal.NotifyContext(ctx, os.Interrupt)
+		ctxStopperErrs                    = stopOnContext(stopCtx, stopTriggerCtx, daemonEnv)
+	)
+	defer stopTriggerCancel()
+	unwind = append(unwind, errChanToUnwindFunc(ctxStopperErrs))
+
+	// Start listening on sockets.
+	listeners, listenerCleanup, err := getListeners(request.Command.Extra, settings.ServiceMaddrs...)
+	if err != nil {
+		return err
+	}
+	if listenerCleanup != nil {
+		unwind = append(unwind, listenerCleanup)
+	}
+
+	var (
+		serverCtx, serverCancel  = context.WithCancel(stopTriggerCtx)
+		clientRoot               = clientRoot()
+		serverMaddrs, serverErrs = serveCmdsHTTP(serverCtx, clientRoot, env, listeners...)
+	)
+	unwind = append(unwind, func() error {
+		// Cancel the server(s) and wait for listener(s) to close
+		// (by blocking on their error channel)
+		serverCancel()
+		return errChanToUnwindFunc(serverErrs)()
+	})
 
 	for listenerMaddr := range serverMaddrs {
 		if err := emitter.Emit(&daemon.Response{
 			Status:        daemon.Ready,
 			ListenerMaddr: &formats.Multiaddr{Interface: listenerMaddr},
 		}); err != nil {
-			serverWrapAndCleanup(err)
+			return maybeAppendError(err, cleanup())
 		}
 	}
 
 	if err := emitter.Emit(&daemon.Response{
 		Status: daemon.Ready,
 	}); err != nil {
-		return serverWrapAndCleanup(err)
+		return maybeAppendError(err, cleanup())
 	}
 
-	var (
-		busyCheckInterval           = settings.AutoExitInterval
-		idleSignal, idleWatcherErrs = signalIfNotBusy(daemonCtx, busyCheckInterval, ipcEnv)
-	)
-	if busyCheckInterval != 0 {
+	if busyCheckInterval := settings.AutoExitInterval; busyCheckInterval != 0 {
 		if err := emitter.Emit(&daemon.Response{
 			Info: fmt.Sprintf("Requested to stop if not busy every %s",
 				busyCheckInterval),
 		}); err != nil {
-			return serverWrapAndCleanup(err)
+			return maybeAppendError(err, cleanup())
 		}
+		idleErrs := stopIfNotBusy(ctx, busyCheckInterval, ipcEnv)
+		unwind = append(unwind, errChanToUnwindFunc(idleErrs))
 	}
 
-	select {
-	case <-ctx.Done():
-		err = ctx.Err()
-	case reason := <-stopWatcher:
-		err = emitter.Emit(&daemon.Response{
-			Status: daemon.Stopping,
-			Reason: reason,
-		})
-	case <-idleSignal:
-		err = emitter.Emit(&daemon.Response{
-			Status: daemon.Stopping,
-			Reason: daemon.Idle,
-		})
-	case err = <-idleWatcherErrs:
-	case err = <-serverErrs:
-	}
+	<-stopCtx.Done()
 
-	return serverWrapAndCleanup(err)
+	return cleanup()
 }
 
 // TODO: We need a way to pass listeners from `service` to `daemon`.
@@ -201,26 +193,20 @@ func daemonRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Env
 func getListeners(cmdsExtra *cmds.Extra,
 	maddrs ...multiaddr.Multiaddr) ([]manet.Listener, cleanupFunc, error) {
 	var listeners []manet.Listener
+
 	cmdsListeners, listenersProvided := cmdsExtra.GetValue("magic")
 	if listenersProvided {
-		netListeners, ok := cmdsListeners.([]net.Listener)
+		manetListeners, ok := cmdsListeners.([]manet.Listener)
 		if !ok {
 			err := fmt.Errorf("Command.Extra value has wrong type"+
 				"expected %T"+
 				"got: %T",
-				netListeners,
+				manetListeners,
 				cmdsListeners,
 			)
 			return nil, nil, err
 		}
-		listeners = make([]manet.Listener, len(netListeners))
-		for i, listener := range netListeners {
-			manListener, err := manet.WrapNetListener(listener)
-			if err != nil {
-				return nil, nil, err
-			}
-			listeners[i] = manListener
-		}
+		listeners = manetListeners
 	}
 
 	argListeners, err := listen(maddrs...)
@@ -296,168 +282,52 @@ func defaultListeners() ([]manet.Listener, cleanupFunc, error) {
 	}
 }
 
-// maybeGetUnixSocketPath returns the path
-// of the first Unix domain socket within the multiaddr (if any).
-func maybeGetUnixSocketPath(ma multiaddr.Multiaddr) (target string, hadUnixComponent bool) {
-	multiaddr.ForEach(ma, func(comp multiaddr.Component) bool {
-		if hadUnixComponent = comp.Protocol().Code == multiaddr.P_UNIX; hadUnixComponent {
-			target = comp.Value()
-			if runtime.GOOS == "windows" { // `/C:\path` -> `C:\path`
-				target = strings.TrimPrefix(target, `/`)
-			}
-			return true
-		}
-		return false
-	})
-	return
-}
-
-func listen(serviceMaddrs ...multiaddr.Multiaddr) ([]manet.Listener, error) {
-	serviceListeners := make([]manet.Listener, len(serviceMaddrs))
-	for i, maddr := range serviceMaddrs {
-		listener, err := manet.Listen(maddr)
-		if err != nil {
-			err = fmt.Errorf("could not create service listener for %v: %w",
-				maddr, err)
-			// On failure, close what we opened so far.
-			for _, listener := range serviceListeners[:i] {
-				if lErr := listener.Close(); lErr != nil {
-					err = fmt.Errorf("%w - could not close %s: %s",
-						err, listener.Multiaddr(), lErr)
-				}
-			}
-			return nil, err
-		}
-		serviceListeners[i] = listener
-	}
-	return serviceListeners, nil
-}
-
-func serveCmdsHTTP(ctx context.Context,
-	cmdsRoot *cmds.Command, cmdsEnv cmds.Environment,
-	listeners ...manet.Listener) (<-chan multiaddr.Multiaddr, <-chan error) {
-	var (
-		maddrs    = make(chan multiaddr.Multiaddr, len(listeners))
-		serveErrs = make(chan error)
-		serveWg   sync.WaitGroup
-	)
-	defer close(maddrs)
-
-	for _, listener := range listeners {
-		serverErrs := acceptCmdsHTTP(ctx, listener, cmdsRoot, cmdsEnv)
-		maddrs <- listener.Multiaddr() // Tell the caller this server is ready.
-
-		// Aggregate server-errors into serve-errors.
-		serveWg.Add(1)
-		go func() {
-			defer serveWg.Done()
-			for err := range serverErrs {
-				err = fmt.Errorf("HTTP server error: %w", err)
-				serveErrs <- err
-			}
-		}()
-	}
-
-	// Close serveErrs after all aggregate servers close.
-	go func() { defer close(serveErrs); serveWg.Wait() }()
-
-	return maddrs, serveErrs
-}
-
-func acceptCmdsHTTP(ctx context.Context,
-	listener manet.Listener, clientRoot *cmds.Command,
-	env cmds.Environment) (serverErrs <-chan error) {
-	var (
-		httpServer = &http.Server{
-			Handler: cmdshttp.NewHandler(env,
-				clientRoot, cmdshttp.NewServerConfig()),
-		}
-		httpServerErrs = make(chan error, 1)
-	)
+func watchForStopReasons(ctx context.Context, stopReasons <-chan daemon.StopReason,
+	emitter cmds.ResponseEmitter) (context.Context, <-chan error) {
+	errs := make(chan error)
+	stopCtx, stopCancel := context.WithCancel(context.Background())
 	go func() {
-		const stopGrace = 30 * time.Second
-		defer close(httpServerErrs)
-		serveErr := make(chan error, 1)
-
-		// The actual listen and serve / accept loop.
-		go func() { serveErr <- httpServer.Serve(manet.NetListener(listener)) }()
-
-		// Context handling to cancel the server mid `Serve`,
-		// and relay errors.
+		defer close(errs)
+		defer stopCancel()
 		select {
-		case err := <-serveErr:
-			httpServerErrs <- err
+		case reason := <-stopReasons:
+			if err := emitter.Emit(&daemon.Response{
+				Status:     daemon.Stopping,
+				StopReason: reason,
+			}); err != nil {
+				errs <- err
+			}
 		case <-ctx.Done():
-			timeout, timeoutCancel := context.WithTimeout(context.Background(),
-				stopGrace/2)
-			defer timeoutCancel()
-			if err := httpServer.Shutdown(timeout); err != nil {
-				if errors.Is(err, context.DeadlineExceeded) {
-					err = fmt.Errorf("could not shutdown server before timeout (%s): %w",
-						timeout, err,
-					)
-				}
-				httpServerErrs <- err
-			}
-
-			// Serve routine must return now.
-			if err := <-serveErr; !errors.Is(err, http.ErrServerClosed) {
-				httpServerErrs <- err
-			}
 		}
 	}()
-
-	return httpServerErrs
+	return stopCtx, errs
 }
 
-// TODO: this should probably return a pkg specific error value. (ErrAutoShutdown)
-// ^ opted for a done-chan instead, caller can dispatch whatever they want at callsite
-// TODO: [Ame] English.
-//
-// signalIfNotBusy checks every interval to see if the service is busy.
-// If it's not, the returned channel will be closed.
-// Otherwise, the service will be checked again next interval.
-// If a service error is encountered at any point, it will be sent on the error channel.
-// And receiving from the signal channel will block indefinitely.
-func signalIfNotBusy(ctx context.Context,
-	checkInterval time.Duration, _ environment.Environment) (<-chan struct{}, <-chan error) {
-	if checkInterval == 0 {
-		return nil, nil
-	}
-	var (
-		idleSignal = make(chan struct{})
-		ipcErrs    = make(chan error)
-		// NOTE [placeholder]: This build is never busy.
-		// The ipc env should be used to query activity when implemented.
-		checkIfBusy = func() (bool, error) { return false, nil }
-	)
+func stopOnContext(ctx, triggerCtx context.Context, daemonEnv daemon.Environment) <-chan error {
+	errs := make(chan error)
 	go func() {
-		stopTicker := time.NewTicker(checkInterval)
-		defer stopTicker.Stop()
-		defer close(ipcErrs)
-		for {
+		defer close(errs)
+		select {
+		case <-triggerCtx.Done():
+		case <-ctx.Done():
+			return
+		}
+		if stopErr := daemonEnv.Stop(daemon.RequestCanceled); stopErr != nil {
 			select {
-			case <-stopTicker.C:
-				busy, err := checkIfBusy()
-				if err != nil {
-					select {
-					case ipcErrs <- err:
-					case <-ctx.Done():
-					}
-					return
-				}
-				if !busy {
-					select {
-					case idleSignal <- struct{}{}:
-						defer close(idleSignal)
-					case <-ctx.Done():
-					}
-					return
-				}
+			case errs <- stopErr:
 			case <-ctx.Done():
-				return
 			}
 		}
 	}()
-	return idleSignal, ipcErrs
+	return errs
+}
+
+func errChanToUnwindFunc(errs <-chan error) func() error {
+	return func() error {
+		var err error
+		for e := range errs {
+			err = maybeAppendError(err, e)
+		}
+		return err
+	}
 }

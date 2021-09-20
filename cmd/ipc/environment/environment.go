@@ -16,7 +16,7 @@ type (
 	Environment interface {
 		Context() context.Context
 		Service() service.Service
-		Daemon() daemon.Daemon
+		Daemon() daemon.Environment
 	}
 
 	filesystemEnvironment struct {
@@ -27,7 +27,7 @@ type (
 		// derived or canceled, should be derived or canceled
 		// from this context.
 		rootCtx context.Context
-		daemon  daemon.Daemon
+		daemon  daemon.Environment
 	}
 )
 
@@ -35,7 +35,7 @@ type (
 //var _ environment.Environment = (*filesystemEnvironment)(nil)
 
 func (env *filesystemEnvironment) Service() service.Service { return service.NewServiceEnvironment() }
-func (fe *filesystemEnvironment) Daemon() daemon.Daemon {
+func (fe *filesystemEnvironment) Daemon() daemon.Environment {
 	de := fe.daemon
 	if de == nil {
 		de = daemon.NewDaemonEnvironment()

@@ -110,8 +110,8 @@ func TestDaemonRun(t *testing.T) {
 					case 1:
 						// Server should tell us it's stopping, and why.
 						expected := daemon.Response{
-							Status: daemon.Stopping,
-							Reason: daemon.Idle,
+							Status:     daemon.Stopping,
+							StopReason: daemon.Idle,
 						}
 						if *response != expected {
 							return fmt.Errorf("Bad response sequence [%d]"+
