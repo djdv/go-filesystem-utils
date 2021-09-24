@@ -1,4 +1,4 @@
-package fscmds
+package ipc
 
 import (
 	"errors"
@@ -38,7 +38,7 @@ func servicePathsToServiceMaddrs(servicePaths ...string) ([]multiaddr.Multiaddr,
 			multiaddrSet[servicePath] = struct{}{}
 		}
 		maddrString := path.Join("/unix/",
-			filepath.Join(servicePath, ServiceName, ServerName))
+			filepath.Join(servicePath, ServerRootName, ServerName))
 		serviceMaddr, err := multiaddr.NewMultiaddr(maddrString)
 		if err != nil {
 			return nil, err

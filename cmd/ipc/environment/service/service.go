@@ -22,6 +22,8 @@ type (
 	serviceEnvironment struct{}
 )
 
+const ServiceDescription = "Manages active file system requests and instances."
+
 func NewServiceEnvironment() Service { return &serviceEnvironment{} }
 
 func (env serviceEnvironment) Config(request *cmds.Request) (*service.Config, error) {
@@ -37,9 +39,9 @@ func (env serviceEnvironment) Config(request *cmds.Request) (*service.Config, er
 		return nil, err
 	}
 	return &service.Config{
-		Name:        ipc.ServiceName,
-		DisplayName: ipc.ServiceDisplayName,
-		Description: ipc.ServiceDescription,
+		Name:        ipc.SystemServiceName,
+		DisplayName: ipc.SystemServiceDisplayName,
+		Description: ServiceDescription,
 		UserName:    settings.Username,
 		Option:      serviceKeyValueFrom(&settings.PlatformSettings),
 		Arguments:   serviceArgs(),
@@ -51,7 +53,9 @@ func (env serviceEnvironment) Config(request *cmds.Request) (*service.Config, er
 // The caller should store them in the service.Config,
 // so that the service manager can use them when starting the process itself.
 func serviceArgs() (serviceArgs []string) {
-	serviceArgs = []string{ipc.ServiceCommandName}
+	// TODO: This needs to be dynamic
+	//serviceArgs = []string{ipc.ServiceCommandName}
+	serviceArgs = []string{"service", "daemon"}
 	var (
 		params = []string{
 			fscmds.ServiceMaddrs().CommandLine(),

@@ -8,7 +8,7 @@ import (
 	"unsafe"
 
 	"github.com/adrg/xdg"
-	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	"github.com/djdv/go-filesystem-utils/cmd/ipc"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
 	"golang.org/x/sys/windows"
@@ -25,8 +25,12 @@ read, write, and delete for unix domain sockets to `connect`.
 We want 'Users' to be able to do that, so we allow that access
 on files underneath the service directory.
 */
-func systemListeners(providedMaddrs ...multiaddr.Multiaddr) (serviceListeners []manet.Listener,
+func systemListeners(maddrsProvided bool) (serviceListeners []manet.Listener,
 	cleanup func() error, err error) {
+	if maddrsProvided {
+		return // Supply nothing; let the daemon instantiate from the arguments.
+	}
+
 	var (
 		systemSid          *windows.SID
 		dacl               *windows.ACL
@@ -34,7 +38,7 @@ func systemListeners(providedMaddrs ...multiaddr.Multiaddr) (serviceListeners []
 		pszServiceDir      *uint16
 		serviceDir         = filepath.Join(
 			xdg.ConfigDirs[len(xdg.ConfigDirs)-1],
-			fscmds.ServiceName,
+			ipc.ServerRootName,
 		)
 	)
 	if systemSid, err = windows.CreateWellKnownSid(windows.WinLocalSystemSid); err != nil {
@@ -69,8 +73,10 @@ func systemListeners(providedMaddrs ...multiaddr.Multiaddr) (serviceListeners []
 	// when the caller is done with it.
 	cleanup = func() error { return os.Remove(serviceDir) }
 
+	// Create a socket within the service directory
+	// and start listening on it.
 	var (
-		socketPath      = filepath.Join(serviceDir, fscmds.ServerName)
+		socketPath      = filepath.Join(serviceDir, ipc.ServerName)
 		multiaddrString = "/unix/" + socketPath
 		serviceMaddr    multiaddr.Multiaddr
 		listener        manet.Listener

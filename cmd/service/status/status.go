@@ -8,6 +8,7 @@ import (
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
+	"github.com/djdv/go-filesystem-utils/cmd/ipc"
 	"github.com/djdv/go-filesystem-utils/cmd/ipc/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
@@ -87,11 +88,11 @@ var Command = &cmds.Command{
 		// Query host system service servers.
 		serviceMaddrs := settings.ServiceMaddrs
 		if len(serviceMaddrs) == 0 {
-			userMaddrs, err := fscmds.UserServiceMaddrs()
+			userMaddrs, err := ipc.UserServiceMaddrs()
 			if err != nil {
 				return err
 			}
-			systemMaddrs, err := fscmds.SystemServiceMaddrs()
+			systemMaddrs, err := ipc.SystemServiceMaddrs()
 			if err != nil {
 				return err
 			}
@@ -100,7 +101,7 @@ var Command = &cmds.Command{
 
 		listeners := make([]multiaddr.Multiaddr, 0, len(serviceMaddrs))
 		for _, serviceMaddr := range serviceMaddrs {
-			if fscmds.ServerDialable(serviceMaddr) {
+			if ipc.ServerDialable(serviceMaddr) {
 				listeners = append(
 					listeners,
 					serviceMaddr,

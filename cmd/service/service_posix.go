@@ -1,5 +1,5 @@
-//go:build !windows
-// +build !windows
+//go:build !windows && !darwin
+// +build !windows,!darwin
 
 package service
 
@@ -16,49 +16,39 @@ import (
 	manet "github.com/multiformats/go-multiaddr/net"
 )
 
-func systemListeners(providedMaddrs ...multiaddr.Multiaddr) (serviceListeners []manet.Listener,
+func systemListeners(maddrsProvided bool) (serviceListeners []manet.Listener,
 	cleanup func() error, err error) {
-	if len(providedMaddrs) != 0 {
-		if serviceListeners, err = listen(providedMaddrs...); err != nil {
-			return
-		}
-	}
 
-	// TODO: separate out for launchd/macos
 	// FIXME: we need to use activation.Files(false) here; otherwise we'll lose these on restart.
 	// That is, service restart, not process restart.
-	//*Right now those are the same thing so it doesn't matter, but it will later.
+	//*Right now those are the same thing so it doesn't matter, but it might later.
 	var systemListeners []net.Listener
 	if systemListeners, err = activation.Listeners(); err != nil {
 		return
 	}
 
-	providedListeners := make([]manet.Listener, len(systemListeners))
+	serviceListeners = make([]manet.Listener, len(systemListeners))
 	for i, listener := range systemListeners {
 		var cast manet.Listener
 		if cast, err = manet.WrapNetListener(listener); err != nil {
 			return
 		}
-		providedListeners[i] = cast
+		serviceListeners[i] = cast
+	}
+	if len(serviceListeners) > 0 {
+		return
 	}
 
-	serviceListeners = append(serviceListeners, providedListeners...)
-
+	// Nothing provided by the system, make our own.
 	var (
 		socketPath   string
 		serviceMaddr multiaddr.Multiaddr
 	)
-	if runtime.GOOS == "darwin" { // TODO: move to constrained file
-		// TODO: pull from service config keyvalue
-		socketPath = "/var/run/fsservice"
+	socketPath, err = xdg.ConfigFile(filepath.Join(fscmds.ServiceName, fscmds.ServerName))
+	if err != nil {
 		return
-	} else {
-		socketPath, err = xdg.ConfigFile(filepath.Join(fscmds.ServiceName, fscmds.ServerName))
-		if err != nil {
-			return
-		}
-		cleanup = func() error { return os.Remove(filepath.Dir(socketPath)) }
 	}
+	cleanup = func() error { return os.Remove(filepath.Dir(socketPath)) }
 
 	multiaddrString := "/unix/" + socketPath
 	if serviceMaddr, err = multiaddr.NewMultiaddr(multiaddrString); err != nil {

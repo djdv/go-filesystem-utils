@@ -30,40 +30,29 @@ const (
 	// Servers and clients should use these values as various rally points.
 	// Where servers expose them and clients look for them in relevant APIs.
 
-	// TODO: This has to change (to `daemon`, and needs a sister function.
-	// ServiceCommandPath() { return []string{argv[0], "service", "daemon"} }
-	// Maybe declared in the daemon pkg?
-	// Some of these should be dropped like the display name
-	// The stdio and status values should probably go into a sub-pkg too.
-	// Just keep everything explicitly separate.
-	//
-	// TODO: [Ame] English.
-	// ServiceCommandName should be used as the name for commands
-	// which expose the file system commands API.
-	// Typically the final component in the command line, HTTP path, etc. before arguments.
-	// E.g. `programName someSubcommand $ServiceCommandName --parameter="argument"`,
-	// `/someSubCommand/$ServiceCommandName?parameter=argument`, etc.
-	ServiceCommandName = "service"
+	// SystemServiceName should be used when interfacing with
+	// the host system's service management interface.
+	SystemServiceName = "filesystem"
 
-	ServiceDescription = "Manages active file system requests and instances."
+	// SystemServiceDisplayName is an alias for SystemServiceName
+	// without character constraints.
+	SystemServiceDisplayName = "File system service"
 
-	// ServiceName is a generic short-and-safe name which describes the purpose of the service.
-	// Some APIs have restrictions on whitespace, symbols, character sets, etc.
-	// This name may be used in these APIs. (E.g. as an identifier within an init system)
-	// If necessary, length and character case should be adapted
-	// to conform to the API standard being targeted. (E.g. shortened and cased as `fs`)
-	ServiceName = "FileSystem"
-
-	// ServiceDisplayName is the unrestricted / human friendly version of ServiceName.
-	ServiceDisplayName = "File system service"
+	// ServerRootName defines a name which servers and clients may use
+	// to refer to the service in namespace oriented APIs.
+	ServerRootName = "fs"
+	// ServerName defines a name which servers and clients may use
+	// to form or find connections to a named server instance.
+	// (E.g. a Unix socket of path `.../$ServerRootName/$ServerName`.)
+	ServerName = "server"
 
 	// TODO: document + names
-	// These values are expected to be printed on stdout by service servers.
+	// These values are expected to be printed on stdout by servers.
 	// TODO: the stdio protocol explanation here; header first; anything; ready
 	// errors go to stderr.
-	StdHeader     = ServiceDisplayName + " starting..."
-	StdGoodStatus = "Listening on:"
-	StdReady      = ServiceDisplayName + " started"
+	StdoutHeader         = SystemServiceDisplayName + " is starting..."
+	StdoutListenerPrefix = "Listening on:"
+	StdServerReady       = SystemServiceDisplayName + " is ready"
 
 	// TODO: move to ipc/env/service?
 	// TODO: document + names + protocol

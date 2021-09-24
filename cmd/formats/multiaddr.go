@@ -8,7 +8,6 @@ import (
 	"github.com/multiformats/go-multiaddr"
 )
 
-// TODO: move to formats pkg?
 // https://github.com/multiformats/go-multiaddr/issues/100
 type Multiaddr struct{ Interface multiaddr.Multiaddr }
 

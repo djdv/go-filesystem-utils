@@ -1,4 +1,4 @@
-package fscmds
+package ipc
 
 import "github.com/multiformats/go-multiaddr"
 

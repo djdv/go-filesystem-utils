@@ -1,7 +1,7 @@
 //go:build !darwin
 // +build !darwin
 
-package fscmds
+package ipc
 
 import (
 	"github.com/adrg/xdg"

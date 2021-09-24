@@ -45,12 +45,12 @@ func formatDaemon(response cmds.Response, emitter cmds.ResponseEmitter) error {
 
 		switch response.Status {
 		case daemon.Starting:
-			outputs.Print(ipc.StdHeader + "\n")
+			outputs.Print(ipc.StdoutHeader + "\n")
 		case daemon.Ready:
 			if encodedMaddr := response.ListenerMaddr; encodedMaddr != nil {
-				outputs.Print(fmt.Sprintf("%s %s\n", ipc.StdGoodStatus, encodedMaddr.Interface))
+				outputs.Print(fmt.Sprintf("%s %s\n", ipc.StdoutListenerPrefix, encodedMaddr.Interface))
 			} else {
-				outputs.Print(ipc.StdReady + "\n")
+				outputs.Print(ipc.StdServerReady + "\n")
 				outputs.Print("Send interrupt to stop\n")
 			}
 		case daemon.Stopping:

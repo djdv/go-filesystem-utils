@@ -63,11 +63,11 @@ func MakeExecutor(request *cmds.Request, environment interface{}) (cmds.Executor
 	if len(serviceMaddrs) == 0 {
 		// When service maddrs aren't provided,
 		// provide+check a default set.
-		userMaddrs, err := fscmds.UserServiceMaddrs()
+		userMaddrs, err := ipc.UserServiceMaddrs()
 		if err != nil {
 			return nil, err
 		}
-		systemMaddrs, err := fscmds.SystemServiceMaddrs()
+		systemMaddrs, err := ipc.SystemServiceMaddrs()
 		if err != nil {
 			return nil, err
 		}
@@ -94,7 +94,7 @@ func MakeExecutor(request *cmds.Request, environment interface{}) (cmds.Executor
 		foundServer bool
 	)
 	for i, serviceMaddr := range serviceMaddrs {
-		if !fscmds.ServerDialable(serviceMaddr) {
+		if !ipc.ServerDialable(serviceMaddr) {
 			tried[i] = serviceMaddr.String()
 			continue
 		}
@@ -151,7 +151,7 @@ func parseCmdsClientOptions(maddr multiaddr.Multiaddr) (clientHost string, clien
 		// TODO: Consider patching cmds-lib.
 		// We want to use the URL scheme "http+unix".
 		// As-is, it prefixes the value to be parsed by pkg `url` as "http://http+unix://".
-		clientHost = fmt.Sprintf("http://%s-%s", fscmds.ServiceName, fscmds.ServerName)
+		clientHost = fmt.Sprintf("http://%s-%s", ipc.ServerRootName, ipc.ServerName)
 		netDialer := new(net.Dialer)
 		clientOpts = append(clientOpts, cmdshttp.ClientWithHTTPClient(&http.Client{
 			Transport: &http.Transport{
@@ -252,7 +252,7 @@ func relaunchSelfAsService(exitInterval time.Duration) (*int, multiaddr.Multiadd
 		return nil, nil, fmt.Errorf("could not start background service: %w", err)
 	}
 
-	if !fscmds.ServerDialable(serviceMaddr) {
+	if !ipc.ServerDialable(serviceMaddr) {
 		return nil, nil, fmt.Errorf("service said it was ready but we could not connect")
 	}
 

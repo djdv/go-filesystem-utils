@@ -7,7 +7,6 @@ import (
 	"os/signal"
 	"path/filepath"
 
-	fscmds "github.com/djdv/go-filesystem-utils/cmd"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	"github.com/djdv/go-filesystem-utils/cmd/ipc"
 	"github.com/djdv/go-filesystem-utils/cmd/ipc/environment"
@@ -25,7 +24,7 @@ const Name = "daemon"
 
 var Command = &cmds.Command{
 	Helptext: cmds.HelpText{
-		Tagline: ipc.ServiceDescription,
+		Tagline: "Manages active file system requests and instances.",
 	},
 	NoRemote: true,
 	Run:      daemonRun,
@@ -41,28 +40,6 @@ var Command = &cmds.Command{
 }
 
 type cleanupFunc func() error
-
-func clientRoot() *cmds.Command {
-	return &cmds.Command{
-		Options: fscmds.RootOptions(),
-		Helptext: cmds.HelpText{
-			Tagline: "File system service client.",
-		},
-		Subcommands: map[string]*cmds.Command{
-			"service": {
-				// TODO : add stub info
-				// this command only exists for its path to `stop`
-				Subcommands: map[string]*cmds.Command{
-					Name: {
-						Subcommands: map[string]*cmds.Command{
-							stop.Name: stop.Command,
-						},
-					},
-				},
-			},
-		},
-	}
-}
 
 func maybeAppendError(origErr, newErr error) error {
 	switch {
@@ -136,8 +113,7 @@ func daemonRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Env
 
 	var (
 		serverCtx, serverCancel  = context.WithCancel(stopTriggerCtx)
-		clientRoot               = clientRoot()
-		serverMaddrs, serverErrs = serveCmdsHTTP(serverCtx, clientRoot, env, listeners...)
+		serverMaddrs, serverErrs = serveCmdsHTTP(serverCtx, request.Root, env, listeners...)
 	)
 	unwind = append(unwind, func() error {
 		// Cancel the server(s) and wait for listener(s) to close
@@ -224,7 +200,7 @@ func getListeners(cmdsExtra *cmds.Extra,
 }
 
 func defaultListeners() ([]manet.Listener, cleanupFunc, error) {
-	localDefaults, err := fscmds.UserServiceMaddrs()
+	localDefaults, err := ipc.UserServiceMaddrs()
 	if err != nil {
 		return nil, nil, err
 	}
