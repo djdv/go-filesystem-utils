@@ -33,14 +33,14 @@ func TestMain(m *testing.M) {
 				environment.MakeEnvironment, executor.MakeExecutor)
 		)
 		if err != nil {
-			cliError := new(cli.ExitError)
-			if errors.As(err, cliError) {
-				os.Exit(int(*cliError))
+			var cliError cli.ExitError
+			if errors.As(err, &cliError) {
+				os.Exit(int(cliError))
 			}
 		}
 		os.Exit(0)
 	}
-	// otherwise call Go's standard testing.Main
+	// Otherwise call Go's standard `testing.Main`.
 	os.Exit(m.Run())
 }
 

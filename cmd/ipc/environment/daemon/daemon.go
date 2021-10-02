@@ -7,6 +7,7 @@ import (
 	"io"
 
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
+	"github.com/djdv/go-filesystem-utils/cmd/ipc"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -20,16 +21,6 @@ type (
 		Info          string             `json:",omitempty"`
 	}
 	Environment interface {
-		// TODO: Initalizer / Start() needs to return a channel of "reason"
-		// So that when the root context is canceled, daemon.Run can catch it
-		// "we were canceled, stop execution"
-		// Stop can take in a reason to control the return value from daemon.Run
-		// And we can replace the idle watcher with it
-		// watchdog{ notBusy? self.Stop(reasonIdle) }
-		// trap { select { httpError? ... , envStop? why?(reason) => maybeErrorValue } }
-		// This also allows an external command to call env.Stop(requestedToStop)
-		// which returns no error from daemon.Run
-		//
 		InitializeStop(context.Context) (<-chan StopReason, error)
 		Stop(StopReason) error
 	}
@@ -38,87 +29,6 @@ type (
 		stopChan chan StopReason
 	}
 )
-
-type ResponseHandlerFunc func(*Response) error
-
-func HandleInitSequence(response cmds.Response, callback ResponseHandlerFunc) error {
-	var (
-		// TODO: better error messages
-		sequenceErr = fmt.Errorf("init sequence was not in order") // TODO: pkg-level?
-		sawHeader   bool
-	)
-	for {
-		untypedResponse, err := response.Next()
-		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				return err
-			}
-			return fmt.Errorf("%w: response ended before init sequence terminated", sequenceErr)
-		}
-
-		response, ok := untypedResponse.(*Response)
-		if !ok {
-			return cmds.Errorf(cmds.ErrImplementation,
-				"emitter sent unexpected type: %#v", untypedResponse)
-		}
-		if !sawHeader {
-			if response.Status != Starting {
-				return fmt.Errorf("%w - got response before \"starting\": %#v",
-					sequenceErr, response)
-			}
-			sawHeader = true
-			if err := callback(response); err != nil {
-				return err
-			}
-			continue
-		}
-
-		switch response.Status {
-		case Ready:
-			if err := callback(response); err != nil {
-				return err
-			}
-			if response.ListenerMaddr == nil {
-				return nil
-			}
-		case Error:
-			if errMsg := response.Info; errMsg != "" {
-				return errors.New(errMsg)
-			}
-			return errors.New("daemon responded with an error status, but no message\n")
-		default:
-			if err := callback(response); err != nil {
-				return err
-			}
-			// TODO: stubbed for debugging sysservice
-			//return fmt.Errorf("%w - got unexpected response type: %#v",
-			//	sequenceErr, response)
-		}
-	}
-}
-
-func HandleRunningSequence(response cmds.Response, callback ResponseHandlerFunc) error {
-	for {
-		untypedResponse, err := response.Next()
-		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				return err
-			}
-			return nil
-		}
-
-		response, ok := untypedResponse.(*Response)
-		if !ok {
-			return cmds.Errorf(cmds.ErrImplementation,
-				"emitter sent unexpected type: %#v", untypedResponse)
-		}
-		if err := callback(response); err != nil {
-			return err
-		}
-	}
-}
-
-func NewDaemonEnvironment() Environment { return &daemonEnvironment{} }
 
 //go:generate stringer -type=StopReason -linecomment
 const (
@@ -133,8 +43,32 @@ const (
 	Starting
 	Ready
 	Stopping
-	Error
 )
+
+func (response *Response) String() string {
+	switch response.Status {
+	case Starting:
+		return ipc.SystemServiceDisplayName + " is starting..."
+	case Ready:
+		if encodedMaddr := response.ListenerMaddr; encodedMaddr != nil {
+			return fmt.Sprintf("Listening on: %s", encodedMaddr.Interface)
+		}
+		return ipc.SystemServiceDisplayName + " is ready"
+	case Stopping:
+		return fmt.Sprintf("Stopping: %s", response.StopReason.String())
+	default:
+		if response.Info == "" {
+			panic(fmt.Errorf("unexpected response format: %#v",
+				response,
+			))
+		}
+		return response.Info
+	}
+}
+
+var ErrStartupSequence = errors.New("startup sequence was not in order")
+
+func NewDaemonEnvironment() Environment { return &daemonEnvironment{} }
 
 func (de *daemonEnvironment) InitializeStop(ctx context.Context) (<-chan StopReason, error) {
 	if de.stopChan != nil {
@@ -162,4 +96,127 @@ func (de *daemonEnvironment) Stop(reason StopReason) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func makeStartupChecker() func(response *Response) (bool, error) {
+	var sawHeader bool
+	return func(response *Response) (startupFinished bool, err error) {
+		switch response.Status {
+		case Starting:
+			if response.ListenerMaddr == nil {
+				if sawHeader {
+					err = fmt.Errorf("%w - received \"starting\" twice",
+						ErrStartupSequence)
+					return
+				}
+				sawHeader = true
+			}
+			return
+		case Ready:
+			if !sawHeader {
+				err = fmt.Errorf("%w - got response before \"starting\": %#v",
+					ErrStartupSequence, response)
+				return
+			}
+			if startupFinished {
+				err = fmt.Errorf("%w - received \"ready\" twice",
+					ErrStartupSequence)
+				return
+			}
+			startupFinished = true
+			return
+		default:
+			err = fmt.Errorf("%w - got unexpected response during startup: %#v",
+				ErrStartupSequence, response)
+			return
+		}
+	}
+}
+
+/*
+TODO: Check English.
+
+ParseResponse handles responses from the server.
+Validating the response data as well as the startup sequence documented below.
+If a sequence error is encountered `ErrResponseSequence` will be returned on the channel.
+Otherwise responses will be sent to their channel as they're received.
+
+A standard implementation of the service daemon is expected to respond
+with the following sequence of responses.
+
+ // Required - Empty "starting" response:
+ Response{Status: Starting}
+
+ // Optional - List of listeners
+  Response{
+  	Status: Starting,
+  	ListenerMaddr: non-nil-maddr,
+  }
+
+ // Required - Empty "Ready" response:
+  Response{Status: Ready}
+
+I.e.
+ Sequence_start     = Starting;
+ Sequence_listeners = Starting, Listener;
+ Sequence_end       = Ready;
+ Sequence           = Sequence_start, {Sequence_listeners}, Sequence_end;
+*/
+func ParseResponse(ctx context.Context, response cmds.Response) (<-chan Response, <-chan error) {
+	var (
+		responses = make(chan Response)
+		errs      = make(chan error)
+	)
+	go func() {
+		defer close(responses)
+		defer close(errs)
+		var (
+			checkStartupSequence = makeStartupChecker()
+			finishedStarting     bool
+		)
+		for {
+			untypedResponse, err := response.Next()
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					if finishedStarting {
+						return
+					}
+					err = fmt.Errorf("%w: response closed before startup sequence finished",
+						ErrStartupSequence)
+				}
+				select {
+				case errs <- err:
+				case <-ctx.Done():
+				}
+				return
+			}
+
+			response, ok := untypedResponse.(*Response)
+			if !ok {
+				select {
+				case errs <- cmds.Errorf(cmds.ErrImplementation,
+					"emitter sent unexpected type: %#v", untypedResponse):
+				case <-ctx.Done():
+				}
+				return
+			}
+
+			if !finishedStarting {
+				var err error
+				if finishedStarting, err = checkStartupSequence(response); err != nil {
+					select {
+					case errs <- err:
+					case <-ctx.Done():
+					}
+					return
+				}
+			}
+			select {
+			case responses <- *response:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return responses, errs
 }

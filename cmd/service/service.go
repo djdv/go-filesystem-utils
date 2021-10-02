@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -53,8 +54,8 @@ func systemServiceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env c
 		)
 	}
 
-	// NOTE: We don't have the system logger right away.
-	// Early errors will only show up in tests or a debugger.
+	// NOTE: We don't have the system logger yet.
+	// These early errors will only show up in tests or a debugger.
 	fsEnv, err := environment.CastEnvironment(env)
 	if err != nil {
 		return err
@@ -64,6 +65,12 @@ func systemServiceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env c
 		return err
 	}
 
+	// NOTE: The service API doesn't give us a way to get
+	// the system logger without the service interface.
+	// So we have to initialize in a cyclical manner.
+	// Constructing the interface from the struct,
+	// in order to fetch the logger via its method,
+	// then assigning the logger to the struct (further below).
 	serviceInterface := &daemonCmdWrapper{
 		serviceRequest: request,
 		emitter:        emitter,
@@ -80,20 +87,21 @@ func systemServiceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env c
 		return err
 	}
 
+	// NOTE: Below this line,
+	// errors get logged to `sysLog` internally by called functions/methods.
+
 	_, maddrsProvided := request.Options[fscmds.ServiceMaddrs().CommandLine()]
-	serviceListeners, cleanup, err := systemListeners(maddrsProvided)
+	serviceListeners, cleanup, err := systemListeners(maddrsProvided, sysLog)
 	if err != nil {
-		return logErr(sysLog, err)
+		return err
 	}
 
 	serviceInterface.sysLog = sysLog
 	serviceInterface.sysListeners = serviceListeners
 
-	// NOTE: Run logs errors itself internally
 	err = serviceController.Run()
 
 	if cleanupErr := cleanup(); cleanupErr != nil {
-		cleanupErr = logErr(sysLog, cleanupErr)
 		if err == nil {
 			err = cleanupErr
 		} else {
@@ -149,29 +157,86 @@ func (svc *daemonCmdWrapper) Start(svcIntf service.Service) error {
 	daemonRequest.Command.Extra = extra
 	//
 
+	// TODO: comments may be out of date - we refactored things. Make a pass.
+
 	// The daemon command should block until the daemon stops listening
 	// or encounters an error. Emitting responses while it runs.
 	daemonEmitter, daemonResponse := cmds.NewChanResponsePair(daemonRequest)
 	go svc.serviceRequest.Root.Call(daemonRequest, daemonEmitter, svc.environment)
 
-	// Parse the initialization responses to assure things are okay server-side.
-	responseHandler := daemonResponseHandler(sysLog)
-	if initErr := daemonenv.HandleInitSequence(daemonResponse, responseHandler); initErr != nil {
-		return logErr(sysLog, initErr)
+	// Setup a response channel for the daemon to send responses to.
+	// TODO: figure out what context to use for this. It can't be the request context.
+	// When that's canceled, next will return its canceled error value, which we want on Errs.
+	daemonResponses, daemonErrs := daemonenv.ParseResponse(context.TODO(), daemonResponse)
+
+	if err := handleDaemonInit(sysLog, daemonResponses, daemonErrs); err != nil {
+		return err
 	}
 
+	// Daemon started successfully.
 	// Handle any post-init messages from the daemon in the background.
+	// Store the error channel so that `Stop`
+	// may return any errors encountered during runtime.
+	svc.runErrs = handleDaemonRun(sysLog, svcIntf, daemonResponses, daemonErrs)
+
+	return nil
+}
+
+// handleDaemonInit logs daemon responses to the system logger
+// and waits for the daemon to report that it's ready.
+func handleDaemonInit(sysLog service.Logger,
+	daemonResponses <-chan daemonenv.Response, daemonErrs <-chan error) error {
+	for {
+		select {
+		case response := <-daemonResponses:
+			if err := sysLog.Info(response.String()); err != nil {
+				return logErr(sysLog, err)
+			}
+			if response.Status == daemonenv.Ready {
+				return nil
+			}
+		case err := <-daemonErrs:
+			return logErr(sysLog, err)
+		}
+	}
+}
+
+func handleDaemonRun(sysLog service.Logger, svcIntf service.Service,
+	daemonResponses <-chan daemonenv.Response, daemonErrs <-chan error) <-chan error {
 	runErrs := make(chan error, 1)
 	go func() {
 		defer close(runErrs)
-		if err := daemonenv.HandleRunningSequence(daemonResponse, responseHandler); err != nil {
-			// Daemon encountered an error
-			// buffer it for the `service.Interface.Stop` method.
-			runErrs <- fmt.Errorf("daemon response error: %w", err)
-			// Call `service.Service.Stop` (<- host interface method)
+		var sawStopResponse bool
+	out:
+		for daemonResponses != nil ||
+			daemonErrs != nil {
+			select {
+			case response, ok := <-daemonResponses:
+				if !ok {
+					daemonResponses = nil
+					continue
+				}
+				if err := sysLog.Info(response.String()); err != nil {
+					runErrs <- err
+					break out
+				}
+				if response.Status == daemonenv.Stopping {
+					sawStopResponse = true
+				}
+			case err, ok := <-daemonErrs:
+				if !ok {
+					daemonErrs = nil
+					continue
+				}
+				runErrs <- fmt.Errorf("daemon response error: %w", err)
+				break out
+			}
+		}
+		if !sawStopResponse {
+			// Call `service.Service.Stop` (<- service controller's request method)
 			// This will unblock `service.Service.Run`
-			// which will then call `service.Interface.Stop` (<- our method)
-			// allowing the service process to exit.
+			// which will then call `service.Interface.Stop` (<- our implementation)
+			// allowing the service process to drain `runErrs` and exit.
 			//
 			// NOTE: If the system refuses our request to Stop
 			// there's nothing we can do about it other than try to log it.
@@ -183,47 +248,7 @@ func (svc *daemonCmdWrapper) Start(svcIntf service.Service) error {
 			}
 		}
 	}()
-
-	// We've started successfully.
-	// Store the error channel so that `Stop`
-	// may return any errors encountered during runtime.
-	svc.runErrs = runErrs
-	return nil
-}
-
-func daemonResponseHandler(sysLog service.Logger) daemonenv.ResponseHandlerFunc {
-	return func(response *daemonenv.Response) (err error) {
-		switch response.Status {
-		case daemonenv.Starting:
-			err = sysLog.Info(ipc.StdoutHeader)
-		case daemonenv.Ready:
-			if encodedMaddr := response.ListenerMaddr; encodedMaddr != nil {
-				err = sysLog.Infof("%s %s", ipc.StdoutListenerPrefix, encodedMaddr.Interface)
-			} else {
-				err = sysLog.Info(ipc.StdServerReady)
-			}
-		case daemonenv.Stopping:
-			err = sysLog.Infof("Stopping: %s", response.StopReason.String())
-		case daemonenv.Error:
-			if errMsg := response.Info; errMsg == "" {
-				err = errors.New("service responded with an error status, but no message")
-			} else {
-				err = errors.New(errMsg)
-			}
-			err = logErr(sysLog, err)
-		default:
-			if response.Info != "" {
-				err = sysLog.Info(response.Info)
-			} else {
-				err = logErr(sysLog,
-					fmt.Errorf("service responded with an unexpected response: %#v",
-						response,
-					),
-				)
-			}
-		}
-		return
-	}
+	return runErrs
 }
 
 func (svc *daemonCmdWrapper) Stop(svcIntf service.Service) error {

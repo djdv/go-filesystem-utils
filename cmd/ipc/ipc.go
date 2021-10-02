@@ -12,12 +12,6 @@ type (
 	// Our implementation uses Go structures in memory,
 	// JSON over HTTP, and plain text over stdio, to coordinate between
 	// client and server processes - depending on the context/request.
-	/*
-		Sequence init      = Starting;
-		Sequence listeners = Starting, {Listener};
-		Sequence end       = Ready;
-		Sequence           = Sequence init, {Sequence listeners}, Sequence end;
-	*/
 	ServiceStatus   uint
 	ServiceResponse struct {
 		Status        ServiceStatus      `json:",omitempty"`
@@ -45,14 +39,6 @@ const (
 	// to form or find connections to a named server instance.
 	// (E.g. a Unix socket of path `.../$ServerRootName/$ServerName`.)
 	ServerName = "server"
-
-	// TODO: document + names
-	// These values are expected to be printed on stdout by servers.
-	// TODO: the stdio protocol explanation here; header first; anything; ready
-	// errors go to stderr.
-	StdoutHeader         = SystemServiceDisplayName + " is starting..."
-	StdoutListenerPrefix = "Listening on:"
-	StdServerReady       = SystemServiceDisplayName + " is ready"
 
 	// TODO: move to ipc/env/service?
 	// TODO: document + names + protocol

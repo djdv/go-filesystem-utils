@@ -52,6 +52,7 @@ func maybeAppendError(origErr, newErr error) error {
 	}
 }
 
+// TODO: This needs another pass. Could likely be simpler
 func daemonRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
 	var (
 		ctx             = request.Context
@@ -231,16 +232,19 @@ func defaultListeners() ([]manet.Listener, cleanupFunc, error) {
 			cleanup = func() error { return os.Remove(parent) }
 		}
 
-		// NOTE: While we're able to utilize/return multiple listeners here
-		// we only want the first one we can actually acquire.
+		// NOTE: While the API allows for multiple listeners -
+		// we don't have a reason to use more than 1 in the default case.
+		// So we just return the first listener that initializes successfully.
 		listeners, err := listen(maddr)
 		if err == nil {
 			return listeners, cleanup, nil
 		}
+
 		tried = append(tried, attempted{
 			Multiaddr: maddr,
 			error:     err,
 		})
+
 		if cleanup != nil {
 			if cErr := cleanup(); cErr != nil {
 				return nil, nil, fmt.Errorf("%w - could not cleanup: %s", err, cErr)
@@ -248,10 +252,10 @@ func defaultListeners() ([]manet.Listener, cleanupFunc, error) {
 		}
 	}
 
-	// TODO: sloppy
 	{
 		err := fmt.Errorf("could not listen on any sockets")
 		for _, attempt := range tried {
+			// TODO: use a nicer format
 			err = fmt.Errorf("%w - \"%v\":\"%s\"", err, attempt.Multiaddr, attempt.error)
 		}
 		return nil, nil, err
@@ -294,6 +298,12 @@ func stopOnContext(ctx, triggerCtx context.Context, daemonEnv daemon.Environment
 			case <-ctx.Done():
 			}
 		}
+		/* TODO: investigate why the context canceled test passes without this ???
+		select {
+		case errs <- triggerCtx.Err():
+		case <-ctx.Done():
+		}
+		*/
 	}()
 	return errs
 }

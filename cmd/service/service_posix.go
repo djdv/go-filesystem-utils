@@ -16,8 +16,13 @@ import (
 	manet "github.com/multiformats/go-multiaddr/net"
 )
 
-func systemListeners(maddrsProvided bool) (serviceListeners []manet.Listener,
+func systemListeners(maddrsProvided bool, sysLog service.Logger) (serviceListeners []manet.Listener,
 	cleanup func() error, err error) {
+	defer func() { // NOTE: Overwrites named return value.
+		if err != nil {
+			err = logErr(sysLog, err)
+		}
+	}()
 
 	// FIXME: we need to use activation.Files(false) here; otherwise we'll lose these on restart.
 	// That is, service restart, not process restart.

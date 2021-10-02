@@ -9,6 +9,7 @@ import (
 
 	"github.com/adrg/xdg"
 	"github.com/djdv/go-filesystem-utils/cmd/ipc"
+	"github.com/kardianos/service"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
 	"golang.org/x/sys/windows"
@@ -25,11 +26,17 @@ read, write, and delete for unix domain sockets to `connect`.
 We want 'Users' to be able to do that, so we allow that access
 on files underneath the service directory.
 */
-func systemListeners(maddrsProvided bool) (serviceListeners []manet.Listener,
+func systemListeners(maddrsProvided bool, sysLog service.Logger) (serviceListeners []manet.Listener,
 	cleanup func() error, err error) {
 	if maddrsProvided {
 		return // Supply nothing; let the daemon instantiate from the arguments.
 	}
+
+	defer func() { // NOTE: Overwrites named return value.
+		if err != nil {
+			err = logErr(sysLog, err)
+		}
+	}()
 
 	var (
 		systemSid          *windows.SID
@@ -41,6 +48,7 @@ func systemListeners(maddrsProvided bool) (serviceListeners []manet.Listener,
 			ipc.ServerRootName,
 		)
 	)
+
 	if systemSid, err = windows.CreateWellKnownSid(windows.WinLocalSystemSid); err != nil {
 		return
 	}

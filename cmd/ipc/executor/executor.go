@@ -177,9 +177,7 @@ func relaunchSelfAsService(exitInterval time.Duration) (*int, multiaddr.Multiadd
 		return nil, nil, err
 	}
 
-	// TODO: this but dynamic
-	//cmd := exec.Command(self, ServiceCommandName)
-	cmd := exec.Command(self, "service", "daemon")
+	cmd := exec.Command(self, fscmds.DaemonCmdsPath()...)
 	cmd.Dir = cwd
 	cmd.Env = os.Environ()
 	if exitInterval != 0 {

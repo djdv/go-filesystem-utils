@@ -53,9 +53,7 @@ func (env serviceEnvironment) Config(request *cmds.Request) (*service.Config, er
 // The caller should store them in the service.Config,
 // so that the service manager can use them when starting the process itself.
 func serviceArgs() (serviceArgs []string) {
-	// TODO: This needs to be dynamic
-	//serviceArgs = []string{ipc.ServiceCommandName}
-	serviceArgs = []string{"service", "daemon"}
+	serviceArgs = fscmds.DaemonCmdsPath()
 	var (
 		params = []string{
 			fscmds.ServiceMaddrs().CommandLine(),
