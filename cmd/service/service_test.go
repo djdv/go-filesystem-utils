@@ -113,7 +113,6 @@ func (sm *serviceMock) String() string                  { return sm.Config.Displ
 func (*serviceMock) Platform() string                   { return "go runtime" }
 func (sm *serviceMock) Status() (service.Status, error) { return sm.status, nil }
 
-// TODO: should log to t.Log
 type loggerMock struct{ t *testing.T }
 
 func (lm *loggerMock) Error(v ...interface{}) error   { lm.t.Error(v...); return nil }

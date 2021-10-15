@@ -133,19 +133,25 @@ func logErr(logger service.Logger, err error) error {
 	return err
 }
 
+// TODO: comments may be out of date - we refactored things. Make a pass.
 func (svc *daemonCmdWrapper) Start(svcIntf service.Service) error {
 	if svc.runErrs != nil {
 		return errors.New("service already started")
 	}
 
 	var (
-		sysLog        = svc.sysLog
-		ctx           = svc.serviceRequest.Context
-		daemonCmdPath = append(svc.serviceRequest.Path, daemon.Name)
+		sysLog         = svc.sysLog
+		serviceRequest = svc.serviceRequest
+		ctx            = serviceRequest.Context
+		// NOTE: We use the absolute root of the request
+		// rather than the request's relative command.
+		// This is because the daemon will serve whatever the request's Root is.
+		// And thus impact request paths for other command, such as `service daemon stop`.
+		daemonCmdPath = []string{Name, daemon.Name}
 	)
 
 	daemonRequest, err := cmds.NewRequest(ctx, daemonCmdPath,
-		svc.serviceRequest.Options, nil, nil, svc.serviceRequest.Root)
+		serviceRequest.Options, nil, nil, serviceRequest.Root)
 	if err != nil {
 		return logErr(sysLog, err)
 	}
@@ -157,98 +163,70 @@ func (svc *daemonCmdWrapper) Start(svcIntf service.Service) error {
 	daemonRequest.Command.Extra = extra
 	//
 
-	// TODO: comments may be out of date - we refactored things. Make a pass.
-
 	// The daemon command should block until the daemon stops listening
 	// or encounters an error. Emitting responses while it runs.
 	daemonEmitter, daemonResponse := cmds.NewChanResponsePair(daemonRequest)
-	go svc.serviceRequest.Root.Call(daemonRequest, daemonEmitter, svc.environment)
+	go serviceRequest.Root.Call(daemonRequest, daemonEmitter, svc.environment)
 
-	// Setup a response channel for the daemon to send responses to.
-	// TODO: figure out what context to use for this. It can't be the request context.
-	// When that's canceled, next will return its canceled error value, which we want on Errs.
-	daemonResponses, daemonErrs := daemonenv.ParseResponse(context.TODO(), daemonResponse)
+	// Handle the responses from the daemon in 2 phases.
+	var (
+		startupHandler = func(response *daemonenv.Response) error {
+			return sysLog.Info(response.String())
+		}
 
-	if err := handleDaemonInit(sysLog, daemonResponses, daemonErrs); err != nil {
-		return err
+		sawStopResponse bool
+		runtimeHandler  = func(response *daemonenv.Response) error {
+			if response.Status == daemonenv.Stopping {
+				sawStopResponse = true
+			}
+			return sysLog.Info(response.String())
+		}
+
+		responseCtx, responseCancel = context.WithCancel(context.Background())
+		startup, runtime            = daemonenv.SplitResponse(responseCtx, daemonResponse,
+			startupHandler, runtimeHandler,
+		)
+	)
+
+	if err := startup(); err != nil {
+		responseCancel()
+		return logErr(sysLog, err)
 	}
 
 	// Daemon started successfully.
 	// Handle any post-init messages from the daemon in the background.
-	// Store the error channel so that `Stop`
-	// may return any errors encountered during runtime.
-	svc.runErrs = handleDaemonRun(sysLog, svcIntf, daemonResponses, daemonErrs)
-
-	return nil
-}
-
-// handleDaemonInit logs daemon responses to the system logger
-// and waits for the daemon to report that it's ready.
-func handleDaemonInit(sysLog service.Logger,
-	daemonResponses <-chan daemonenv.Response, daemonErrs <-chan error) error {
-	for {
-		select {
-		case response := <-daemonResponses:
-			if err := sysLog.Info(response.String()); err != nil {
-				return logErr(sysLog, err)
-			}
-			if response.Status == daemonenv.Ready {
-				return nil
-			}
-		case err := <-daemonErrs:
-			return logErr(sysLog, err)
-		}
-	}
-}
-
-func handleDaemonRun(sysLog service.Logger, svcIntf service.Service,
-	daemonResponses <-chan daemonenv.Response, daemonErrs <-chan error) <-chan error {
 	runErrs := make(chan error, 1)
 	go func() {
 		defer close(runErrs)
-		var sawStopResponse bool
-	out:
-		for daemonResponses != nil ||
-			daemonErrs != nil {
+		defer responseCancel()
+		if runErr := runtime(); err != nil {
 			select {
-			case response, ok := <-daemonResponses:
-				if !ok {
-					daemonResponses = nil
-					continue
-				}
-				if err := sysLog.Info(response.String()); err != nil {
-					runErrs <- err
-					break out
-				}
-				if response.Status == daemonenv.Stopping {
-					sawStopResponse = true
-				}
-			case err, ok := <-daemonErrs:
-				if !ok {
-					daemonErrs = nil
-					continue
-				}
-				runErrs <- fmt.Errorf("daemon response error: %w", err)
-				break out
+			case runErrs <- runErr:
+			case <-ctx.Done():
+				return
 			}
 		}
 		if !sawStopResponse {
-			// Call `service.Service.Stop` (<- service controller's request method)
-			// This will unblock `service.Service.Run`
-			// which will then call `service.Interface.Stop` (<- our implementation)
-			// allowing the service process to drain `runErrs` and exit.
+			// Ask the system service manager to send our process its stop signal.
+			// (`service.Service.Stop`)
+			// This will unblock `service.Service.Run`, which will then call
+			// `service.Interface.Stop` (our `Stop` implementation)
 			//
 			// NOTE: If the system refuses our request to Stop
 			// there's nothing we can do about it other than try to log it.
-			// (This is unlikely to happen, but technically possible)
 			// The system operator will have to stop us manually via the host itself.
 			// (`Stop-Service`, `service stop`, `svcadm disable`, `launchctl unload`, etc.)
 			if svcErr := svcIntf.Stop(); svcErr != nil {
-				sysLog.Error(svcErr)
+				logErr(sysLog, svcErr)
 			}
 		}
 	}()
-	return runErrs
+
+	// Store the error channel so that `Stop`
+	// may return any errors encountered during runtime.
+	svc.runErrs = runErrs
+
+	return nil
 }
 
 func (svc *daemonCmdWrapper) Stop(svcIntf service.Service) error {
@@ -261,16 +239,37 @@ func (svc *daemonCmdWrapper) Stop(svcIntf service.Service) error {
 	}
 	svc.runErrs = nil
 
+	var err error
 	select {
-	case err := <-runErrs:
-		// If runtime errors were encountered, the daemon is already stopping/stopped.
-		return err
-	default:
-		// Otherwise, stop it gracefully.
-		if stopErr := svc.environment.Daemon().Stop(daemonenv.StopRequested); stopErr != nil {
-			return stopErr
+	// If during runtime, env's Stop method was called
+	// or an error was encountered this case should not block.
+	case runErr, ok := <-runErrs:
+		if !ok {
+			// Daemon stopped gracefully already.
+			// Returning here stops the system service.
+			return nil
 		}
-		// Wait for daemon.Run to return.
-		return <-runErrs
+		// Buffer the first error we got,
+		// there may be more coming from the channel.
+		err = logErr(sysLog, runErr)
+
+	// Otherwise, we'll call env's Stop method ourself
+	// which will indirectly unblock runErr.
+	default:
+		if stopErr := svc.environment.Daemon().Stop(daemonenv.StopRequested); stopErr != nil {
+			return logErr(sysLog, stopErr)
+		}
 	}
+
+	// Wait for daemon's Run method to fully stop / return all values.
+	for runErr := range runErrs {
+		runErr = logErr(sysLog, runErr)
+		if err == nil {
+			err = runErr
+		} else {
+			err = fmt.Errorf("%w - %s", err, runErr)
+		}
+	}
+
+	return err
 }

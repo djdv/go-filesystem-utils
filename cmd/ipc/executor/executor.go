@@ -3,13 +3,10 @@ package executor
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -20,9 +17,7 @@ import (
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
 	cmds "github.com/ipfs/go-ipfs-cmds"
-	cmdshttp "github.com/ipfs/go-ipfs-cmds/http"
 	"github.com/multiformats/go-multiaddr"
-	manet "github.com/multiformats/go-multiaddr/net"
 )
 
 var ErrCouldNotConnect = errors.New("could not connect to remote API")
@@ -79,35 +74,26 @@ func MakeExecutor(request *cmds.Request, environment interface{}) (cmds.Executor
 	}
 
 	// TODO: we need a special handler for this
-	// stop should stop all --api's that are dialable.
-	// is there some kind of client plexer?
-	// We may have to wrap one
+	// `stop` should dial all `--api` and broadcast to all of them
+	// via some kind of Executor plexer.
+	// Alternatively stop could take a vector of maddrs, but this seems bad.
+	// (because then the remote is requesting stop on another remote, rather than local main)
+	//
+	// TODO: change this condition. Break the whole thing out into a separate function.
+	// We should call `stop` locally if we can't dial.
+	// (So that it may return its own "not started" error - rather than us returning one)
 	if request.Command == stop.Command {
 		// Don't spawn an instance just to stop it.
 		tryLaunching = false
 	}
 
-	var (
-		tried       = make([]string, len(serviceMaddrs))
-		clientHost  string
-		clientOpts  []cmdshttp.ClientOpt
-		foundServer bool
-	)
+	tried := make([]string, len(serviceMaddrs))
 	for i, serviceMaddr := range serviceMaddrs {
 		if !ipc.ServerDialable(serviceMaddr) {
 			tried[i] = serviceMaddr.String()
 			continue
 		}
-		clientHost, clientOpts, err = parseCmdsClientOptions(serviceMaddr)
-		if err != nil {
-			return nil, err
-		}
-		foundServer = true
-		break
-	}
-
-	if foundServer {
-		return cmdshttp.NewClient(clientHost, clientOpts...), nil
+		return ipc.GetClient(serviceMaddr)
 	}
 
 	if tryLaunching {
@@ -119,51 +105,18 @@ func MakeExecutor(request *cmds.Request, environment interface{}) (cmds.Executor
 		if err != nil {
 			return nil, err
 		}
-		clientHost, clientOpts, err = parseCmdsClientOptions(serviceMaddr)
-		if err != nil {
-			return nil, err
-		}
-
 		// XXX: Don't look at this, and don't rely on it.
 		// `environment` will only be an int pointer in our `_test` package.
 		// This is not supported behaviour and for validation only.
 		if pidPtr, ok := environment.(*int); ok {
 			*pidPtr = *pid
 		}
-		return cmdshttp.NewClient(clientHost, clientOpts...), nil
+		return ipc.GetClient(serviceMaddr)
 	}
 
 	return nil, fmt.Errorf("%w (tried: %s)",
 		ErrCouldNotConnect, strings.Join(tried, ", "),
 	)
-
-}
-
-func parseCmdsClientOptions(maddr multiaddr.Multiaddr) (clientHost string, clientOpts []cmdshttp.ClientOpt, err error) {
-	network, dialHost, err := manet.DialArgs(maddr)
-	if err != nil {
-		return "", nil, err
-	}
-	switch network {
-	case "tcp", "tcp4", "tcp6":
-		clientHost = dialHost
-	case "unix":
-		// TODO: Consider patching cmds-lib.
-		// We want to use the URL scheme "http+unix".
-		// As-is, it prefixes the value to be parsed by pkg `url` as "http://http+unix://".
-		clientHost = fmt.Sprintf("http://%s-%s", ipc.ServerRootName, ipc.ServerName)
-		netDialer := new(net.Dialer)
-		clientOpts = append(clientOpts, cmdshttp.ClientWithHTTPClient(&http.Client{
-			Transport: &http.Transport{
-				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-					return netDialer.DialContext(ctx, network, dialHost)
-				},
-			},
-		}))
-	default:
-		return "", nil, fmt.Errorf("unsupported API address: %s", maddr)
-	}
-	return clientHost, clientOpts, nil
 }
 
 func relaunchSelfAsService(exitInterval time.Duration) (*int, multiaddr.Multiaddr, error) {

@@ -54,6 +54,7 @@ func (env serviceEnvironment) Config(request *cmds.Request) (*service.Config, er
 // so that the service manager can use them when starting the process itself.
 func serviceArgs() (serviceArgs []string) {
 	serviceArgs = fscmds.DaemonCmdsPath()
+	serviceArgs = serviceArgs[:len(serviceArgs)-1]
 	var (
 		params = []string{
 			fscmds.ServiceMaddrs().CommandLine(),

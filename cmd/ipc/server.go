@@ -1,13 +1,18 @@
 package ipc
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"path"
 	"path/filepath"
 	"strings"
 
 	"github.com/adrg/xdg"
+	cmds "github.com/ipfs/go-ipfs-cmds"
+	cmdshttp "github.com/ipfs/go-ipfs-cmds/http"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
 )
@@ -82,10 +87,47 @@ func FindLocalServer() (multiaddr.Multiaddr, error) {
 func ServerDialable(maddr multiaddr.Multiaddr) (connected bool) {
 	conn, err := manet.Dial(maddr)
 	if err == nil && conn != nil {
-		if err = conn.Close(); err != nil {
+		if err := conn.Close(); err != nil {
 			return // Socket is faulty, not accepting.
 		}
 		connected = true
 	}
 	return
+}
+
+func GetClient(maddr multiaddr.Multiaddr) (cmds.Executor, error) {
+	clientHost, clientOpts, err := parseCmdsClientOptions(maddr)
+	if err != nil {
+		return nil, err
+	}
+	return cmdshttp.NewClient(clientHost, clientOpts...), nil
+}
+
+func parseCmdsClientOptions(maddr multiaddr.Multiaddr) (clientHost string, clientOpts []cmdshttp.ClientOpt, err error) {
+	network, dialHost, err := manet.DialArgs(maddr)
+	if err != nil {
+		return "", nil, err
+	}
+	switch network {
+	case "tcp", "tcp4", "tcp6":
+		clientHost = dialHost
+	case "unix":
+		// TODO: Consider patching cmds-lib.
+		// We want to use the URL scheme "http+unix".
+		// As-is, it prefixes the value to be parsed by pkg `url` as `http://http+unix://`.
+		// It would be nice if this was handled internally.
+		// (I.e. if `http+unix://`, setup up the http client)
+		clientHost = fmt.Sprintf("http://%s-%s", ServerRootName, ServerName)
+		netDialer := new(net.Dialer)
+		clientOpts = append(clientOpts, cmdshttp.ClientWithHTTPClient(&http.Client{
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+					return netDialer.DialContext(ctx, network, dialHost)
+				},
+			},
+		}))
+	default:
+		return "", nil, fmt.Errorf("unsupported API address: %s", maddr)
+	}
+	return clientHost, clientOpts, nil
 }

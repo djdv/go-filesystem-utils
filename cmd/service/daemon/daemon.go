@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -19,7 +20,7 @@ import (
 )
 
 // TODO: use a value from ipc pkg
-//const Name = ipc.ServiceCommandName
+// const Name = ipc.ServiceCommandName
 const Name = "daemon"
 
 var Command = &cmds.Command{
@@ -37,6 +38,56 @@ var Command = &cmds.Command{
 	Subcommands: map[string]*cmds.Command{
 		stop.Name: stop.Command,
 	},
+}
+
+// TODO: English.
+// allowRemoteAccess modifies leading commands in the component path,
+// so that they may be called remotely.
+// (Otherwise the cmds HTTP server will return 404 errors for subcommands we want to expose
+// i.e. setting NoRemote on a parent command will 404 its subcommands inherently)
+func allowRemoteAccess(root *cmds.Command, path []string) *cmds.Command {
+	branch, err := root.Resolve(path)
+	if err != nil {
+		panic(err)
+	}
+
+	var newRoot, parent *cmds.Command
+	for i, cmd := range branch {
+		cmdCopy := *cmd
+		cmd = &cmdCopy
+
+		// Don't allow the original `Command.Subcommand` reference to be modified
+		// make a copy.
+		subcommands := make(map[string]*cmds.Command, len(cmd.Subcommands))
+		for name, cmd := range cmd.Subcommands {
+			subcommands[name] = cmd
+		}
+		cmd.Subcommands = subcommands
+
+		if i == 0 {
+			newRoot = cmd
+			parent = newRoot
+			continue
+		}
+
+		if cmd.NoRemote {
+			cmd.PreRun = nil
+			cmd.PostRun = nil
+			cmd.Run = func(*cmds.Request, cmds.ResponseEmitter, cmds.Environment) error {
+				return errors.New("only subcommands of this command are allowed via remote access")
+			}
+			cmd.NoRemote = false
+
+			// Replace the reference in our parent
+			// so that it points to this modified child copy.
+			childName := path[i-1]
+			parent.Subcommands[childName] = cmd
+		}
+
+		parent = cmd
+	}
+
+	return newRoot
 }
 
 type cleanupFunc func() error
@@ -113,8 +164,10 @@ func daemonRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Env
 	}
 
 	var (
+		serverRoot               = allowRemoteAccess(request.Root, request.Path)
 		serverCtx, serverCancel  = context.WithCancel(stopTriggerCtx)
-		serverMaddrs, serverErrs = serveCmdsHTTP(serverCtx, request.Root, env, listeners...)
+		serverMaddrs, serverErrs = serveCmdsHTTP(serverCtx,
+			serverRoot, env, listeners...)
 	)
 	unwind = append(unwind, func() error {
 		// Cancel the server(s) and wait for listener(s) to close
@@ -125,7 +178,7 @@ func daemonRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Env
 
 	for listenerMaddr := range serverMaddrs {
 		if err := emitter.Emit(&daemon.Response{
-			Status:        daemon.Ready,
+			Status:        daemon.Starting,
 			ListenerMaddr: &formats.Multiaddr{Interface: listenerMaddr},
 		}); err != nil {
 			return maybeAppendError(err, cleanup())
@@ -299,6 +352,7 @@ func stopOnContext(ctx, triggerCtx context.Context, daemonEnv daemon.Environment
 			}
 		}
 		/* TODO: investigate why the context canceled test passes without this ???
+		^ It's because Emit will return it, which we return elsewhere (not great)
 		select {
 		case errs <- triggerCtx.Err():
 		case <-ctx.Done():
