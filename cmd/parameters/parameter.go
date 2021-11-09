@@ -196,6 +196,7 @@ func (s parameterNameOpt) apply(parameter *parameter) { parameter.name = string(
 // E.g. short-form versions of a command line name `parameter` with alias `p`.
 // TODO: currently ignored by env; and probably should remain that way but needs considering.
 func WithNameAlias(s string) ParameterOption { return parameterNameAliasOpt(s) }
+
 func (s parameterNameAliasOpt) apply(parameter *parameter) {
 	parameter.aliases = append(parameter.aliases, string(s))
 }

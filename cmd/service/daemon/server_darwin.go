@@ -1,4 +1,4 @@
-package ipc
+package daemon
 
 import "github.com/multiformats/go-multiaddr"
 

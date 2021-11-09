@@ -2,7 +2,6 @@ package parameters
 
 import "context"
 
-// TODO: dedupe with cmds, we only really need to define a (provided, err) func like fromEnv is doing
 type providedFunc func(argument *Argument) (provided bool, err error)
 
 func setEach(ctx context.Context, providedFn providedFunc,

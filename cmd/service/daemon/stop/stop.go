@@ -2,9 +2,9 @@ package stop
 
 import (
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment/service"
+	"github.com/djdv/go-filesystem-utils/cmd/environment/service/daemon/stop"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc/environment/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
@@ -31,12 +31,15 @@ var Command = &cmds.Command{
 			return err
 		}
 
-		fsEnv, err := environment.CastEnvironment(env)
+		serviceEnv, err := serviceenv.Assert(env)
 		if err != nil {
 			return err
 		}
 
-		// TODO: format this error? Probably not.
-		return fsEnv.Daemon().Stop(daemon.StopRequested)
+		if err := serviceEnv.Daemon().Stopper().Stop(stop.Requested); err != nil {
+			return err
+		}
+
+		return nil
 	},
 }

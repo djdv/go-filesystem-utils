@@ -6,10 +6,11 @@ import (
 	"testing"
 	"time"
 
-	fscmds "github.com/djdv/go-filesystem-utils/cmd"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc/environment"
-	daemonenv "github.com/djdv/go-filesystem-utils/cmd/ipc/environment/daemon"
+	"github.com/djdv/go-filesystem-utils/cmd/environment"
+	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment/service"
+	daemonenv "github.com/djdv/go-filesystem-utils/cmd/environment/service/daemon"
+	stopenv "github.com/djdv/go-filesystem-utils/cmd/environment/service/daemon/stop"
+	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -17,9 +18,9 @@ import (
 // spawnDaemon sets up the daemon environment and starts the server daemon.
 // The returned context is done when the daemon returns.
 func spawnDaemon(ctx context.Context, t *testing.T,
-	root *cmds.Command, optMap cmds.OptMap) (context.Context, environment.Environment, cmds.Response) {
+	root *cmds.Command, optMap cmds.OptMap) (context.Context, serviceenv.Environment, cmds.Response) {
 	t.Helper()
-	request, err := cmds.NewRequest(ctx, fscmds.DaemonCmdsPath(),
+	request, err := cmds.NewRequest(ctx, daemon.CmdsPath(),
 		optMap, nil, nil, root)
 	if err != nil {
 		t.Fatal(err)
@@ -29,8 +30,7 @@ func spawnDaemon(ctx context.Context, t *testing.T,
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	fsEnv, err := environment.CastEnvironment(env)
+	serviceEnv, err := serviceenv.Assert(env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,13 +44,13 @@ func spawnDaemon(ctx context.Context, t *testing.T,
 		root.Call(request, emitter, env)
 	}()
 
-	return serverCtx, fsEnv, response
+	return serverCtx, serviceEnv, response
 }
 
 func daemonFindServer(t *testing.T) (serverMaddr multiaddr.Multiaddr) {
 	t.Helper()
 	var err error
-	if serverMaddr, err = ipc.FindLocalServer(); err != nil {
+	if serverMaddr, err = daemon.FindLocalServer(); err != nil {
 		t.Fatal("expected to find server, but didn't:", err)
 	}
 	if serverMaddr == nil {
@@ -61,15 +61,15 @@ func daemonFindServer(t *testing.T) (serverMaddr multiaddr.Multiaddr) {
 
 func daemonDontFindServer(t *testing.T) {
 	t.Helper()
-	serverMaddr, err := ipc.FindLocalServer()
-	if !errors.Is(err, ipc.ErrServiceNotFound) {
+	serverMaddr, err := daemon.FindLocalServer()
+	if !errors.Is(err, daemon.ErrServiceNotFound) {
 		t.Fatal("did not expect to find server, but did:", serverMaddr)
 	}
 }
 
 func stopDaemon(t *testing.T, daemonEnv daemonenv.Environment) {
 	t.Helper()
-	if err := daemonEnv.Stop(daemonenv.StopRequested); err != nil {
+	if err := daemonEnv.Stopper().Stop(stopenv.Requested); err != nil {
 		t.Fatal(err)
 	}
 }

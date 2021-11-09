@@ -6,41 +6,24 @@ import (
 	"fmt"
 	"io"
 
+	stopenv "github.com/djdv/go-filesystem-utils/cmd/environment/service/daemon/stop"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
 type (
-	Status     uint
-	StopReason uint
-	Response   struct {
+	Status   uint
+	Response struct {
 		ListenerMaddr *formats.Multiaddr `json:",omitempty"`
 		Info          string             `json:",omitempty"`
 		Status        Status             `json:",omitempty"`
-		StopReason    StopReason         `json:",omitempty"`
+		StopReason    stopenv.Reason     `json:",omitempty"`
 	}
 	responsePair struct {
 		*Response
 		error
 	}
 	ResponseCallback func(*Response) error
-	Environment      interface {
-		InitializeStop(context.Context) (<-chan StopReason, error)
-		Stop(StopReason) error
-	}
-	daemonEnvironment struct {
-		stopCtx  context.Context
-		stopChan chan StopReason
-	}
-)
-
-//go:generate stringer -type=StopReason -linecomment
-const (
-	_               StopReason = iota
-	RequestCanceled            // Request was canceled
-	Idle                       // Service was idle
-	StopRequested              // Stop was requested
 )
 
 const (
@@ -50,17 +33,19 @@ const (
 	Stopping
 )
 
+var ErrStartupSequence = errors.New("startup sequence was not in order")
+
 func (response *Response) String() string {
 	switch response.Status {
 	case Starting:
 		if encodedMaddr := response.ListenerMaddr; encodedMaddr != nil {
-			return fmt.Sprintf("Listening on: %s", encodedMaddr.Interface)
+			return fmt.Sprintf("listening on: %s", encodedMaddr.Interface)
 		}
-		return ipc.SystemServiceDisplayName + " is starting..."
+		return "starting..."
 	case Ready:
-		return ipc.SystemServiceDisplayName + " is ready"
+		return "ready"
 	case Stopping:
-		return fmt.Sprintf("Stopping: %s", response.StopReason.String())
+		return fmt.Sprintf("stopping: %s", response.StopReason.String())
 	default:
 		if response.Info == "" {
 			panic(fmt.Errorf("unexpected response format: %#v",
@@ -68,38 +53,6 @@ func (response *Response) String() string {
 			))
 		}
 		return response.Info
-	}
-}
-
-var ErrStartupSequence = errors.New("startup sequence was not in order")
-
-func NewDaemonEnvironment() Environment { return &daemonEnvironment{} }
-
-func (de *daemonEnvironment) InitializeStop(ctx context.Context) (<-chan StopReason, error) {
-	if de.stopChan != nil {
-		return nil, fmt.Errorf("environment already initialized") // TODO: error message
-	}
-	stopChan := make(chan StopReason)
-	de.stopChan = stopChan
-	de.stopCtx = ctx
-	return stopChan, nil
-}
-
-func (de *daemonEnvironment) Stop(reason StopReason) error {
-	var (
-		ctx      = de.stopCtx
-		stopChan = de.stopChan
-	)
-	if stopChan == nil {
-		return fmt.Errorf("environment not initialized") // TODO: error message+value
-	}
-	de.stopChan = nil
-	defer close(stopChan)
-	select {
-	case stopChan <- reason:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
 	}
 }
 
@@ -220,56 +173,88 @@ func dispatchResponses(ctx context.Context, response cmds.Response,
 // makeStartupFunc validates the startup sequence
 // while relaying valid responses to the provided callback.
 func makeStartupFunc(callback ResponseCallback, responses <-chan responsePair) func() error {
-	var sawHeader, startupFinished bool
+	var sawStarting, sawReady bool
 	return func() error {
-		if startupFinished {
+		if sawReady {
 			return errors.New("response is already beyond the startup sequence")
 		}
 
 		for response := range responses {
-			if err := response.error; err != nil {
+			var (
+				err      = response.error
+				response = response.Response
+			)
+			if err != nil {
 				return err
 			}
-			response := response.Response
-
-			switch response.Status {
-			case Starting:
-				if response.ListenerMaddr == nil {
-					if sawHeader {
-						return fmt.Errorf("%w - received \"starting\" twice",
-							ErrStartupSequence)
-					}
-					sawHeader = true
-				}
-			case Ready:
-				if !sawHeader {
-					return fmt.Errorf("%w - got response before \"starting\": %#v",
-						ErrStartupSequence, response)
-				}
-				if startupFinished {
-					return fmt.Errorf("%w - received \"ready\" twice",
-						ErrStartupSequence)
-				}
-				startupFinished = true
-			default:
-				return fmt.Errorf("%w - got unexpected response during startup: %#v",
-					ErrStartupSequence, response)
+			isStarting, isReady, err := checkResponse(response, sawStarting, sawReady)
+			if err != nil {
+				return err
 			}
-
+			if isStarting {
+				sawStarting = true
+			}
+			if isReady {
+				sawReady = true
+			}
 			if callback != nil {
 				if err := callback(response); err != nil {
 					return err
 				}
 			}
 		}
-
-		if !startupFinished {
+		if !sawReady {
 			return fmt.Errorf("%w: response closed before startup sequence finished",
 				ErrStartupSequence)
 		}
-
 		return nil
 	}
+}
+
+func checkResponse(response *Response, sawStarting, sawReady bool) (starting, ready bool, err error) {
+	switch response.Status {
+	case Starting:
+		if err = checkResponseStarting(response, sawStarting); err != nil {
+			return
+		}
+		starting = true
+	case Ready:
+		if err = checkResponseReady(response, sawStarting, sawReady); err != nil {
+			return
+		}
+		ready = true
+	case Status(0):
+		if response.Info == "" {
+			err = fmt.Errorf("%w - got empty/malformed response during startup: %#v",
+				ErrStartupSequence, response)
+		}
+	default:
+		err = fmt.Errorf("%w - got unexpected response during startup: %#v",
+			ErrStartupSequence, response)
+	}
+	return
+}
+
+func checkResponseStarting(response *Response, alreadySeen bool) error {
+	if response.ListenerMaddr == nil {
+		if alreadySeen {
+			return fmt.Errorf("%w - received \"starting\" twice",
+				ErrStartupSequence)
+		}
+	}
+	return nil
+}
+
+func checkResponseReady(response *Response, sawStarting, sawReady bool) error {
+	if !sawStarting {
+		return fmt.Errorf("%w - got response before \"starting\": %#v",
+			ErrStartupSequence, response)
+	}
+	if sawReady {
+		return fmt.Errorf("%w - received \"ready\" twice",
+			ErrStartupSequence)
+	}
+	return nil
 }
 
 // makeRuntimeFunc does loose validation of responses

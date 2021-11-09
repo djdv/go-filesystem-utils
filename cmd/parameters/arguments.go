@@ -240,13 +240,12 @@ func argumentFieldIn(settingsType reflect.Type) (*reflect.StructField, error) {
 	fieldCount := settingsType.NumField()
 	for i := 0; i < fieldCount; i++ {
 		settingsField := settingsType.Field(i)
-		// Recurs on embedded structs.
-		if settingsField.Type.Kind() == reflect.Struct &&
-			settingsField.Anonymous {
+
+		if shouldRecurse(settingsField) {
 			settingsFieldBase, err := argumentFieldIn(settingsField.Type)
 			if err != nil {
 				// An error here implies the tag was not in the embedded struct
-				// continue scanning the remaining fields.
+				// continue scanning the remaining fields (at this level).
 				continue
 			}
 			// Tag was found in an embedded struct,
@@ -258,23 +257,38 @@ func argumentFieldIn(settingsType reflect.Type) (*reflect.StructField, error) {
 			return settingsFieldBase, nil
 		}
 		// Look for the tag in the currently selected field.
-		if tagString, ok := settingsField.Tag.Lookup(settingsTagKey); ok {
-			tags, err := csv.NewReader(strings.NewReader(tagString)).Read()
-			if err != nil {
-				err = fmt.Errorf("could not parse tag value `%s` as CSV: %w",
-					tagString, err)
-				return nil, err
-			}
-			for _, tag := range tags {
-				if tag == settingsTagValue {
-					return &settingsField, nil
-				}
+		hasArgumentsTag, err := hasTagValue(settingsField, settingsTagKey, settingsTagValue)
+		if err != nil {
+			return nil, err
+		}
+		if hasArgumentsTag {
+			return &settingsField, nil
+		}
+	}
+	return nil, fmt.Errorf("could not find tag: %s within \"%s\"",
+		tagString(), typeName(settingsType),
+	)
+}
+
+func shouldRecurse(field reflect.StructField) bool {
+	// Recurse on embedded structs.
+	return field.Type.Kind() == reflect.Struct && field.Anonymous
+}
+
+func hasTagValue(field reflect.StructField, key, value string) (bool, error) {
+	if tagString, ok := field.Tag.Lookup(key); ok {
+		tags, err := csv.NewReader(strings.NewReader(tagString)).Read()
+		if err != nil {
+			return false, fmt.Errorf("could not parse tag value `%s` as CSV: %w",
+				tagString, err)
+		}
+		for _, tag := range tags {
+			if tag == value {
+				return true, nil
 			}
 		}
 	}
-	return nil, fmt.Errorf("could not find tag `%s:\"%s\"` within `%s`",
-		settingsTagKey, settingsTagValue, settingsType.Name(),
-	)
+	return false, nil
 }
 
 func assignToArgument(argument *Argument, value interface{}) error {
@@ -311,7 +325,7 @@ func assignToArgument(argument *Argument, value interface{}) error {
 
 		maddrString, isString := value.(string)
 		if !isString {
-			return fmt.Errorf("Expected multiaddr string, got: %T", value)
+			return fmt.Errorf("expected multiaddr string, got: %T", value)
 		}
 		maddr, err := multiaddr.NewMultiaddr(maddrString)
 		if err != nil {

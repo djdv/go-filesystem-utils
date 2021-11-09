@@ -14,7 +14,8 @@ import (
 	"time"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc"
+	"github.com/djdv/go-filesystem-utils/cmd/environment"
+	"github.com/djdv/go-filesystem-utils/cmd/executor"
 	"github.com/djdv/go-filesystem-utils/cmd/service"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
@@ -50,7 +51,7 @@ func issueControlRequest(controlAction string, printErr bool) error {
 
 	return cli.Run(ctx, testRoot, cmdline,
 		discard, discard, stderr,
-		ipc.MakeEnvironment, ipc.MakeExecutor)
+		environment.MakeEnvironment, executor.MakeExecutor)
 }
 
 func TestServiceControl(t *testing.T) {
@@ -198,7 +199,7 @@ func TestServiceStatus(t *testing.T) {
 	})
 }
 
-func issueStatusRequest() (*ipc.ServiceStatus, error) {
+func issueStatusRequest() (*service.ServiceStatus, error) {
 	ctx := context.Background()
 	statusRequest, err := cmds.NewRequest(ctx, []string{service.Name, "status"},
 		nil, nil, nil, testRoot)
@@ -206,11 +207,11 @@ func issueStatusRequest() (*ipc.ServiceStatus, error) {
 		return nil, err
 	}
 
-	environment, err := ipc.MakeEnvironment(ctx, statusRequest)
+	environment, err := environment.MakeEnvironment(ctx, statusRequest)
 	if err != nil {
 		return nil, err
 	}
-	executor, err := ipc.MakeExecutor(statusRequest, environment)
+	executor, err := executor.MakeExecutor(statusRequest, environment)
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +239,7 @@ func issueStatusRequest() (*ipc.ServiceStatus, error) {
 		return nil, err
 	}
 
-	serviceStatus, ok := v.(*ipc.ServiceStatus)
+	serviceStatus, ok := v.(*service.ServiceStatus)
 	if !ok {
 		return nil, fmt.Errorf("status value is wrong type\n\texpected:%T\n\tgot:%T %v",
 			serviceStatus, v, v)
@@ -328,7 +329,7 @@ func TestServiceFormat(t *testing.T) {
 					// and coverage for panics and hangs in the format code.
 					lastErr = cli.Run(ctx, testRoot, cmdline,
 						discard, discard, discard,
-						ipc.MakeEnvironment, ipc.MakeExecutor)
+						environment.MakeEnvironment, executor.MakeExecutor)
 				})
 			}
 		})

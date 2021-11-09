@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	fscmds "github.com/djdv/go-filesystem-utils/cmd"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/parameters"
+	"github.com/djdv/go-filesystem-utils/cmd/service/host"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
 )
@@ -23,6 +21,7 @@ var errControlOnly = errors.New("tried to run service client, not service itself
 func (*controller) Start(service.Service) error { return errControlOnly }
 func (*controller) Stop(service.Service) error  { return errControlOnly }
 
+// TODO: just return this as a map, no args either.
 // GenerateCommands provides cmds wrappers
 // for each control action provided.
 func GenerateCommands(actions ...string) []*cmds.Command {
@@ -36,26 +35,12 @@ func GenerateCommands(actions ...string) []*cmds.Command {
 			NoRemote: true,
 			Encoders: cmds.Encoders,
 			Run: func(request *cmds.Request, _ cmds.ResponseEmitter, env cmds.Environment) (err error) {
-				var (
-					ctx             = request.Context
-					settings        = new(fscmds.Settings)
-					unsetArgs, errs = parameters.ParseSettings(ctx, settings,
-						parameters.SettingsFromCmds(request),
-						parameters.SettingsFromEnvironment(),
-					)
-				)
-				if _, err := parameters.AccumulateArgs(ctx, unsetArgs, errs); err != nil {
-					return err
-				}
-
-				fsEnv, err := environment.CastEnvironment(env)
+				ctx := request.Context
+				settings, err := parseSettings(ctx, request)
 				if err != nil {
 					return err
 				}
-				serviceConfig, err := fsEnv.Service().Config(request)
-				if err != nil {
-					return err
-				}
+				serviceConfig := host.ServiceConfig(&settings.host)
 				serviceClient, err := service.New((*controller)(nil), serviceConfig)
 				if err != nil {
 					return err

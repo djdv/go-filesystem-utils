@@ -8,8 +8,8 @@ import (
 	"time"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc/executor"
+	"github.com/djdv/go-filesystem-utils/cmd/environment"
+	"github.com/djdv/go-filesystem-utils/cmd/executor"
 	servicecmd "github.com/djdv/go-filesystem-utils/cmd/service"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
@@ -123,10 +123,12 @@ func (lm *loggerMock) Errorf(format string, a ...interface{}) error {
 	lm.t.Errorf(format, a...)
 	return nil
 }
+
 func (lm *loggerMock) Warningf(format string, a ...interface{}) error {
 	lm.t.Logf(format, a...)
 	return nil
 }
+
 func (lm *loggerMock) Infof(format string, a ...interface{}) error {
 	lm.t.Logf(format, a...)
 	return nil

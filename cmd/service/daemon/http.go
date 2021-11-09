@@ -5,50 +5,147 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"sync"
 	"time"
 
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	cmdshttp "github.com/ipfs/go-ipfs-cmds/http"
-	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
 )
 
-func serveCmdsHTTP(ctx context.Context,
-	cmdsRoot *cmds.Command, cmdsEnv cmds.Environment,
-	listeners ...manet.Listener) (<-chan multiaddr.Multiaddr, <-chan error) {
-	var (
-		listenersLen = len(listeners)
-		maddrs       = make(chan multiaddr.Multiaddr, listenersLen)
-	)
-	defer close(maddrs)
-	if listenersLen == 0 {
-		return maddrs, nil
+// TODO: English.
+// allowRemoteAccess modifies leading commands in the component path,
+// so that they may be called remotely.
+// (Otherwise the cmds HTTP server will return 404 errors for subcommands we want to expose
+// i.e. setting NoRemote on a parent command will 404 its subcommands inherently)
+func allowRemoteAccess(root *cmds.Command, path []string) *cmds.Command {
+	branch, err := root.Resolve(path)
+	if err != nil {
+		panic(err)
 	}
 
-	var (
-		serveWg   sync.WaitGroup
-		serveErrs = make(chan error)
-	)
-	for _, listener := range listeners {
-		serverErrs := acceptCmdsHTTP(ctx, listener, cmdsRoot, cmdsEnv)
-		// Aggregate server-errors into serve-errors.
-		serveWg.Add(1)
-		go func() {
-			defer serveWg.Done()
-			for err := range serverErrs {
-				err = fmt.Errorf("HTTP server error: %w", err)
-				serveErrs <- err
+	var newRoot, parent *cmds.Command
+	for currentCommand, cmd := range branch {
+		cmdCopy := *cmd
+		cmd = &cmdCopy
+
+		// Don't allow the original `Command.Subcommand` reference to be modified
+		// make a copy.
+		subcommands := make(map[string]*cmds.Command, len(cmd.Subcommands))
+		for name, cmd := range cmd.Subcommands {
+			subcommands[name] = cmd
+		}
+		cmd.Subcommands = subcommands
+
+		if currentCommand == 0 {
+			newRoot = cmd
+			parent = newRoot
+			continue
+		}
+
+		if cmd.NoRemote {
+			cmd.PreRun = nil
+			cmd.PostRun = nil
+			cmd.Run = func(*cmds.Request, cmds.ResponseEmitter, cmds.Environment) error {
+				return errors.New("only subcommands of this command are allowed via remote access")
 			}
-		}()
+			cmd.NoRemote = false
 
-		maddrs <- listener.Multiaddr() // Tell the caller this server is ready.
+			// Replace the reference in our parent
+			// so that it points to this modified child copy.
+			childName := path[currentCommand-1]
+			parent.Subcommands[childName] = cmd
+		}
+
+		parent = cmd
 	}
 
-	// Close serveErrs after all aggregate servers close.
-	go func() { defer close(serveErrs); serveWg.Wait() }()
+	return newRoot
+}
 
-	return maddrs, serveErrs
+// FIXME [deadlock]: this returns a nil errchan when listeners is canceled early / empty.
+func setupCmdsHTTP(ctx context.Context, root *cmds.Command,
+	env cmds.Environment, pairs <-chan listenerPair) <-chan error {
+	var errs <-chan error
+	for pair := range pairs {
+		httpServerErrs := serveHTTPThenCleanup(ctx, pair, root, env)
+		if httpServerErrs == nil {
+			fmt.Println("⚠️  httpServerErrs 1 was nil")
+		}
+		if errs == nil {
+			errs = httpServerErrs
+		} else {
+			errs = mergeErrs(errs, httpServerErrs)
+		}
+	}
+	// HACK: Rework the function instead of doing this.
+	if errs == nil {
+		// fmt.Println("⚠️  httpServerErrs 2[h] was nil")
+		empty := make(chan error)
+		close(empty)
+		errs = empty
+	}
+	return errs
+}
+
+func serveHTTPThenCleanup(ctx context.Context, pair listenerPair,
+	root *cmds.Command, env cmds.Environment) <-chan error {
+	var (
+		errs       = make(chan error, 2)
+		serverErrs = acceptCmdsHTTP(ctx, pair.Listener, root, env)
+		cleanup    = pair.cleanupFunc
+	)
+	go func() {
+		defer close(errs)
+		var err error
+		for serverErr := range serverErrs {
+			if err == nil {
+				err = fmt.Errorf("HTTP server error: %w", serverErr)
+			} else {
+				err = fmt.Errorf("%w - %s", err, serverErr)
+			}
+		}
+		if err != nil {
+			errs <- err
+		}
+
+		// When done (after Serve() returns; closing the listener)
+		// call this listeners cleanup (if it has one)
+		if cleanup != nil {
+			if err := cleanup(); err != nil {
+				err = fmt.Errorf("listener cleanup: %w", err)
+				errs <- err
+			}
+		}
+	}()
+
+	return errs
+}
+
+func emitAndRelayListeners(emitter cmds.ResponseEmitter,
+	listeners <-chan listenerPair) (<-chan listenerPair, <-chan error) {
+	var (
+		relay = make(chan listenerPair, cap(listeners)+1)
+		errs  = make(chan error, 1)
+	)
+	go func() {
+		defer close(relay)
+		defer close(errs)
+		for listener := range listeners {
+			err := emitMaddrListener(emitter, listener.Multiaddr())
+			if err != nil {
+				if cErr := listener.Close(); cErr != nil {
+					err = fmt.Errorf(
+						"%w - failed to close listener: %s",
+						err, cErr,
+					)
+				}
+				errs <- err
+				return
+			}
+			relay <- listener
+		}
+	}()
+	return relay, errs
 }
 
 func acceptCmdsHTTP(ctx context.Context,
@@ -64,10 +161,13 @@ func acceptCmdsHTTP(ctx context.Context,
 	go func() {
 		const stopGrace = 30 * time.Second
 		defer close(httpServerErrs)
-		serveErr := make(chan error)
 
 		// The actual listen and serve / accept loop.
-		go func() { serveErr <- httpServer.Serve(manet.NetListener(listener)) }()
+		serveErr := make(chan error, 1)
+		go func() {
+			defer close(serveErr)
+			serveErr <- httpServer.Serve(manet.NetListener(listener))
+		}()
 
 		// Context handling to cancel the server mid `Serve`,
 		// and relay errors.

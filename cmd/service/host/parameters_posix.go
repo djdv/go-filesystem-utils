@@ -1,7 +1,7 @@
 //go:build !windows
 // +build !windows
 
-package ipc
+package host
 
 import "github.com/djdv/go-filesystem-utils/cmd/parameters"
 

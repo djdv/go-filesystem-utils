@@ -10,9 +10,8 @@ import (
 	"time"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc/environment"
-	daemonenv "github.com/djdv/go-filesystem-utils/cmd/ipc/environment/daemon"
+	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment/service"
+	stopenv "github.com/djdv/go-filesystem-utils/cmd/environment/service/daemon/stop"
 	"github.com/djdv/go-filesystem-utils/cmd/service"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
@@ -90,6 +89,7 @@ func testDaemonCancelCtx(t *testing.T, root *cmds.Command) {
 		})
 	})
 
+	// FIXME: this fails sometimes. Why?
 	t.Run("Cancel late", func(t *testing.T) {
 		const serviceWait = time.Microsecond
 		var (
@@ -100,9 +100,24 @@ func testDaemonCancelCtx(t *testing.T, root *cmds.Command) {
 		t.Run("Spawn server", func(t *testing.T) {
 			serverCtx, _, serverResponse = spawnDaemon(runCtx, t, root, nil)
 		})
-		t.Run(fmt.Sprintf("Cancel context after %s", serviceWait), func(*testing.T) {
-			go func() { time.Sleep(serviceWait); runCancel() }()
-		})
+		/*
+			go func() {
+				time.Sleep(serviceWait)
+				t.Run(fmt.Sprintf(
+					"Context canceled after %s", serviceWait),
+					func(*testing.T) { runCancel() },
+				)
+			}()
+		*/
+		t.Run(fmt.Sprintf(
+			"Cancel context after %s", serviceWait),
+			func(*testing.T) {
+				go func() {
+					time.Sleep(serviceWait)
+					runCancel()
+				}()
+			},
+		)
 		t.Run("Check response", func(*testing.T) {
 			check(serverCtx, serverResponse)
 		})
@@ -111,18 +126,19 @@ func testDaemonCancelCtx(t *testing.T, root *cmds.Command) {
 
 func testDaemonRemote(t *testing.T, root *cmds.Command) {
 	var (
-		serverCtx         context.Context
-		fsEnv             environment.Environment
-		serverResponse    cmds.Response
+		serverCtx      context.Context
+		serviceEnv     serviceenv.Environment
+		serverResponse cmds.Response
+
 		ctx               = context.Background()
 		runCtx, runCancel = context.WithCancel(ctx)
 	)
 	defer runCancel()
 	t.Run("Spawn server", func(t *testing.T) {
-		serverCtx, fsEnv, serverResponse = spawnDaemon(runCtx, t, root, nil)
+		serverCtx, serviceEnv, serverResponse = spawnDaemon(runCtx, t, root, nil)
 	})
 
-	startup, runtime := daemonenv.SplitResponse(ctx, serverResponse, nil, nil)
+	startup, runtime := daemon.SplitResponse(ctx, serverResponse, nil, nil)
 	if err := startup(); err != nil {
 		t.Fatal(err)
 	}
@@ -135,61 +151,37 @@ func testDaemonRemote(t *testing.T, root *cmds.Command) {
 	var client cmds.Executor
 	t.Run("Make client", func(t *testing.T) {
 		var err error
-		if client, err = ipc.GetClient(serverMaddr); err != nil {
+		if client, err = daemon.GetClient(serverMaddr); err != nil {
 			t.Fatal(err)
 		}
 	})
 
 	const remoteOnly = "remote access disabled for this command"
 	for _, test := range []struct {
-		commandPath []string
 		errorReason string
+		commandPath []string
 	}{
 		{
-			commandPath: []string{service.Name},
 			errorReason: remoteOnly,
+			commandPath: []string{service.Name},
 		},
 		{
-			commandPath: []string{service.Name, daemon.Name},
 			errorReason: remoteOnly,
+			commandPath: []string{service.Name, daemon.Name},
 		},
 		{
 			commandPath: []string{service.Name, daemon.Name, stop.Name},
 		},
 	} {
-		t.Run(fmt.Sprintf("Execute \"%s\"",
-			strings.Join(test.commandPath, " "),
-		), func(t *testing.T) {
-			var (
-				shouldError               = test.errorReason != ""
-				requestCtx, requestCancel = context.WithCancel(ctx)
-			)
-			defer requestCancel()
-
-			request, err := cmds.NewRequest(requestCtx, test.commandPath, nil, nil, nil, root)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			var (
-				emitter, response = cmds.NewChanResponsePair(request)
-				execErr           = client.Execute(request, emitter, fsEnv)
-			)
-			if shouldError {
-				if execErr == nil {
-					t.Fatalf("expected server to error but didn't (%s)", test.errorReason)
-				}
-				return // We're not going to get a response.
-
-			}
-			if execErr != nil {
-				t.Fatalf("server returned unexpected error: %s", execErr)
-			}
-
-			if _, err := response.Next(); !errors.Is(err, io.EOF) {
-				t.Fatal(err)
-			}
-		})
+		t.Run(
+			fmt.Sprintf("Execute \"%s\"", strings.Join(test.commandPath, " ")),
+			func(t *testing.T) {
+				daemonRemoteHelper(
+					t, root,
+					test.commandPath, test.errorReason,
+					client, serviceEnv,
+				)
+			})
 	}
 
 	t.Run("Wait for exit", func(t *testing.T) {
@@ -206,11 +198,42 @@ func testDaemonRemote(t *testing.T, root *cmds.Command) {
 	})
 }
 
-func testDaemonAutoExit(t *testing.T, root *cmds.Command) {
-	const (
-		stopAfter = time.Nanosecond
-		testGrace = stopAfter + 1*time.Second
+func daemonRemoteHelper(t *testing.T, root *cmds.Command,
+	cmdPath []string, errorReason string,
+	client cmds.Executor, env cmds.Environment) {
+	t.Helper()
+	var (
+		shouldError               = errorReason != ""
+		requestCtx, requestCancel = context.WithCancel(context.Background())
 	)
+	defer requestCancel()
+
+	request, err := cmds.NewRequest(requestCtx, cmdPath, nil, nil, nil, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var (
+		emitter, response = cmds.NewChanResponsePair(request)
+		execErr           = client.Execute(request, emitter, env)
+	)
+	if shouldError {
+		if execErr == nil {
+			t.Fatalf("expected server to error but didn't (%s)", errorReason)
+		}
+		return // We're not going to get a response.
+	}
+	if execErr != nil {
+		t.Fatalf("server returned unexpected error: %s", execErr)
+	}
+
+	if _, err := response.Next(); !errors.Is(err, io.EOF) {
+		t.Fatal(err)
+	}
+}
+
+func testDaemonAutoExit(t *testing.T, root *cmds.Command) {
+	const stopAfter = time.Nanosecond
 	var (
 		serverCtx         context.Context
 		serverResponse    cmds.Response
@@ -227,58 +250,30 @@ func testDaemonAutoExit(t *testing.T, root *cmds.Command) {
 	})
 
 	var (
-		responseSequence int
-		sequenceChecker  = func(response *daemonenv.Response) error {
-			switch responseSequence {
-			case 0:
-				// Server should respond, telling us it's going to
-				// stop on idle (with the interval).
-				if response.Info == "" {
-					return fmt.Errorf("Bad response sequence [%d]"+
-						"expected Response.Info to be populated"+
-						"\n\tgot: %#v",
-						responseSequence, response)
-				}
-				t.Log(response)
-			case 1:
-				// Server should then tell us it's stopping, and why.
-				expected := daemonenv.Response{
-					Status:     daemonenv.Stopping,
-					StopReason: daemonenv.Idle,
-				}
-				if *response != expected {
-					return fmt.Errorf("Bad response sequence [%d]"+
-						"\n\texpected: %#v"+
-						"\n\tgot: %#v",
-						responseSequence,
-						expected, response)
-				}
-				t.Log(response)
-			default:
-				// Server should not be active anymore.
-				return fmt.Errorf("Bad response sequence [%d]"+
-					"\n\tdid not expect any more responses"+
-					"\n\tgot: %#v",
-					responseSequence, response)
+		sawExpected bool
+		expected    = daemon.Response{
+			Status:     daemon.Stopping,
+			StopReason: stopenv.Idle,
+		}
+		idleChecker = func(response *daemon.Response) error {
+			if *response == expected {
+				sawExpected = true
 			}
-			responseSequence++
 			return nil
 		}
-
-		startup, runtime = daemonenv.SplitResponse(ctx, serverResponse, nil, sequenceChecker)
+		startup, runtime = daemon.SplitResponse(ctx, serverResponse, nil, idleChecker)
 	)
+	if err := startup(); err != nil {
+		t.Fatal("server failed startup checks:", err)
+	}
+	if err := runtime(); err != nil {
+		t.Fatal("server failed runtime checks:", err)
+	}
+	if !sawExpected {
+		t.Fatal("server never emitted expected response:", expected)
+	}
 
-	t.Run("Check server startup", func(t *testing.T) {
-		if err := startup(); err != nil {
-			t.Fatal(err)
-		}
-	})
-	t.Run("Check runtime response sequence", func(t *testing.T) {
-		if err := runtime(); err != nil {
-			t.Fatal(err)
-		}
-	})
-
+	const testGrace = stopAfter + 1*time.Second
 	t.Run("Wait for server to return", func(t *testing.T) {
 		select {
 		case <-serverCtx.Done():
@@ -298,8 +293,8 @@ func testFindServer(t *testing.T, root *cmds.Command) {
 		ctx               = context.Background()
 		runCtx, runCancel = context.WithCancel(ctx)
 
-		serverCtx context.Context
-		fsEnv     environment.Environment
+		serverCtx  context.Context
+		serviceEnv serviceenv.Environment
 
 		startup, runtime func() error
 	)
@@ -307,8 +302,8 @@ func testFindServer(t *testing.T, root *cmds.Command) {
 
 	t.Run("Spawn server", func(t *testing.T) {
 		var serverResponse cmds.Response
-		serverCtx, fsEnv, serverResponse = spawnDaemon(runCtx, t, root, nil)
-		startup, runtime = daemonenv.SplitResponse(ctx, serverResponse, nil, nil)
+		serverCtx, serviceEnv, serverResponse = spawnDaemon(runCtx, t, root, nil)
+		startup, runtime = daemon.SplitResponse(ctx, serverResponse, nil, nil)
 		if err := startup(); err != nil {
 			t.Fatal(err)
 		}
@@ -319,7 +314,6 @@ func testFindServer(t *testing.T, root *cmds.Command) {
 	})
 
 	t.Run("Stop server", func(t *testing.T) {
-		daemonEnv := fsEnv.Daemon()
-		stopDaemonAndWait(t, daemonEnv, runtime, serverCtx)
+		stopDaemonAndWait(t, serviceEnv.Daemon(), runtime, serverCtx)
 	})
 }

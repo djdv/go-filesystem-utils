@@ -75,9 +75,11 @@ func (maddr *Multiaddr) Protocols() []multiaddr.Protocol    { return maddr.Inter
 func (maddr *Multiaddr) Encapsulate(arg multiaddr.Multiaddr) multiaddr.Multiaddr {
 	return maddr.Interface.Encapsulate(arg)
 }
+
 func (maddr *Multiaddr) Decapsulate(arg multiaddr.Multiaddr) multiaddr.Multiaddr {
 	return maddr.Interface.Decapsulate(arg)
 }
+
 func (maddr *Multiaddr) ValueForProtocol(code int) (string, error) {
 	return maddr.Interface.ValueForProtocol(code)
 }

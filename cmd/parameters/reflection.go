@@ -11,6 +11,16 @@ const (
 	settingsTagValue = "arguments"
 )
 
+func tagString() string { return fmt.Sprintf("`%s:\"%s\"`", settingsTagKey, settingsTagValue) }
+
+func typeName(settingsType reflect.Type) string {
+	settingName := settingsType.Name()
+	if pkg := settingsType.PkgPath(); pkg != "" {
+		settingName = fmt.Sprintf("%s.%s", pkg, settingName)
+	}
+	return settingName
+}
+
 type SettingsSource interface {
 	setEach(ctx context.Context,
 		argsToSet ArgumentList,

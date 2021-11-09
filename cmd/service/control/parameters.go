@@ -1,4 +1,4 @@
-package service
+package control
 
 import (
 	"context"
@@ -9,18 +9,15 @@ import (
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
-type (
-	Host     = host.Settings
-	Settings struct {
-		fscmds.Settings
-		Host
-	}
-)
+type Settings struct {
+	fscmds.Settings
+	host host.Settings
+}
 
 func (*Settings) Parameters() parameters.Parameters {
 	var (
-		system = (*host.Settings)(nil).Parameters()
 		root   = (*fscmds.Settings)(nil).Parameters()
+		system = (*host.Settings)(nil).Parameters()
 	)
 	return append(root, system...)
 }

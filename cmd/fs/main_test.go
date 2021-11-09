@@ -40,4 +40,4 @@ func TestMain(m *testing.M) {
 // a proper test according to Go. So the `go` tool emits a warning:
 // `testing: warning: no tests to run`.
 // We have this test which does nothing just to suppress that warning  ┐('～`；)┌
-//func TestSuppressWarning(t *testing.T) {}
+// func TestSuppressWarning(t *testing.T) {}

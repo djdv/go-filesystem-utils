@@ -7,14 +7,13 @@ import (
 	"strings"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment/service"
+	stopenv "github.com/djdv/go-filesystem-utils/cmd/environment/service/daemon/stop"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc/environment"
-	daemonenv "github.com/djdv/go-filesystem-utils/cmd/ipc/environment/daemon"
-	serviceenv "github.com/djdv/go-filesystem-utils/cmd/ipc/environment/service"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/cmd/service/control"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
+	"github.com/djdv/go-filesystem-utils/cmd/service/host"
 	"github.com/djdv/go-filesystem-utils/cmd/service/status"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
@@ -25,45 +24,60 @@ const Name = "service"
 
 var Command = &cmds.Command{
 	Helptext: cmds.HelpText{
-		Tagline: serviceenv.ServiceDescription,
+		Tagline: "Interact with the host system's service manager",
 	},
 	NoRemote: true,
 	Run:      systemServiceRun,
 	Options:  parameters.CmdsOptionsFrom((*Settings)(nil)),
 	Encoders: formats.CmdsEncoders,
-	Type:     ipc.ServiceResponse{},
+	Type:     daemon.Response{},
 	Subcommands: func() map[string]*cmds.Command {
+		const staticCommands = 2
 		var (
-			actions     = service.ControlAction[:]
-			controls    = control.GenerateCommands(actions...)
-			subcommands = make(map[string]*cmds.Command, len(controls)+1)
+			actions         = service.ControlAction[:]
+			controlCommands = control.GenerateCommands(actions...)
+
+			dynamicCommands = len(controlCommands)
+			subcommands     = make(map[string]*cmds.Command,
+				staticCommands+dynamicCommands)
 		)
+
+		// Dynamic Commands:
+		for i, action := range actions {
+			subcommands[action] = controlCommands[i]
+		}
+
+		// Static commands:
 		subcommands[status.Name] = status.Command
 		subcommands[daemon.Name] = daemon.Command
-		for i, action := range actions {
-			subcommands[action] = controls[i]
-		}
+
 		return subcommands
 	}(),
 }
 
 func systemServiceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
 	if service.Interactive() {
-		return fmt.Errorf("This version of the daemon is intended for use by the host service manager"+
-			"use `%s` for interactive use", strings.Join(append(request.Path, daemon.Name), " "),
+		return fmt.Errorf(
+			"This version of the daemon is intended for use by the host service manager."+
+				" Use `%s` for interactive use.",
+			strings.Join(append(request.Path, daemon.Name), " "),
 		)
 	}
 
 	// NOTE: We don't have the system logger yet.
 	// These early errors will only show up in tests or a debugger.
-	fsEnv, err := environment.CastEnvironment(env)
+
+	serviceEnv, err := serviceenv.Assert(env)
 	if err != nil {
 		return err
 	}
-	serviceConfig, err := fsEnv.Service().Config(request)
+
+	ctx := request.Context
+	settings, err := parseSettings(ctx, request)
 	if err != nil {
 		return err
 	}
+	serviceConfig := host.ServiceConfig(&settings.Host)
 
 	// NOTE: The service API doesn't give us a way to get
 	// the system logger without the service interface.
@@ -74,7 +88,7 @@ func systemServiceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env c
 	serviceInterface := &daemonCmdWrapper{
 		serviceRequest: request,
 		emitter:        emitter,
-		environment:    fsEnv,
+		environment:    serviceEnv,
 	}
 
 	serviceController, err := service.New(serviceInterface, serviceConfig)
@@ -89,6 +103,7 @@ func systemServiceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env c
 
 	// NOTE: Below this line,
 	// errors get logged to `sysLog` internally by called functions/methods.
+	// FIXME: change this^ syslistenrs got reworked
 
 	_, maddrsProvided := request.Options[fscmds.ServiceMaddrs().CommandLine()]
 	serviceListeners, cleanup, err := systemListeners(maddrsProvided, sysLog)
@@ -115,12 +130,13 @@ type (
 	daemonCmdWrapper struct {
 		serviceRequest *cmds.Request
 		emitter        cmds.ResponseEmitter
-		environment    environment.Environment
-		sysListeners   []manet.Listener
+		environment    serviceenv.Environment
 
 		sysLog  service.Logger
 		runErrs <-chan error
 		cleanup func() error
+
+		sysListeners []manet.Listener
 	}
 )
 
@@ -170,20 +186,20 @@ func (svc *daemonCmdWrapper) Start(svcIntf service.Service) error {
 
 	// Handle the responses from the daemon in 2 phases.
 	var (
-		startupHandler = func(response *daemonenv.Response) error {
+		startupHandler = func(response *daemon.Response) error {
 			return sysLog.Info(response.String())
 		}
 
 		sawStopResponse bool
-		runtimeHandler  = func(response *daemonenv.Response) error {
-			if response.Status == daemonenv.Stopping {
+		runtimeHandler  = func(response *daemon.Response) error {
+			if response.Status == daemon.Stopping {
 				sawStopResponse = true
 			}
 			return sysLog.Info(response.String())
 		}
 
 		responseCtx, responseCancel = context.WithCancel(context.Background())
-		startup, runtime            = daemonenv.SplitResponse(responseCtx, daemonResponse,
+		startup, runtime            = daemon.SplitResponse(responseCtx, daemonResponse,
 			startupHandler, runtimeHandler,
 		)
 	)
@@ -239,7 +255,10 @@ func (svc *daemonCmdWrapper) Stop(svcIntf service.Service) error {
 	}
 	svc.runErrs = nil
 
-	var err error
+	var (
+		err     error
+		stopper = svc.environment.Daemon().Stopper()
+	)
 	select {
 	// If during runtime, env's Stop method was called
 	// or an error was encountered this case should not block.
@@ -256,7 +275,7 @@ func (svc *daemonCmdWrapper) Stop(svcIntf service.Service) error {
 	// Otherwise, we'll call env's Stop method ourself
 	// which will indirectly unblock runErr.
 	default:
-		if stopErr := svc.environment.Daemon().Stop(daemonenv.StopRequested); stopErr != nil {
+		if stopErr := stopper.Stop(stopenv.Requested); stopErr != nil {
 			return logErr(sysLog, stopErr)
 		}
 	}

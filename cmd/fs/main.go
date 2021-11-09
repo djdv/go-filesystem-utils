@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc/executor"
+	"github.com/djdv/go-filesystem-utils/cmd/environment"
+	"github.com/djdv/go-filesystem-utils/cmd/executor"
 	"github.com/djdv/go-filesystem-utils/cmd/service"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
@@ -25,6 +25,12 @@ func main() {
 			},
 			Subcommands: map[string]*cmds.Command{
 				service.Name: service.Command,
+				"remote": {
+					NoLocal: true,
+					Run: func(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
+						return nil
+					},
+				},
 			},
 		}
 		// cmdline[0] is used literally in helptext generation.

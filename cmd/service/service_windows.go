@@ -8,7 +8,7 @@ import (
 	"unsafe"
 
 	"github.com/adrg/xdg"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc"
+	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/kardianos/service"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
@@ -45,7 +45,7 @@ func systemListeners(maddrsProvided bool, sysLog service.Logger) (serviceListene
 		pszServiceDir      *uint16
 		serviceDir         = filepath.Join(
 			xdg.ConfigDirs[len(xdg.ConfigDirs)-1],
-			ipc.ServerRootName,
+			daemon.ServerRootName,
 		)
 	)
 
@@ -84,7 +84,7 @@ func systemListeners(maddrsProvided bool, sysLog service.Logger) (serviceListene
 	// Create a socket within the service directory
 	// and start listening on it.
 	var (
-		socketPath      = filepath.Join(serviceDir, ipc.ServerName)
+		socketPath      = filepath.Join(serviceDir, daemon.ServerName)
 		multiaddrString = "/unix/" + socketPath
 		serviceMaddr    multiaddr.Multiaddr
 		listener        manet.Listener

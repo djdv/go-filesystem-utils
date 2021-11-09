@@ -1,4 +1,4 @@
-package ipc
+package daemon
 
 import (
 	"context"
@@ -15,6 +15,17 @@ import (
 	cmdshttp "github.com/ipfs/go-ipfs-cmds/http"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
+)
+
+const (
+	// ServerRootName defines a name which servers and clients may use
+	// to refer to the service in namespace oriented APIs.
+	ServerRootName = "fs"
+
+	// ServerName defines a name which servers and clients may use
+	// to form or find connections to a named server instance.
+	// (E.g. a Unix socket of path `.../$ServerRootName/$ServerName`.)
+	ServerName = "server"
 )
 
 var ErrServiceNotFound = errors.New("could not find service instance")

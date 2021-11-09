@@ -1,7 +1,7 @@
 //go:build !darwin
 // +build !darwin
 
-package ipc
+package daemon
 
 import (
 	"github.com/adrg/xdg"

@@ -2,15 +2,9 @@ package status
 
 import (
 	"errors"
-	"fmt"
-	"io"
-	"strings"
 
-	fscmds "github.com/djdv/go-filesystem-utils/cmd"
-	"github.com/djdv/go-filesystem-utils/cmd/formats"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc"
-	"github.com/djdv/go-filesystem-utils/cmd/ipc/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/parameters"
+	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
+	"github.com/djdv/go-filesystem-utils/cmd/service/host"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
 	"github.com/multiformats/go-multiaddr"
@@ -31,12 +25,12 @@ const Name = "status"
 
 type (
 	SystemController struct {
-		service.Status
 		Error error
+		service.Status
 	}
 	Response struct {
-		Listeners []multiaddr.Multiaddr
 		SystemController
+		Listeners []multiaddr.Multiaddr
 	}
 )
 
@@ -50,49 +44,35 @@ var Command = &cmds.Command{
 	Encoders: cmds.Encoders,
 	Type:     Response{},
 	Run: func(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
-		var (
-			ctx             = request.Context
-			settings        = new(fscmds.Settings)
-			unsetArgs, errs = parameters.ParseSettings(ctx, settings,
-				parameters.SettingsFromCmds(request),
-				parameters.SettingsFromEnvironment(),
-			)
-			statusResponse Response
-		)
-		if _, err := parameters.AccumulateArgs(ctx, unsetArgs, errs); err != nil {
+		ctx := request.Context
+
+		settings, err := parseSettings(ctx, request)
+		if err != nil {
 			return err
 		}
+		serviceConfig := host.ServiceConfig(&settings.host)
 
 		// Query the host system service manager.
-		fsEnv, err := environment.CastEnvironment(env)
-		if err != nil {
-			return err
-		}
-		serviceConfig, err := fsEnv.Service().Config(request)
-		if err != nil {
-			return err
-		}
 		serviceClient, err := service.New((*controller)(nil), serviceConfig)
 		if err != nil {
 			return err
 		}
 
-		{
-			controllerStatus, svcErr := serviceClient.Status()
-			statusResponse.SystemController = SystemController{
-				Status: controllerStatus,
-				Error:  svcErr,
-			}
+		var response Response
+		controllerStatus, svcErr := serviceClient.Status()
+		response.SystemController = SystemController{
+			Status: controllerStatus,
+			Error:  svcErr,
 		}
 
 		// Query host system service servers.
 		serviceMaddrs := settings.ServiceMaddrs
 		if len(serviceMaddrs) == 0 {
-			userMaddrs, err := ipc.UserServiceMaddrs()
+			userMaddrs, err := daemon.UserServiceMaddrs()
 			if err != nil {
 				return err
 			}
-			systemMaddrs, err := ipc.SystemServiceMaddrs()
+			systemMaddrs, err := daemon.SystemServiceMaddrs()
 			if err != nil {
 				return err
 			}
@@ -101,7 +81,7 @@ var Command = &cmds.Command{
 
 		listeners := make([]multiaddr.Multiaddr, 0, len(serviceMaddrs))
 		for _, serviceMaddr := range serviceMaddrs {
-			if ipc.ServerDialable(serviceMaddr) {
+			if daemon.ServerDialable(serviceMaddr) {
 				listeners = append(
 					listeners,
 					serviceMaddr,
@@ -111,13 +91,10 @@ var Command = &cmds.Command{
 		if len(listeners) != 0 {
 			// NOTE: This only matters because we're encoding and emitting this struct.
 			// There's no point in processing an empty list versus nil.
-			statusResponse.Listeners = listeners
+			response.Listeners = listeners
 		}
 
-		return emitter.Emit(&statusResponse)
-	},
-	PostRun: cmds.PostRunMap{
-		cmds.CLI: formatStatus,
+		return emitter.Emit(&response)
 	},
 }
 
@@ -131,6 +108,7 @@ func statusString(stat service.Status) string {
 	return "Unknown"
 }
 
+/*
 func formatStatus(response cmds.Response, emitter cmds.ResponseEmitter) error {
 	outputs := formats.MakeOptionalOutputs(response.Request(), emitter)
 	for {
@@ -201,3 +179,4 @@ func formatStatus(response cmds.Response, emitter cmds.ResponseEmitter) error {
 		}
 	}
 }
+*/

@@ -42,13 +42,18 @@ func CmdsOptionsFrom(settings Settings) (cmdsOptions []cmds.Option) {
 		parameterCount -= containerCount
 	}
 	if optionsBound < parameterCount {
-		remainder := parameters[optionsBound:]
+		var (
+			optionsDone      = parameters[:optionsBound]
+			optionsRemaining = parameters[optionsBound:]
+		)
+
 		err := fmt.Errorf(
-			"%s doesn't have enough fields declared after settings tag"+
-				" - constructed %d options, need %d fields to fit remaining parameters: [%s]",
-			settingsType.Name(),
-			optionsBound, parameterCount,
-			remainder,
+			"\"%s\" doesn't have enough fields declared after tag: %s"+
+				"\n\tconstructed %d options: (%s)"+
+				"\n\tneed %d fields to fit remaining parameters: [%s]",
+			typeName(settingsType), tagString(),
+			optionsBound, optionsDone,
+			parameterCount, optionsRemaining,
 		)
 		panic(err)
 	}
@@ -78,8 +83,7 @@ func cmdsOptionsFrom(settingsType reflect.Type, settingsIndex []int, parameters 
 		if optionsBound == parameterCount {
 			break
 		}
-		if field.Type.Kind() == reflect.Struct &&
-			field.Anonymous {
+		if shouldRecurse(field) {
 			if field.Type == taggedType {
 				// Treat fields in the tagged type
 				// as already bound, and skip processing them.
@@ -209,7 +213,7 @@ func toCmdsOption(field reflect.StructField, parameter Parameter) cmds.Option {
 		fallthrough
 	default:
 		typeErr := fmt.Errorf(
-			"Can't determine which option to use for parameter `%s` (type: %s Kind: %s)",
+			"can't determine which option to use for parameter `%s` (type: %s Kind: %s)",
 			parameter.CommandLine(),
 			field.Type, optionKind,
 		)
