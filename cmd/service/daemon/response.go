@@ -225,11 +225,11 @@ func checkResponse(response *Response, sawStarting, sawReady bool) (starting, re
 		ready = true
 	case Status(0):
 		if response.Info == "" {
-			err = fmt.Errorf("%w - got empty/malformed response during startup: %#v",
+			err = fmt.Errorf("%w:\n\tgot empty/malformed response during startup: %#v",
 				ErrStartupSequence, response)
 		}
 	default:
-		err = fmt.Errorf("%w - got unexpected response during startup: %#v",
+		err = fmt.Errorf("%w:\n\tgot unexpected response during startup: %#v",
 			ErrStartupSequence, response)
 	}
 	return
@@ -238,7 +238,7 @@ func checkResponse(response *Response, sawStarting, sawReady bool) (starting, re
 func checkResponseStarting(response *Response, alreadySeen bool) error {
 	if response.ListenerMaddr == nil {
 		if alreadySeen {
-			return fmt.Errorf("%w - received \"starting\" twice",
+			return fmt.Errorf("%w:\n\treceived \"starting\" twice",
 				ErrStartupSequence)
 		}
 	}
@@ -247,11 +247,11 @@ func checkResponseStarting(response *Response, alreadySeen bool) error {
 
 func checkResponseReady(response *Response, sawStarting, sawReady bool) error {
 	if !sawStarting {
-		return fmt.Errorf("%w - got response before \"starting\": %#v",
+		return fmt.Errorf("%w:\n\tgot response before \"starting\": %#v",
 			ErrStartupSequence, response)
 	}
 	if sawReady {
-		return fmt.Errorf("%w - received \"ready\" twice",
+		return fmt.Errorf("%w:\n\t received \"ready\" twice",
 			ErrStartupSequence)
 	}
 	return nil
@@ -274,7 +274,7 @@ func makeRuntimeFunc(callback ResponseCallback, responses <-chan responsePair) f
 
 			switch response.Status {
 			case Starting, Ready:
-				return fmt.Errorf("%w - got unexpected response during runtime: %#v",
+				return fmt.Errorf("%w:\n\tgot unexpected response during runtime:\n\t%#v",
 					ErrStartupSequence, response)
 			default:
 				if callback != nil {

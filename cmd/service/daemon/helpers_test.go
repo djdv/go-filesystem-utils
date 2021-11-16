@@ -41,6 +41,8 @@ func spawnDaemon(ctx context.Context, t *testing.T,
 	)
 	go func() {
 		defer serverCancel()
+		t.Log("calling server")
+		defer t.Log("server call returned")
 		root.Call(request, emitter, env)
 	}()
 

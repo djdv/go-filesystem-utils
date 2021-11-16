@@ -30,12 +30,18 @@ const (
 
 var ErrServiceNotFound = errors.New("could not find service instance")
 
+// TODO: We should be consistent and return channel, not a slice.
+// maybe errs instead of err, but err is probably fine. We expect these to vary
+// by platform, but ultimately be static source data (for now).
+//
 // UserServiceMaddrs returns a list of multiaddrs that servers and client commands
 // may try to use when hosting or querying a user-level file system service.
 func UserServiceMaddrs() ([]multiaddr.Multiaddr, error) {
 	return servicePathsToServiceMaddrs(xdg.StateHome, xdg.RuntimeDir)
 }
 
+// TODO: We should be consistent and return channel, not a slice.
+//
 // SystemServiceMaddrs returns a list of multiaddrs that servers and client commands
 // may try to use when hosting or querying a system-level file system service.
 func SystemServiceMaddrs() ([]multiaddr.Multiaddr, error) {

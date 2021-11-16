@@ -35,7 +35,7 @@ func (env *environment) Initialize(ctx context.Context) (<-chan Reason, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	stopChan := make(chan Reason)
+	stopChan := make(chan Reason, 1)
 	env.stopChan = stopChan
 	env.stopCtx = ctx
 	return stopChan, nil
@@ -49,11 +49,11 @@ func (env *environment) Stop(reason Reason) error {
 	if stopChan == nil {
 		return fmt.Errorf("stopper not initialized")
 	}
+	env.stopChan = nil
 
 	defer close(stopChan)
 	select {
 	case stopChan <- reason:
-		env.stopChan = nil
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

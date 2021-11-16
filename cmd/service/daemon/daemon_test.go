@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -49,19 +51,48 @@ func testDaemonStop(t *testing.T, root *cmds.Command) {
 }
 
 func testDaemonCancelCtx(t *testing.T, root *cmds.Command) {
+	t.Run("Cancel", func(t *testing.T) {
+		{
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Run("now", func(t *testing.T) {
+				testCtx(t, root, ctx, cancel)
+			})
+		}
+		// FIXME: do we not wait for daemon.Run properly? i.e. is serverCtx.Done() broken?
+		// Test must wait for this no matter what, for socket cleanup.
+		{
+			const serviceWait = time.Nanosecond
+			ctx, cancel := context.WithCancel(context.Background())
+			late := func() {
+				go func() { time.Sleep(serviceWait); cancel() }()
+			}
+			t.Run(fmt.Sprintf("after %s", serviceWait), func(t *testing.T) {
+				testCtx(t, root, ctx, late)
+			})
+		}
+	})
+}
+
+func testCtx(t *testing.T, root *cmds.Command,
+	ctx context.Context, startTestCancel context.CancelFunc) {
 	var (
-		ctx           = context.Background()
 		expectedError = context.Canceled
-		check         = func(serverCtx context.Context, response cmds.Response) {
+		check         = func(t *testing.T, response cmds.Response) {
 			t.Helper()
 			for {
-				_, err := response.Next()
+				dbgResp, err := response.Next()
 				switch {
 				case err == nil:
+					t.Log("got misc. resp:", dbgResp) // TODO: remove
 					continue
 				case errors.Is(err, expectedError):
-					<-serverCtx.Done() // Wait for server to return.
+					t.Log("got expected resp:", err) // TODO: remove
 					return
+				case errors.Is(err, io.EOF):
+					t.Fatalf("server returned before expected error"+
+						"\n\twanted: %s"+
+						"\n\tgot: %s",
+						expectedError, err)
 				default:
 					t.Fatalf("server returned unexpected error"+
 						"\n\twanted: %s"+
@@ -71,56 +102,43 @@ func testDaemonCancelCtx(t *testing.T, root *cmds.Command) {
 			}
 		}
 	)
-
-	t.Run("Cancel early", func(t *testing.T) {
-		var (
-			serverCtx         context.Context
-			serverResponse    cmds.Response
-			runCtx, runCancel = context.WithCancel(ctx)
-		)
-		t.Run("Cancel context", func(*testing.T) {
-			runCancel()
-		})
-		t.Run("Spawn server", func(t *testing.T) {
-			serverCtx, _, serverResponse = spawnDaemon(runCtx, t, root, nil)
-		})
-		t.Run("Check response", func(*testing.T) {
-			check(serverCtx, serverResponse)
-		})
+	startTestCancel()
+	var (
+		serverCtx      context.Context
+		serverResponse cmds.Response
+	)
+	t.Run("Spawn server", func(t *testing.T) {
+		serverCtx, _, serverResponse = spawnDaemon(ctx, t, root, nil)
+	})
+	t.Run("Check response", func(t *testing.T) {
+		check(t, serverResponse)
 	})
 
-	// FIXME: this fails sometimes. Why?
-	t.Run("Cancel late", func(t *testing.T) {
-		const serviceWait = time.Microsecond
-		var (
-			serverCtx         context.Context
-			serverResponse    cmds.Response
-			runCtx, runCancel = context.WithCancel(ctx)
-		)
-		t.Run("Spawn server", func(t *testing.T) {
-			serverCtx, _, serverResponse = spawnDaemon(runCtx, t, root, nil)
-		})
-		/*
-			go func() {
-				time.Sleep(serviceWait)
-				t.Run(fmt.Sprintf(
-					"Context canceled after %s", serviceWait),
-					func(*testing.T) { runCancel() },
-				)
-			}()
-		*/
-		t.Run(fmt.Sprintf(
-			"Cancel context after %s", serviceWait),
-			func(*testing.T) {
-				go func() {
-					time.Sleep(serviceWait)
-					runCancel()
-				}()
-			},
-		)
-		t.Run("Check response", func(*testing.T) {
-			check(serverCtx, serverResponse)
-		})
+	// TODO: dedupe/extract waitForServer(t,ctx,timeout) ?
+	const testGrace = 1 * time.Second
+	t.Run("Wait for server to return", func(t *testing.T) {
+		select {
+		case <-serverCtx.Done():
+		case <-time.After(testGrace):
+			t.Fatalf("server did not stop in time: %s",
+				testGrace)
+		}
+	})
+
+	t.Run("Check files", func(t *testing.T) {
+		const dir = `C:\Users\Dominic Della Valle\AppData\Local\fs`
+		if _, err := os.Stat(dir); err == nil {
+			t.Errorf(
+				"socket dir already exists: \"%s\"",
+				dir)
+
+			sock := filepath.Join(dir, "server")
+			if _, err := os.Lstat(sock); err == nil {
+				t.Errorf(
+					"socket file already exists: \"%s\"",
+					sock)
+			}
+		}
 	})
 }
 
@@ -267,10 +285,24 @@ func testDaemonAutoExit(t *testing.T, root *cmds.Command) {
 		t.Fatal("server failed startup checks:", err)
 	}
 	if err := runtime(); err != nil {
-		t.Fatal("server failed runtime checks:", err)
+		/* FIXME: Sometimes bind sees a dead socket.
+		Implies cleanup isn't being waited on to return when daemon stops?
+		--- FAIL: TestDaemonRun (0.01s)
+			--- FAIL: TestDaemonRun/Direct_stop (0.00s)
+				--- FAIL: TestDaemonRun/Direct_stop/Auto_exit (0.00s)
+					daemon_test.go:270:
+					server failed runtime checks:
+						listen unix C:\...\fs\server:
+							bind: A socket operation encountered a dead network.
+							- couldn't cleanup:
+								remove C:\...\fs:
+									The system cannot find the file specified.
+									- context canceled
+		*/
+		t.Fatalf("server failed runtime checks:\n\t%v", err)
 	}
 	if !sawExpected {
-		t.Fatal("server never emitted expected response:", expected)
+		t.Fatal("server never emitted expected response - wanted:", expected)
 	}
 
 	const testGrace = stopAfter + 1*time.Second

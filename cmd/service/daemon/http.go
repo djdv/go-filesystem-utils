@@ -62,95 +62,40 @@ func allowRemoteAccess(root *cmds.Command, path []string) *cmds.Command {
 	return newRoot
 }
 
-// FIXME [deadlock]: this returns a nil errchan when listeners is canceled early / empty.
-func setupCmdsHTTP(ctx context.Context, root *cmds.Command,
-	env cmds.Environment, pairs <-chan listenerPair) <-chan error {
-	var errs <-chan error
-	for pair := range pairs {
-		httpServerErrs := serveHTTPThenCleanup(ctx, pair, root, env)
-		if httpServerErrs == nil {
-			fmt.Println("⚠️  httpServerErrs 1 was nil")
-		}
-		if errs == nil {
-			errs = httpServerErrs
-		} else {
-			errs = mergeErrs(errs, httpServerErrs)
-		}
-	}
-	// HACK: Rework the function instead of doing this.
-	if errs == nil {
-		// fmt.Println("⚠️  httpServerErrs 2[h] was nil")
-		empty := make(chan error)
-		close(empty)
-		errs = empty
-	}
-	return errs
-}
-
-func serveHTTPThenCleanup(ctx context.Context, pair listenerPair,
+/*
+func serveCmdsHTTP(ctx context.Context, listener manet.Listener,
 	root *cmds.Command, env cmds.Environment) <-chan error {
 	var (
-		errs       = make(chan error, 2)
-		serverErrs = acceptCmdsHTTP(ctx, pair.Listener, root, env)
-		cleanup    = pair.cleanupFunc
+		errs       = make(chan error, 1)
+		serverErrs = acceptCmdsHTTP(ctx, listener, root, env)
 	)
+
+	fmt.Println("serving on:", listener.Multiaddr())
 	go func() {
+		defer fmt.Println("done serving on:\n\t", listener.Multiaddr())
 		defer close(errs)
 		var err error
 		for serverErr := range serverErrs {
 			if err == nil {
 				err = fmt.Errorf("HTTP server error: %w", serverErr)
 			} else {
-				err = fmt.Errorf("%w - %s", err, serverErr)
+				err = fmt.Errorf("%w\n\t%s", err, serverErr)
 			}
 		}
 		if err != nil {
+			fmt.Println(listener.Multiaddr(), "encountered error: ", err)
 			errs <- err
-		}
-
-		// When done (after Serve() returns; closing the listener)
-		// call this listeners cleanup (if it has one)
-		if cleanup != nil {
-			if err := cleanup(); err != nil {
-				err = fmt.Errorf("listener cleanup: %w", err)
-				errs <- err
-			}
+		} else {
+			fmt.Println(listener.Multiaddr(), "done service (listener closed)")
 		}
 	}()
-
 	return errs
 }
+*/
 
-func emitAndRelayListeners(emitter cmds.ResponseEmitter,
-	listeners <-chan listenerPair) (<-chan listenerPair, <-chan error) {
-	var (
-		relay = make(chan listenerPair, cap(listeners)+1)
-		errs  = make(chan error, 1)
-	)
-	go func() {
-		defer close(relay)
-		defer close(errs)
-		for listener := range listeners {
-			err := emitMaddrListener(emitter, listener.Multiaddr())
-			if err != nil {
-				if cErr := listener.Close(); cErr != nil {
-					err = fmt.Errorf(
-						"%w - failed to close listener: %s",
-						err, cErr,
-					)
-				}
-				errs <- err
-				return
-			}
-			relay <- listener
-		}
-	}()
-	return relay, errs
-}
-
-func acceptCmdsHTTP(ctx context.Context,
+func listenCmdsHTTP(ctx context.Context,
 	listener manet.Listener, clientRoot *cmds.Command,
-	env cmds.Environment) (serverErrs <-chan error) {
+	env cmds.Environment) <-chan error {
 	var (
 		httpServer = &http.Server{
 			Handler: cmdshttp.NewHandler(env,
@@ -195,4 +140,29 @@ func acceptCmdsHTTP(ctx context.Context,
 	}()
 
 	return httpServerErrs
+}
+
+func serveCmdsHTTP(ctx context.Context, root *cmds.Command, env cmds.Environment,
+	listeners <-chan manet.Listener) <-chan error {
+	errs := make(chan error)
+	go func() {
+		defer close(errs)
+		for listener := range listeners {
+			fmt.Println("DBG: serving on:", listener.Multiaddr())
+			serverErrs := listenCmdsHTTP(ctx, listener, root, env)
+			var err error
+			for serverErr := range serverErrs {
+				if err == nil {
+					err = fmt.Errorf("HTTP server error: %w", serverErr)
+				} else {
+					err = fmt.Errorf("%w\n\t%s", err, serverErr)
+				}
+			}
+			if err != nil {
+				fmt.Println("DBG:", listener.Multiaddr(), "encountered error: ", err)
+				errs <- err
+			}
+		}
+	}()
+	return errs
 }
