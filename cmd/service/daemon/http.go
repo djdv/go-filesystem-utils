@@ -62,38 +62,61 @@ func allowRemoteAccess(root *cmds.Command, path []string) *cmds.Command {
 	return newRoot
 }
 
-/*
-func serveCmdsHTTP(ctx context.Context, listener manet.Listener,
-	root *cmds.Command, env cmds.Environment) <-chan error {
-	var (
-		errs       = make(chan error, 1)
-		serverErrs = acceptCmdsHTTP(ctx, listener, root, env)
-	)
+func httpServerFromCmds(serverRoot *cmds.Command, serverEnv cmds.Environment) *http.Server {
+	return &http.Server{
+		Handler: cmdshttp.NewHandler(serverEnv,
+			serverRoot, cmdshttp.NewServerConfig()),
+	}
+}
 
-	fmt.Println("serving on:", listener.Multiaddr())
+// TODO: review
+func serveHTTP(ctx context.Context,
+	listener manet.Listener, server *http.Server,
+	shutdownTimeout time.Duration) <-chan error {
+	errs := make(chan error)
 	go func() {
-		defer fmt.Println("done serving on:\n\t", listener.Multiaddr())
 		defer close(errs)
-		var err error
-		for serverErr := range serverErrs {
-			if err == nil {
-				err = fmt.Errorf("HTTP server error: %w", serverErr)
-			} else {
-				err = fmt.Errorf("%w\n\t%s", err, serverErr)
+		serveErr := make(chan error)
+		go func() {
+			defer close(serveErr)
+			err := server.Serve(manet.NetListener(listener))
+			if err != nil &&
+				!errors.Is(err, http.ErrServerClosed) {
+				fmt.Println("DBG: srv err:", err)
+				serveErr <- err
 			}
-		}
-		if err != nil {
-			fmt.Println(listener.Multiaddr(), "encountered error: ", err)
+		}()
+		select {
+		case err := <-serveErr:
 			errs <- err
-		} else {
-			fmt.Println(listener.Multiaddr(), "done service (listener closed)")
+		case <-ctx.Done():
+			err := shutdownServer(server, shutdownTimeout)
+			if err != nil {
+				errs <- err
+			}
 		}
 	}()
 	return errs
 }
-*/
 
-func listenCmdsHTTP(ctx context.Context,
+func shutdownServer(server *http.Server, timeout time.Duration) error {
+	timerCtx, timerCancel := context.WithTimeout(context.Background(), timeout)
+	defer timerCancel()
+	err := server.Shutdown(timerCtx)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			err = fmt.Errorf("could not shutdown server before timeout (%s): %w",
+				timeout, err,
+			)
+		}
+		return err
+	}
+
+	return nil
+}
+
+/*
+func serveCmdsHTTP(ctx context.Context,
 	listener manet.Listener, clientRoot *cmds.Command,
 	env cmds.Environment) <-chan error {
 	var (
@@ -101,11 +124,11 @@ func listenCmdsHTTP(ctx context.Context,
 			Handler: cmdshttp.NewHandler(env,
 				clientRoot, cmdshttp.NewServerConfig()),
 		}
-		httpServerErrs = make(chan error)
+		errs = make(chan error)
 	)
 	go func() {
 		const stopGrace = 30 * time.Second
-		defer close(httpServerErrs)
+		defer close(errs)
 
 		// The actual listen and serve / accept loop.
 		serveErr := make(chan error, 1)
@@ -118,8 +141,9 @@ func listenCmdsHTTP(ctx context.Context,
 		// and relay errors.
 		select {
 		case err := <-serveErr:
-			httpServerErrs <- err
+			errs <- err
 		case <-ctx.Done():
+			// TODO: shutdown grace should come from args
 			timeout, timeoutCancel := context.WithTimeout(context.Background(),
 				stopGrace/2)
 			defer timeoutCancel()
@@ -129,40 +153,16 @@ func listenCmdsHTTP(ctx context.Context,
 						timeout, err,
 					)
 				}
-				httpServerErrs <- err
+				errs <- err
 			}
 
 			// Serve routine must return now.
 			if err := <-serveErr; !errors.Is(err, http.ErrServerClosed) {
-				httpServerErrs <- err
-			}
-		}
-	}()
-
-	return httpServerErrs
-}
-
-func serveCmdsHTTP(ctx context.Context, root *cmds.Command, env cmds.Environment,
-	listeners <-chan manet.Listener) <-chan error {
-	errs := make(chan error)
-	go func() {
-		defer close(errs)
-		for listener := range listeners {
-			fmt.Println("DBG: serving on:", listener.Multiaddr())
-			serverErrs := listenCmdsHTTP(ctx, listener, root, env)
-			var err error
-			for serverErr := range serverErrs {
-				if err == nil {
-					err = fmt.Errorf("HTTP server error: %w", serverErr)
-				} else {
-					err = fmt.Errorf("%w\n\t%s", err, serverErr)
-				}
-			}
-			if err != nil {
-				fmt.Println("DBG:", listener.Multiaddr(), "encountered error: ", err)
 				errs <- err
 			}
 		}
 	}()
+
 	return errs
 }
+*/

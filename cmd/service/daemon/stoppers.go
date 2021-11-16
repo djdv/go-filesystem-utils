@@ -40,34 +40,6 @@ func initStopper(ctx context.Context,
 	return stopper, stopReasons, nil
 }
 
-func listenForGoSignals(ctx context.Context,
-	emitter cmds.ResponseEmitter, request *cmds.Request,
-	stopper stopenv.Environment) (<-chan error, error) {
-	osErrs, err := listenForOSSignal(ctx,
-		emitter, stopper,
-		stopenv.Canceled, os.Interrupt)
-	if err != nil {
-		return nil, err
-	}
-	cmdsErrs, err := listenForRequestCancel(ctx,
-		emitter, request,
-		stopper, stopenv.Canceled)
-	if err != nil {
-		return nil, err
-	}
-	return joinErrs(osErrs, cmdsErrs), nil
-}
-
-func listenForOSSignal(ctx context.Context,
-	emitter cmds.ResponseEmitter, stopper stopenv.Environment,
-	stopReason stopenv.Reason, notifySignal os.Signal) (<-chan error, error) {
-	stopErrs := stopOnSignal(ctx, stopper, stopReason, notifySignal)
-	if err := emitSignalListener(emitter, notifySignal); err != nil {
-		return nil, err
-	}
-	return stopErrs, nil
-}
-
 func stopOnSignal(ctx context.Context,
 	stopper stopenv.Environment, stopReason stopenv.Reason,
 	notifySignal os.Signal) <-chan error {
@@ -91,17 +63,12 @@ func stopOnSignal(ctx context.Context,
 	return errs
 }
 
-// TODO: review; jank?
-func listenForRequestCancel(ctx context.Context,
-	emitter cmds.ResponseEmitter, request *cmds.Request,
-	stopper stopenv.Environment, stopReason stopenv.Reason) (<-chan error, error) {
-	if err := emitCmdsListener(emitter); err != nil {
-		return nil, err
-	}
+func listenForRequestCancel(ctx context.Context, request *cmds.Request,
+	stopper stopenv.Environment, stopReason stopenv.Reason) <-chan error {
 	var (
 		triggerCtx = request.Context
 		stop       = stopper.Stop
-		errs       = make(chan error, 1)
+		errs       = make(chan error)
 	)
 	go func() {
 		defer close(errs)
@@ -116,7 +83,7 @@ func listenForRequestCancel(ctx context.Context,
 		}
 	}()
 
-	return errs, nil
+	return errs
 }
 
 func listenForIdleEvent(ctx context.Context, emitter cmds.ResponseEmitter,

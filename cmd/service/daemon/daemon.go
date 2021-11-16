@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
+	"time"
 
 	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment/service"
 	stopenv "github.com/djdv/go-filesystem-utils/cmd/environment/service/daemon/stop"
@@ -13,7 +15,7 @@ import (
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
 	cmds "github.com/ipfs/go-ipfs-cmds"
-	manet "github.com/multiformats/go-multiaddr/net"
+	"github.com/multiformats/go-multiaddr"
 )
 
 const Name = "daemon"
@@ -37,29 +39,25 @@ var Command = &cmds.Command{
 func CmdsPath() []string { return []string{"service", "daemon"} }
 
 func daemonRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
-	fmt.Println("daemon run enter")
-	defer fmt.Println("daemon run exit")
-
 	ctx, cancel := context.WithCancel(request.Context)
 	defer cancel()
 
 	settings, serviceEnv, err := parseAndEmitStarting(ctx, emitter, request, env)
 	if err != nil {
-		fmt.Println("test -2:", err)
+		return err
+	}
+	stopper, stopReasons, err := setupStopper(ctx, request, emitter, serviceEnv)
+	if err != nil {
 		return err
 	}
 
-	// FIXME: stopping early - context needs to be changed.
-	stopReasons, errs, err := startAllListeners(ctx,
-		settings, serviceEnv, emitter, request)
+	errs, err := setupAllListeners(ctx, emitter, request, settings, stopper, serviceEnv)
 	if err != nil {
-		fmt.Println("test -1:", err)
 		return err
 	}
 	cancelWithError := func(err error) error {
 		cancel()
 		for e := range errs {
-			fmt.Println("test cancel e:", e)
 			if err == nil {
 				err = e
 			} else {
@@ -69,66 +67,46 @@ func daemonRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Env
 		return err
 	}
 
-	fmt.Println("test 0")
 	select {
 	case err, ok := <-errs:
 		// If we have immediate startup errors,
 		// bail out.
 		if !ok {
+			fmt.Println("errs in run not okay ❔")
 			// FIXME: should this break or panic?
 			// We should close if no servers were started yet.
 			break
 			// fmt.Println("test panic⚠️")
 			// panic("errs should not be closed yet")
 		}
-		// return cancelWithError(err)
-		err = cancelWithError(err)
-		fmt.Println("test 0 return:", err)
-		return err
+		return cancelWithError(err)
 	default:
 		// Otherwise just continue starting.
-		fmt.Println("test 0 default")
 	}
 
-	fmt.Println("test 1")
-	if err := emitReady(emitter); err != nil {
-		// return cancelWithError(err)
-		// DBG:
-		err = cancelWithError(err)
-		fmt.Println("test 1e:", err)
-		return err
-	}
-	fmt.Println("test 2")
 	// If we're a child process of the launcher;
 	// start discarding stdio.
-	/*
-		if err := maybeDisableStdio(); err != nil {
-			return err
-		}
-	*/
+	if err := maybeDisableStdio(); err != nil {
+		return err
+	}
 
 	{
 		var err error
 		select {
 		case reason, ok := <-stopReasons:
 			if ok {
-				fmt.Println("test 3 A:", reason)
 				err = emitStopping(emitter, reason)
 			}
 		case runErr, ok := <-errs:
 			if ok {
 				err = runErr
-				fmt.Println("test 3 B:", err, ok)
 				emitErr := emitStopping(emitter, stopenv.Error)
 				if emitErr != nil {
 					err = fmt.Errorf("%w\n\t%s", err, emitErr)
 				}
 			}
 		}
-		err = cancelWithError(err)
-		fmt.Println("test 4:", err)
-		return err
-		// return cancelWithError(nil)
+		return cancelWithError(err)
 	}
 }
 
@@ -159,53 +137,276 @@ func parseCmdsEnv(ctx context.Context, request *cmds.Request,
 	return settings, serviceEnv, nil
 }
 
-func startAllListeners(ctx context.Context,
-	settings *Settings, serviceEnv serviceenv.Environment,
-	emitter cmds.ResponseEmitter, request *cmds.Request) (<-chan stopenv.Reason,
-	<-chan error, error) {
+// TODO: setup HTTP first, start setting up extras, wait for HTTP, emit Ready
+// return error bridge for both errs?
+// ^ just make the http constructor block internally for now?
+// returns nil when all listeners are serving, relays listeners as they're listening though.
+//^^ We need to refactor from left -> right
+// we shouldn't be passing in emit, we should be looping over a channel of results
+// and emitting or returning conditionally. Like is being done on the rightmost code paths.
+func setupAllListeners(ctx context.Context,
+	emitter cmds.ResponseEmitter, request *cmds.Request,
+	settings *Settings, stopper stopenv.Environment,
+	serviceEnv serviceenv.Environment) (<-chan error, error) {
 
-	stopper, stopReasons, err := setupStopper(ctx, request, emitter, serviceEnv)
+	initErrs, err := setupInitListeners(ctx, emitter, request, stopper)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	type listenerConstructorFunc func() (<-chan error, error)
 	var (
-		errs <-chan error
+		serveResults = listenAndServeCmdsHTTP(ctx, request, settings, serviceEnv)
+		// errs         = make(chan (<-chan error))
+		errs = make(chan (<-chan error), 10)
+	)
+	errs <- initErrs
+	// TODO: this in a goroutine
+	// but also it has its own error channel which is closed after all servers are okay.
+	// This will be our "wait for server init" condition
+	// serverInitErr = chan errs
+	// go for {
+	// server okay? keep going
+	// server or emit not okay? close all listeners; drain any bridges errs; return
+	// }
+	todoName := make(chan error)
+	go func() {
+		defer close(todoName)
+		var (
+			serveErr     error
+			wrapServeErr = func(err error) error {
+				if serveErr == nil {
+					serveErr = err
+				} else {
+					serveErr = fmt.Errorf("%w\n\t%s", serveErr, err)
+				}
+				return serveErr
+			}
+		)
+		for result := range serveResults {
+			fmt.Printf("DBG l&s 1:%#v", result)
+			if err := result.error; err != nil {
+				fmt.Println("DBG l&s 1e:", err)
+				serveErr = wrapServeErr(err)
+				continue
+			}
+			if err := emitMaddrListener(emitter, result.serverAddress); err != nil {
+				fmt.Println("DBG l&s 2e:", err)
+				serveErr = wrapServeErr(err)
+				continue
+			}
+			// TODO:
+			// These have to go back to the caller.
+			// We could queue them, if error, drain.
+			// Otherwise, merge and return with nil err
+			//_ = result.serverErrs
+			errs <- result.serverErrs
+		}
+		if serveErr != nil {
+			todoName <- serveErr
+		}
+	}()
+	// FIXME: this is just for debugging, we need to flatten this channel into a single err
+	// and likely have to wait/drain existing error bridges after a cancel, unless we can return the bridge with an error.
+	// or vice versa (prepend the err to the bridge and expect the caller to select-default check it)
+	if err := <-todoName; err != nil {
+		return nil, err
+	}
 
+	// TODO We need to sync on listenerErrs here
+	// if the servers didn't start, bail out.
+	//
+	// TODO: emit "Ready" here
+	// FIXME: we need to sync with http server chan finish
+	// then emit ready, we can emit idle before or after, doesn't matter.
+	// If not done, parent processes will see "starting, ready" == no listeners
+	// vs "starting, maddr1,maddr2,ready" == []m1,m2
+	//
+	// do initSequence startListeners([]constructors);
+	// emit(ready); startListeners([]extraConsturctors
+	// with bridge in between for values.
+	//
+	// init -> readChan -> emit ready -> extraInit -> extra emit
+	//         ⌞       here         ⌟
+	if err := emitReady(emitter); err != nil {
+		return nil, err
+	}
+
+	extraErrs, err := maybeSetupExtraListeners(ctx, emitter, settings, stopper)
+	if err != nil {
+		// return fanInErrs(initErrs, serverErrs, extraErrs), err
+		return nil, err
+	}
+	if extraErrs != nil {
+		errs <- extraErrs
+	}
+
+	close(errs) // TODO: review async access
+	// This hsould be less magic.
+	// It works as is because we wait for init's routine to be done sending
+	// but should do this properly.
+
+	return bridgeErrs(errs), nil
+}
+
+/*
+func setupAllListeners(ctx context.Context,
+	emitter cmds.ResponseEmitter, request *cmds.Request,
+	settings *Settings, stopper stopenv.Environment,
+	serviceEnv serviceenv.Environment) (<-chan error, error) {
+	errs := make(chan (<-chan error), 2)
+	defer close(errs)
+
+	initErrs, err := setupInitListeners(ctx,
+		emitter, request,
+		settings, stopper, serviceEnv,
+	)
+	if err != nil {
+		return nil, err
+	}
+	errs <- initErrs
+
+	// TODO We need to sync on listenerErrs here
+	// if the servers didn't start, bail out.
+	//
+	// TODO: emit "Ready" here
+	// FIXME: we need to sync with http server chan finish
+	// then emit ready, we can emit idle before or after, doesn't matter.
+	// If not done, parent processes will see "starting, ready" == no listeners
+	// vs "starting, maddr1,maddr2,ready" == []m1,m2
+	//
+	// do initSequence startListeners([]constructors);
+	// emit(ready); startListeners([]extraConsturctors
+	// with bridge in between for values.
+	//
+	// init -> readChan -> emit ready -> extraInit -> extra emit
+	//         ⌞       here         ⌟
+	if err := emitReady(emitter); err != nil {
+		return bridgeErrs(errs), err
+	}
+
+	extraErrs, err := maybeSetupExtraListeners(ctx, emitter, settings, stopper)
+	if err != nil {
+		return bridgeErrs(errs), err
+	}
+	if extraErrs != nil {
+		errs <- extraErrs
+	}
+
+	return bridgeErrs(errs), nil
+}
+*/
+
+// TODO: try to abstract the emissions better.
+// Maybe some result type with like emitFunc() error that wraps the input to re.Emit?
+// results <- result.func = { return emitSignal(...)}
+func setupInitListeners(ctx context.Context,
+	emitter cmds.ResponseEmitter, request *cmds.Request,
+	stopper stopenv.Environment) (<-chan error, error) {
+
+	const reason = stopenv.Canceled
+	var (
+		notifySignal = os.Interrupt
+		osErrs       = stopOnSignal(ctx, stopper, reason, notifySignal)
+	)
+	if err := emitSignalListener(emitter, notifySignal); err != nil {
+		return nil, err
+	}
+
+	cmdsErrs := listenForRequestCancel(ctx, request, stopper, stopenv.Canceled)
+	if err := emitCmdsListener(emitter); err != nil {
+		return nil, err
+	}
+
+	return joinErrs(osErrs, cmdsErrs), nil
+}
+
+/*
+func setupInitListeners(ctx context.Context,
+	request *cmds.Request, settings *Settings,
+	stopper stopenv.Environment, serviceEnv serviceenv.Environment) (<-chan error, error) {
+	return setupListeners(
+		func() (<-chan error, error) {
+			return stopOnGoSignals(ctx, request, stopper)
+		},
+		func() (<-chan error, error) {
+			return listenAndServeCmdsHTTP(ctx, request, settings, serviceEnv), nil
+		},
+	)
+}
+*/
+
+func maybeSetupExtraListeners(ctx context.Context,
+	emitter cmds.ResponseEmitter, settings *Settings,
+	stopper stopenv.Environment) (<-chan error, error) {
+	var (
 		exitCheckInterval = settings.AutoExitInterval
 		exitWhenIdle      = exitCheckInterval != 0
-
-		listenerConstructors = []listenerConstructorFunc{
-			func() (<-chan error, error) {
-				return listenForGoSignals(ctx, emitter, request, stopper)
-			},
-			func() (<-chan error, error) {
-				return listenAndServeCmdsHTTP(ctx, emitter, request, settings, serviceEnv)
-			},
-			func() (<-chan error, error) {
-				if !exitWhenIdle {
-					return nil, nil
-				}
-				return listenForIdleEvent(ctx, emitter, stopper, exitCheckInterval)
-			},
-		}
 	)
-	for _, listenerConstructor := range listenerConstructors {
-		subErrs, err := listenerConstructor()
+	return setupListeners(
+		func() (<-chan error, error) {
+			if !exitWhenIdle {
+				return nil, nil
+			}
+			return listenForIdleEvent(ctx, emitter, stopper, exitCheckInterval)
+		},
+	)
+}
+
+type listenerConstructorFunc func() (<-chan error, error)
+
+func setupListeners(listenerConstructors ...listenerConstructorFunc) (<-chan error, error) {
+	errs := make(chan (<-chan error), len(listenerConstructors))
+	defer close(errs)
+	for _, constructor := range listenerConstructors {
+		subErrs, err := constructor()
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		if subErrs == nil {
-			continue
-		}
-		if errs == nil {
-			errs = subErrs
-		} else {
-			errs = mergeErrs(errs, subErrs)
+		if subErrs != nil {
+			errs <- subErrs
 		}
 	}
-	return stopReasons, errs, nil
+	return bridgeErrs(errs), nil
+}
+
+func bridgeErrs(input <-chan <-chan error,
+) <-chan error {
+	output := make(chan error)
+	go func() {
+		defer close(output)
+		for errs := range input {
+			for err := range errs {
+				output <- err
+			}
+		}
+	}()
+	return output
+}
+
+func fanInErrs(sources ...<-chan error) <-chan error {
+	type (
+		source   = <-chan error
+		sourceRw = chan error
+	)
+	var (
+		mergedWg  sync.WaitGroup
+		mergedCh  = make(sourceRw)
+		mergeFrom = func(ch source) {
+			for value := range ch {
+				mergedCh <- value
+			}
+			mergedWg.Done()
+		}
+	)
+
+	mergedWg.Add(len(sources))
+	go func() { mergedWg.Wait(); close(mergedCh) }()
+
+	for _, source := range sources {
+		go mergeFrom(source)
+	}
+
+	return mergedCh
 }
 
 // merge error channels in any order.
@@ -296,57 +497,195 @@ func disableStdio() error {
 	return nil
 }
 
+type serveResult struct {
+	serverAddress multiaddr.Multiaddr
+	serverErrs    <-chan error
+	error
+}
+
+func listenAndServeCmdsHTTP(ctx context.Context, request *cmds.Request,
+	settings *Settings, serviceEnv serviceenv.Environment) <-chan serveResult {
+	const (
+		errPrefix     = "listenAndServe"
+		shutdownGrace = 30 * time.Second
+	)
+	var (
+		listenResults = getListeners(ctx, request, settings.ServiceMaddrs...)
+		serveResults  = make(chan serveResult, cap(listenResults))
+		serverRoot    = allowRemoteAccess(
+			request.Root,
+			request.Path,
+		)
+	)
+	go func() {
+		// NOTE: All input listeners must be closed before we return.
+		// I.e. don't close on cancel.
+		defer close(serveResults)
+		for result := range listenResults {
+			if err := result.error; err != nil {
+				err = fmt.Errorf("%s failed to listen: %w",
+					errPrefix, err)
+				serveResults <- serveResult{error: err}
+				continue
+			}
+			listener := result.Listener
+
+			if ctx.Err() != nil {
+				if err := listener.Close(); err != nil {
+					err = fmt.Errorf("%s failed to close listener: %w",
+						errPrefix, err)
+					serveResults <- serveResult{error: err}
+				}
+				continue
+			}
+
+			var (
+				server    = httpServerFromCmds(serverRoot, serviceEnv)
+				serveErrs = serveHTTP(ctx, listener, server, shutdownGrace)
+			)
+			serveResults <- serveResult{
+				serverAddress: listener.Multiaddr(),
+				serverErrs:    serveErrs,
+			}
+		}
+	}()
+	return serveResults
+}
+
+/*
+func listenAndServeCmdsHTTP(ctx context.Context, request *cmds.Request,
+	settings *Settings, serviceEnv serviceenv.Environment) <-chan ListenAndServeResult {
+	const stopGrace = 30 * time.Second
+	var (
+		listenResults = getListeners(ctx, request, settings.ServiceMaddrs...)
+		serveResults  = make(chan ListenAndServeResult, cap(listenResults))
+		serverRoot    = allowRemoteAccess(
+			request.Root,
+			request.Path,
+		)
+	)
+	go func() {
+		// NOTE: All input listeners must be closed before we return.
+		// I.e. don't close on cancel.
+		defer close(serveResults)
+		for listener := range listenResults {
+			if err := listener.error; err != nil {
+				serveResults <- ListenAndServeResult{error: err}
+				continue
+			}
+			if ctx.Err() != nil {
+				if err := listener.Close(); err != nil {
+					serveResults <- ListenAndServeResult{error: err}
+				}
+				continue
+			}
+			serveResults <- ListenAndServeResult{
+				serverAddress: listener.Multiaddr(),
+				serverErrs:    serveCmdsHTTP(ctx, listener, serverRoot, serviceEnv),
+			}
+		}
+	}()
+	return serveResults
+}
+*/
+
+/*
+func listenAndServeCmdsHTTP(srvCtx context.Context, request *cmds.Request,
+	settings *Settings, serviceEnv serviceenv.Environment) (<-chan multiaddr.Multiaddr, <-chan error) {
+	var (
+		listenerResults = getListeners(srvCtx, request, settings.ServiceMaddrs...)
+		listenerErrs    = make(chan error, cap(listenerResults))
+
+		servingMaddrs = make(chan multiaddr.Multiaddr, cap(listenerResults))
+		serverRoot    = allowRemoteAccess(
+			request.Root,
+			request.Path,
+		)
+
+		closeErrs = make(chan error, cap(listenerResults))
+		errs      = make(chan (<-chan error))
+	)
+
+	go func() {
+		defer close(servingMaddrs)
+		defer close(closeErrs)
+		defer close(errs)
+		errs <- listenerErrs
+
+		for listener := range listenerResults {
+			if srvCtx.Err() != nil {
+				if err := listener.Close(); err != nil {
+					closeErrs <- err
+				}
+				continue
+			}
+			if listener.error != nil {
+				continue
+			}
+
+			errs <- serveCmdsHTTP(srvCtx, listener, serverRoot, serviceEnv)
+			servingMaddrs <- listener.Multiaddr()
+		}
+	}()
+
+	return servingMaddrs, bridgeErrs(errs)
+}
+*/
+
+/*
 func listenAndServeCmdsHTTP(ctx context.Context,
 	emitter cmds.ResponseEmitter, request *cmds.Request,
-	settings *Settings, serviceEnv serviceenv.Environment) (<-chan error, error) {
-	// FIXME: when we pull from listeners, if we're canceled,
-	// close listener before using it for a new http server.
+	settings *Settings, serviceEnv serviceenv.Environment) <-chan error {
 	var (
+		listenerResults         = getListeners(ctx, request, settings.ServiceMaddrs...)
+		listeners, listenerErrs = validateListeners(listenerResults)
+
+		emitErrs            = make(chan error)
+		listenerRelay       = make(chan manet.Listener, cap(listeners))
+		emitCtx, emitCancel = context.WithCancel(ctx)
+
 		serverRoot = allowRemoteAccess(
 			request.Root,
 			request.Path,
 		)
-		listenerResults = getListeners(ctx, request, settings.ServiceMaddrs...)
-		listeners, errs = validateListeners(listenerResults)
-		serverErrs      = serveCmdsHTTP(ctx, serverRoot, serviceEnv, listeners)
+		serverErrs = httpServeFromListeners(emitCtx, serverRoot, serviceEnv, listenerRelay)
 	)
+	go func() {
+		defer close(listenerRelay)
+		defer close(emitErrs)
+		for listener := range listeners {
+			if ctx.Err() != nil {
+				fmt.Println("💃")
+				if err := listener.Close(); err != nil {
+					emitCancel() // XXX: rethink context handling
+					emitErrs <- err
+				}
+				return
+			}
+			if err := emitMaddrListener(emitter, listener.Multiaddr()); err != nil {
+				emitCancel() // XXX: rethink context handling
+				emitErrs <- err
+				return
+			}
+			listenerRelay <- listener
+		}
+	}()
 
-	// TODO: this should be this functions return
-	// return joinErrs(listenerErrs, serverErrs)
+	// TODO: make this merge errors?
+	errs := make(chan (<-chan error), 3)
+	errs <- listenerErrs
+	errs <- emitErrs
+	errs <- serverErrs
+	close(errs)
 
-	defer close(errs)
-	for result := range listenerResults {
-		if err := result.error; err != nil {
-			errs <- err
-			continue
-		}
-		listener := result.Listener
-		fmt.Println("👂 DBG: got listener:", listener.Multiaddr())
-		if ctx.Err() != nil {
-			fmt.Println("DBG: http: canceled before serve")
-			err := listener.Close()
-			return errs, err
-		}
-		// TODO stream to emitter? * ->
-		if err := emitMaddrListener(emitter, listener.Multiaddr()); err != nil {
-			fmt.Println("DBG: http: emit:", err)
-			return errs, err
-		}
-
-		serveErrs := serveCmdsHTTP(ctx, serverRoot, serviceEnv, listeners)
-		if errs == nil {
-			errs = serveErrs
-		} else {
-			errs = mergeErrs(errs, serveErrs)
-		}
-	}
-	return errs, nil
+	return bridgeErrs(errs)
 }
+*/
 
-func validateListeners(ctx context.Context,
-	results <-chan listenResult) (<-chan manet.Listener, <-chan error) {
+/*
+func splitListenResults(results <-chan listenResult) (<-chan manet.Listener, <-chan error) {
 	var (
-		listeners = make(chan manet.Listener)
+		listeners = make(chan manet.Listener, cap(results))
 		errs      = make(chan error)
 	)
 	go func() {
@@ -354,19 +693,12 @@ func validateListeners(ctx context.Context,
 		defer close(errs)
 		for listener := range results {
 			if err := listener.error; err != nil {
-				select {
-				case errs <- err:
-					continue
-				case <-ctx.Done():
-					return
-				}
+				errs <- err
+				continue
 			}
-			select {
-			case listeners <- listener.Listener:
-			case <-ctx.Done():
-				return
-			}
+			listeners <- listener.Listener
 		}
 	}()
 	return listeners, errs
 }
+*/
