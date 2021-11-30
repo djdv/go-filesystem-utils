@@ -3,6 +3,9 @@ package daemon_test
 import (
 	"context"
 	"errors"
+	"os"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +26,7 @@ func spawnDaemon(ctx context.Context, t *testing.T,
 	request, err := cmds.NewRequest(ctx, daemon.CmdsPath(),
 		optMap, nil, nil, root)
 	if err != nil {
+		t.Log("hit:", err)
 		t.Fatal(err)
 	}
 
@@ -36,13 +40,11 @@ func spawnDaemon(ctx context.Context, t *testing.T,
 	}
 
 	var (
-		serverCtx, serverCancel = context.WithCancel(context.Background())
 		emitter, response       = cmds.NewChanResponsePair(request)
+		serverCtx, serverCancel = context.WithCancel(context.Background())
 	)
 	go func() {
 		defer serverCancel()
-		t.Log("calling server")
-		defer t.Log("server call returned")
 		root.Call(request, emitter, env)
 	}()
 
@@ -76,20 +78,59 @@ func stopDaemon(t *testing.T, daemonEnv daemonenv.Environment) {
 	}
 }
 
+func waitForDaemon(t *testing.T, serverCtx context.Context) {
+	t.Helper()
+	const testGrace = 64 * time.Millisecond
+	select {
+	case <-serverCtx.Done():
+	case <-time.After(testGrace):
+		t.Fatalf("server did not stop in time: %s",
+			testGrace)
+	}
+}
+
 func stopDaemonAndWait(t *testing.T,
 	daemonEnv daemonenv.Environment, runtime func() error, serverCtx context.Context) {
 	t.Helper()
 	stopDaemon(t, daemonEnv)
-
 	if err := runtime(); err != nil {
 		t.Fatal(err)
 	}
+	waitForDaemon(t, serverCtx)
+}
 
-	const testGrace = 1 * time.Second
-	select {
-	case <-serverCtx.Done():
-	case <-time.After(testGrace):
-		t.Fatalf("daemon did not stop in time: %s",
-			testGrace)
+func checkHostEnv(t *testing.T) {
+	t.Helper()
+	systemMaddrs, err := daemon.SystemServiceMaddrs()
+	if err != nil {
+		t.Fatal(err)
 	}
+	userMaddrs, err := daemon.UserServiceMaddrs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, maddr := range append(systemMaddrs, userMaddrs...) {
+		if path := getFirstUnixSocketPath(maddr); path != "" {
+			if _, err := os.Stat(path); err == nil {
+				t.Errorf(
+					"socket path exists (should have been cleaned up on daemon shutdown): \"%s\"",
+					path)
+			}
+		}
+	}
+}
+
+func getFirstUnixSocketPath(ma multiaddr.Multiaddr) (target string) {
+	multiaddr.ForEach(ma, func(comp multiaddr.Component) bool {
+		isUnixComponent := comp.Protocol().Code == multiaddr.P_UNIX
+		if isUnixComponent {
+			target = comp.Value()
+			if runtime.GOOS == "windows" { // `/C:\path` -> `C:\path`
+				target = strings.TrimPrefix(target, `/`)
+			}
+			return true
+		}
+		return false
+	})
+	return
 }

@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -9,82 +8,54 @@ import (
 
 	stopenv "github.com/djdv/go-filesystem-utils/cmd/environment/service/daemon/stop"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
-	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
 )
 
-var errEmit = errors.New("failed to emit")
-
-func wrapEmitErr(err error) error {
-	if err != nil {
-		err = fmt.Errorf("%s: %w", errEmit, err)
+func statusResponse(status Status, stopReason stopenv.Reason) *Response {
+	return &Response{
+		Status:     status,
+		StopReason: stopReason,
 	}
-	return err
 }
 
-func emitStatusResponse(emitter cmds.ResponseEmitter,
-	status Status, stopReason stopenv.Reason) error {
-	return wrapEmitErr(
-		emitter.Emit(
-			&Response{
-				Status:     status,
-				StopReason: stopReason,
-			}))
+func maddrListenerResponse(maddr multiaddr.Multiaddr) *Response {
+	return &Response{
+		Status:        Starting,
+		ListenerMaddr: &formats.Multiaddr{Interface: maddr},
+	}
 }
 
-func emitStarting(emitter cmds.ResponseEmitter) error {
-	return emitStatusResponse(emitter, Starting, 0)
+func listenerResponse(name string) *Response {
+	return infoResponsef("listening on: %s", name)
 }
 
-func emitReady(emitter cmds.ResponseEmitter) error {
-	return emitStatusResponse(emitter, Ready, 0)
+func infoResponsef(fmtStr string, v ...interface{}) *Response {
+	return &Response{Info: fmt.Sprintf(fmtStr, v...)}
 }
 
-func emitStopping(emitter cmds.ResponseEmitter, reason stopenv.Reason) error {
-	return emitStatusResponse(emitter, Stopping, reason)
+func startingResponse() *Response { return statusResponse(Starting, 0) }
+func readyResponse() *Response    { return statusResponse(Ready, 0) }
+func stoppingResponse(reason stopenv.Reason) *Response {
+	return statusResponse(Stopping, reason)
 }
 
-func emitMaddrListener(emitter cmds.ResponseEmitter, maddr multiaddr.Multiaddr) error {
-	return wrapEmitErr(
-		emitter.Emit(&Response{
-			Status:        Starting,
-			ListenerMaddr: &formats.Multiaddr{Interface: maddr},
-		}))
-}
-
-func emitInfof(emitter cmds.ResponseEmitter, fmtStr string, v ...interface{}) error {
-	return wrapEmitErr(
-		emitter.Emit(
-			&Response{
-				Info: fmt.Sprintf(fmtStr, v...),
-			}))
-}
-
-func emitListener(emitter cmds.ResponseEmitter, name string) error {
-	return emitInfof(emitter, "listening on: %s", name)
-}
-
-func emitStopListener(emitter cmds.ResponseEmitter, apiName ...string) error {
-	return emitListener(emitter, path.Join(
-		append(
-			[]string{"/api/"},
-			apiName...,
-		)...,
+func stopListenerResponse(apiPath ...string) *Response {
+	return listenerResponse(path.Join(append(
+		[]string{"/api/"},
+		apiPath...,
+	)...,
 	))
 }
 
-func emitSignalListener(emitter cmds.ResponseEmitter, sig os.Signal) error {
-	return emitListener(emitter, path.Join("/os/", sig.String()))
+func signalListenerResponse(sig os.Signal) *Response {
+	return listenerResponse(path.Join("/os/", sig.String()))
 }
 
-func emitCmdsListener(emitter cmds.ResponseEmitter) error {
-	return emitListener(emitter, "/go/cmds/request")
+func cmdsListenerResponse() *Response {
+	return listenerResponse("/go/cmds/request")
 }
 
-func emitTickerListener(emitter cmds.ResponseEmitter, interval time.Duration, name ...string) error {
-	if len(name) == 0 {
-		name = []string{"anonymous"}
-	}
+func tickerListenerResponse(interval time.Duration, name ...string) *Response {
 	fullName := append(
 		append(
 			[]string{"/go/ticker/"},
@@ -92,5 +63,5 @@ func emitTickerListener(emitter cmds.ResponseEmitter, interval time.Duration, na
 		),
 		interval.String(),
 	)
-	return emitListener(emitter, path.Join(fullName...))
+	return listenerResponse(path.Join(fullName...))
 }

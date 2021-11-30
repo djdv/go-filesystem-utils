@@ -1,7 +1,9 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,7 +21,7 @@ type (
 		Status        Status             `json:",omitempty"`
 		StopReason    stopenv.Reason     `json:",omitempty"`
 	}
-	responsePair struct {
+	ResponseResult struct {
 		*Response
 		error
 	}
@@ -35,24 +37,40 @@ const (
 
 var ErrStartupSequence = errors.New("startup sequence was not in order")
 
+func (status Status) String() string {
+	switch status {
+	case Starting:
+		return "starting"
+	case Ready:
+		return "ready"
+	case Stopping:
+		return "stopping"
+	default:
+		panic(fmt.Errorf("unexpected Status format: %#v", status))
+	}
+}
+
 func (response *Response) String() string {
-	switch response.Status {
+	switch status := response.Status; status {
 	case Starting:
 		if encodedMaddr := response.ListenerMaddr; encodedMaddr != nil {
 			return fmt.Sprintf("listening on: %s", encodedMaddr.Interface)
 		}
-		return "starting..."
+		return status.String()
 	case Ready:
-		return "ready"
+		return status.String()
 	case Stopping:
-		return fmt.Sprintf("stopping: %s", response.StopReason.String())
+		return fmt.Sprintf(
+			"%s: %s",
+			status.String(), response.StopReason.String(),
+		)
 	default:
-		if response.Info == "" {
-			panic(fmt.Errorf("unexpected response format: %#v",
-				response,
-			))
+		if response.Info != "" {
+			return response.Info
 		}
-		return response.Info
+		panic(fmt.Errorf("unexpected response format: %#v",
+			response,
+		))
 	}
 }
 
@@ -98,194 +116,231 @@ I.e.
 // ready for operations.
 //
 // The returned runtime function will block until the daemon stops running.
-func SplitResponse(ctx context.Context, response cmds.Response,
+// TODO: deprecate / remove
+func SplitResponse(response cmds.Response,
 	startupCb, runtimeCb ResponseCallback) (startupFn, runtimeFn func() error) {
-	var (
-		startupResponses = make(chan responsePair)
-		runtimeResponses = make(chan responsePair)
-	)
-	startupFn = makeStartupFunc(startupCb, startupResponses)
-	runtimeFn = makeRuntimeFunc(runtimeCb, runtimeResponses)
-
-	go dispatchResponses(ctx, response, startupResponses, runtimeResponses)
-
+	results := responsesFromCmds(response)
+	startupFn = func() error {
+		if err := UntilStarting(results, nil); err != nil {
+			return err
+		}
+		return UntilReady(results, startupCb)
+	}
+	runtimeFn = func() error { return UntilFinished(results, runtimeCb) }
 	return
 }
 
-// dispatchResponses reads the cmds.Response and
-// sends our own Response type to the input channels.
-// Dispatching to the startup channel during daemon startup,
-// with the remainder going to the runtime channel afterwards.
-func dispatchResponses(ctx context.Context, response cmds.Response,
-	startup, runtime chan<- responsePair) {
-	defer func() {
-		// If we return early for whatever reason -
-		// make sure the output channels get closed.
-		for _, ch := range [...]chan<- responsePair{runtime, startup} {
-			if ch != nil {
-				close(ch)
+func UntilStarting(results <-chan ResponseResult, callback ResponseCallback) error {
+	for result := range results {
+		if err := result.error; err != nil {
+			return err
+		}
+		if result.Status == Starting {
+			if result.ListenerMaddr != nil {
+				return fmt.Errorf("expected ListenerMaddr to be nil on process starting")
+			}
+			return nil
+		}
+		if callback != nil {
+			if err := callback(result.Response); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func UntilReady(results <-chan ResponseResult, callback ResponseCallback) error {
+	for result := range results {
+		if err := result.error; err != nil {
+			return err
+		}
+		switch result.Status {
+		case Ready:
+			return nil
+		case Starting:
+			maddr := result.ListenerMaddr
+			if maddr == nil {
+				return fmt.Errorf(
+					"expected ListenerMaddr to be populated"+
+						"\n\tgot:%#v", result.Response)
+			}
+		}
+		if callback != nil {
+			if err := callback(result.Response); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func UntilFinished(results <-chan ResponseResult, callback ResponseCallback) error {
+	for result := range results {
+		if err := result.error; err != nil {
+			return err
+		}
+		if callback != nil {
+			if err := callback(result.Response); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// TODO: export?
+func responsesFromCmds(cmdsResponse cmds.Response) <-chan ResponseResult {
+	results := make(chan ResponseResult, cmdsResponse.Length())
+	go func() {
+		defer close(results)
+		for {
+			untypedResponse, err := cmdsResponse.Next()
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					return
+				}
+				results <- ResponseResult{error: err}
+				return
+			}
+			response, err := assertResponse(untypedResponse)
+			results <- ResponseResult{
+				Response: response,
+				error:    err,
 			}
 		}
 	}()
+	return results
+}
 
-	responses := (chan<- responsePair)(startup)
-	for {
-		untypedResponse, err := response.Next()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
+func assertResponse(untypedResponse interface{}) (*Response, error) {
+	typedResponse, isResponseType := untypedResponse.(*Response)
+	if !isResponseType {
+		return nil, cmds.Errorf(cmds.ErrImplementation,
+			"cmds emitter sent unexpected type: %#v", untypedResponse,
+		)
+	}
+	return typedResponse, nil
+}
+
+func ResponsesFromReaders(ctx context.Context, input, errInput io.Reader) <-chan ResponseResult {
+	return spliceResultsAndErrs(
+		validateResponses(responsesFromReader(ctx, input)),
+		errorsFromReader(ctx, errInput),
+	)
+}
+
+func spliceResultsAndErrs(responses <-chan ResponseResult, errs <-chan error) <-chan ResponseResult {
+	results := make(chan ResponseResult)
+	go func() {
+		defer close(results)
+		for responses != nil ||
+			errs != nil {
+			select {
+			case err, ok := <-errs:
+				if !ok {
+					errs = nil
+					continue
+				}
+				results <- ResponseResult{error: err}
+			case result, ok := <-responses:
+				if !ok {
+					responses = nil
+					continue
+				}
+				results <- result
+			}
+		}
+	}()
+	return results
+}
+
+func responsesFromReader(ctx context.Context,
+	stdout io.Reader) <-chan ResponseResult {
+	results := make(chan ResponseResult)
+	go func() {
+		defer close(results)
+		serviceDecoder := json.NewDecoder(stdout)
+		for {
+			serviceResponse := new(Response)
+			if err := serviceDecoder.Decode(serviceResponse); err != nil {
+				if !errors.Is(err, io.EOF) {
+					select {
+					case results <- ResponseResult{error: err}:
+					case <-ctx.Done():
+					}
+				}
 				return
 			}
 			select {
-			case responses <- responsePair{error: err}:
+			case results <- ResponseResult{Response: serviceResponse}:
 			case <-ctx.Done():
+				return
 			}
-			return
 		}
-
-		typedResponse, isResponse := untypedResponse.(*Response)
-		if !isResponse {
-			err := cmds.Errorf(cmds.ErrImplementation,
-				"emitter sent unexpected type: %#v", untypedResponse,
-			)
-			select {
-			case responses <- responsePair{error: err}:
-			case <-ctx.Done():
-			}
-			return
-		}
-
-		select {
-		case responses <- responsePair{Response: typedResponse}:
-		case <-ctx.Done():
-			return
-		}
-
-		// Startup is finished, stop sending to its channel
-		// and start directing responses to the runtime channel.
-		if typedResponse.Status == Ready {
-			close(startup)
-			startup = nil
-			responses = (chan<- responsePair)(runtime)
-		}
-	}
+	}()
+	return results
 }
 
-// makeStartupFunc validates the startup sequence
-// while relaying valid responses to the provided callback.
-func makeStartupFunc(callback ResponseCallback, responses <-chan responsePair) func() error {
-	var sawStarting, sawReady bool
-	return func() error {
-		if sawReady {
-			return errors.New("response is already beyond the startup sequence")
-		}
-
+func validateResponses(responses <-chan ResponseResult) <-chan ResponseResult {
+	var (
+		sawResponse bool
+		results     = make(chan ResponseResult, cap(responses))
+	)
+	go func() {
+		defer close(results)
 		for response := range responses {
-			var (
-				err      = response.error
-				response = response.Response
-			)
-			if err != nil {
-				return err
+			if response.error != nil {
+				results <- response
+				continue
 			}
-			isStarting, isReady, err := checkResponse(response, sawStarting, sawReady)
-			if err != nil {
-				return err
+			response := response.Response
+			if err := validateResponse(sawResponse, response); err != nil {
+				results <- ResponseResult{error: err}
+				continue
 			}
-			if isStarting {
-				sawStarting = true
-			}
-			if isReady {
-				sawReady = true
-			}
-			if callback != nil {
-				if err := callback(response); err != nil {
-					return err
-				}
-			}
+			sawResponse = true
 		}
-		if !sawReady {
-			return fmt.Errorf("%w: response closed before startup sequence finished",
-				ErrStartupSequence)
-		}
-		return nil
-	}
+	}()
+	return results
 }
 
-func checkResponse(response *Response, sawStarting, sawReady bool) (starting, ready bool, err error) {
+func validateResponse(firstResponse bool, response *Response) (err error) {
 	switch response.Status {
 	case Starting:
-		if err = checkResponseStarting(response, sawStarting); err != nil {
-			return
+		encodedMaddr := response.ListenerMaddr
+		if !firstResponse &&
+			encodedMaddr == nil {
+			// Expected to be nil only on the first response.
+			err = errors.New("response did not contain listener maddr")
 		}
-		starting = true
-	case Ready:
-		if err = checkResponseReady(response, sawStarting, sawReady); err != nil {
-			return
-		}
-		ready = true
 	case Status(0):
 		if response.Info == "" {
-			err = fmt.Errorf("%w:\n\tgot empty/malformed response during startup: %#v",
-				ErrStartupSequence, response)
+			err = errors.New("malformed message / empty values")
 		}
+	case Ready:
 	default:
-		err = fmt.Errorf("%w:\n\tgot unexpected response during startup: %#v",
-			ErrStartupSequence, response)
+		err = fmt.Errorf("unexpected message: %#v", response)
 	}
 	return
 }
 
-func checkResponseStarting(response *Response, alreadySeen bool) error {
-	if response.ListenerMaddr == nil {
-		if alreadySeen {
-			return fmt.Errorf("%w:\n\treceived \"starting\" twice",
-				ErrStartupSequence)
-		}
-	}
-	return nil
-}
-
-func checkResponseReady(response *Response, sawStarting, sawReady bool) error {
-	if !sawStarting {
-		return fmt.Errorf("%w:\n\tgot response before \"starting\": %#v",
-			ErrStartupSequence, response)
-	}
-	if sawReady {
-		return fmt.Errorf("%w:\n\t received \"ready\" twice",
-			ErrStartupSequence)
-	}
-	return nil
-}
-
-// makeRuntimeFunc does loose validation of responses
-// and relays them to the provided callback.
-func makeRuntimeFunc(callback ResponseCallback, responses <-chan responsePair) func() error {
-	var runtimeFinished bool
-	return func() error {
-		if runtimeFinished {
-			return errors.New("response is already beyond the runtime sequence")
-		}
-
-		for response := range responses {
-			if err := response.error; err != nil {
-				return err
+func errorsFromReader(ctx context.Context, errorReader io.Reader) <-chan error {
+	errs := make(chan error)
+	go func() {
+		defer close(errs)
+		scanner := bufio.NewScanner(errorReader)
+		for {
+			if !scanner.Scan() {
+				return
 			}
-			response := response.Response
-
-			switch response.Status {
-			case Starting, Ready:
-				return fmt.Errorf("%w:\n\tgot unexpected response during runtime:\n\t%#v",
-					ErrStartupSequence, response)
-			default:
-				if callback != nil {
-					if err := callback(response); err != nil {
-						return err
-					}
-				}
+			text := scanner.Text()
+			select {
+			case errs <- fmt.Errorf("got error from stderr: %s", text):
+			case <-ctx.Done():
+				return
 			}
 		}
-
-		runtimeFinished = true
-		return nil
-	}
+	}()
+	return errs
 }

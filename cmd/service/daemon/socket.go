@@ -3,15 +3,21 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
 )
+
+type closer func() error
+
+func (fn closer) Close() error { return fn() }
 
 type listenResult struct {
 	manet.Listener
@@ -19,180 +25,89 @@ type listenResult struct {
 }
 
 func listenersFromCmds(ctx context.Context, request *cmds.Request,
-	maddrs ...multiaddr.Multiaddr) <-chan listenResult {
-	var (
-		cmdsListeners = listenersFromCmdExtra(ctx, request.Command.Extra)
-		results       = cmdsListeners
-	)
+	maddrs ...multiaddr.Multiaddr) (<-chan listenResult, error) {
+	results, err := listenersFromCmdsExtra(ctx, request.Command.Extra)
+	if err != nil {
+		return nil, err
+	}
 	if len(maddrs) != 0 {
-		argListeners := listenersFromMaddrs(ctx, maddrsToChan(ctx, maddrs...))
+		argListeners := listenersFromMaddrs(generateMaddrs(ctx, maddrs...))
 		if results == nil {
 			results = argListeners
+		} else {
+			results = mergeListenerResults(results, argListeners)
 		}
-		results = mergeListenerResults(results, argListeners)
 	}
-	return results
+	return results, nil
 }
 
-func maddrsToChan(ctx context.Context,
+func generateMaddrs(ctx context.Context,
 	maddrs ...multiaddr.Multiaddr) <-chan multiaddr.Multiaddr {
 	maddrChan := make(chan multiaddr.Multiaddr, len(maddrs))
 	go func() {
 		defer close(maddrChan)
 		for _, maddr := range maddrs {
-			if ctx.Err() != nil {
+			select {
+			case maddrChan <- maddr:
+			case <-ctx.Done():
 				return
 			}
-			maddrChan <- maddr
 		}
 	}()
 	return maddrChan
 }
 
-func listenersFromMaddrs(ctx context.Context,
-	maddrs <-chan multiaddr.Multiaddr) <-chan listenResult {
+func listenersFromMaddrs(maddrs <-chan multiaddr.Multiaddr) <-chan listenResult {
 	results := make(chan listenResult, cap(maddrs))
 	go func() {
 		defer close(results)
 		for maddr := range maddrs {
-			var result listenResult
-			result.Listener, result.error = manet.Listen(maddr)
-			select {
-			case results <- result:
-			case <-ctx.Done():
-				result.Close()
-				return
-			}
+			listener, err := manet.Listen(maddr)
+			results <- listenResult{Listener: listener, error: err}
 		}
 	}()
 	return results
 }
 
-// TODO: splitup more; specifically the relation between maddrs, listeners, and sockdirs
-// we want to go from maddr -> listener directly
-// not listener -> listener (at least here)
-// So maddr -> needsPrep? -> prepper -> listener -> here
-// So maddr -> doesn'tNeedsPrep? -> listener -> here
-// if cancled now, close listener
-// in the other loops do the same pattern implicitly.
-//
-// TODO: doc or remove
-// (if required) a cleanup function will run at end of each listeners close method
-func setupAndListen(ctx context.Context,
-	maddrs <-chan multiaddr.Multiaddr) <-chan listenResult {
+func initializeAndListen(maddrs <-chan multiaddr.Multiaddr) <-chan listenResult {
 	var (
-		results = make(chan listenResult, cap(maddrs))
-		sendErr = func(err error) { results <- listenResult{error: err} }
+		netMaddrs  = make(chan multiaddr.Multiaddr)
+		netSockets = listenersFromMaddrs(netMaddrs)
+
+		udsMaddrs  = make(chan multiaddr.Multiaddr)
+		udsSockets = initalizeAndListenUnixMaddrs(udsMaddrs)
 	)
 	go func() {
-		defer close(results)
+		defer close(netMaddrs)
+		defer close(udsMaddrs)
 		for maddr := range maddrs {
-			if ctx.Err() != nil {
-				fmt.Println("DBG: listen did nothing before cancel")
-				return
-			}
-			var (
-				socketCleanup       cleanupFunc
-				maybeCleanupAndSend = func(err error) {
-					if socketCleanup != nil {
-						cErr := socketCleanup()
-						if cErr != nil {
-							cErr = fmt.Errorf("could not cleanup for socket: %w", cErr)
-						}
-						if err == nil {
-							err = cErr
-						} else {
-							err = fmt.Errorf("%w\n\t%s", err, cErr)
-						}
-					}
-					if err != nil {
-						sendErr(err)
-					}
-				}
-				unixSocketPath = getFirstUnixSocketPath(maddr)
-				sockHasUDSPath = unixSocketPath != ""
-			)
-			if sockHasUDSPath {
-				socketDir := filepath.Dir(unixSocketPath)
-				rmDir, err := makeDir(socketDir)
-				if err != nil {
-					maybeCleanupAndSend(err)
-					continue
-				}
-				socketCleanup = rmDir
-			}
-			if ctx.Err() != nil {
-				fmt.Println("DBG: listen made dir before cancel")
-				maybeCleanupAndSend(nil)
-				return
-			}
-
-			listener, err := manet.Listen(maddr)
-			if err != nil {
-				maybeCleanupAndSend(err)
-				continue
-			}
-			if socketCleanup != nil {
-				listener = listenerWithCleanup{
-					Listener:    listener,
-					cleanupFunc: socketCleanup,
+			relay := netMaddrs
+			for _, protocol := range maddr.Protocols() {
+				if protocol.Code == multiaddr.P_UNIX {
+					relay = udsMaddrs
 				}
 			}
-			socketCleanup = listener.Close
-
-			if ctx.Err() != nil {
-				fmt.Println("DBG: listen made listener before cancel")
-				maybeCleanupAndSend(err)
-				return
-			}
-			results <- listenResult{Listener: listener}
+			relay <- maddr
 		}
 	}()
-
-	return results
+	return mergeListenerResults(udsSockets, netSockets)
 }
 
-func makeDir(path string) (rmDir cleanupFunc, err error) {
-	if err = os.Mkdir(path, 0o775); err != nil {
-		return
-	}
-	// rmDir = func() error { return os.Remove(path) }
-	rmDir = func() error {
-		fmt.Println("rmDir called from:")
-		for i := 1; ; i++ {
-			_, f, l, ok := runtime.Caller(i)
-			if !ok {
-				break
-			}
-			f = filepath.Base(f)
-			fmt.Println("\t", f, l)
-		}
-		return os.Remove(path)
-	}
-	return
+func initalizeAndListenUnixMaddrs(maddrs <-chan multiaddr.Multiaddr) <-chan listenResult {
+	return listenersFromCloserMaddrs(directoryClosersFromMaddrs(maddrs))
 }
 
-type (
-	cleanupFunc func() error
-
-	listenerWithCleanup struct {
-		manet.Listener
-		cleanupFunc
-	}
-)
+type listenerWithCleanup struct {
+	manet.Listener
+	closer io.Closer
+}
 
 func (listener listenerWithCleanup) Close() error {
 	err := listener.Listener.Close()
 	if err != nil {
 		err = fmt.Errorf("could not close listener: %w", err)
 	}
-	cleanup := listener.cleanupFunc
-	if cleanup == nil {
-		return err
-	}
-
-	cErr := cleanup()
-	if cErr != nil {
+	if cErr := listener.closer.Close(); cErr != nil {
 		cErr = fmt.Errorf("could not cleanup after listener: %w", err)
 		if err == nil {
 			return cErr
@@ -202,40 +117,99 @@ func (listener listenerWithCleanup) Close() error {
 	return err
 }
 
-func bridgeListenerResults(input <-chan <-chan listenResult,
-) <-chan listenResult {
-	output := make(chan listenResult)
+func listenersFromCloserMaddrs(closerResults <-chan maddrWithCloser) <-chan listenResult {
+	results := make(chan listenResult, cap(closerResults))
 	go func() {
-		defer close(output)
-		for listenResults := range input {
-			for listenResult := range listenResults {
-				output <- listenResult
+		defer close(results)
+		for result := range closerResults {
+			if err := result.error; err != nil {
+				results <- listenResult{error: err}
+				continue
+			}
+			var (
+				closer  = result.Closer
+				cleanup = closer.Close
+				maddr   = result.Multiaddr
+			)
+			listener, err := manet.Listen(maddr)
+			if err != nil {
+				if cErr := cleanup(); cErr != nil {
+					err = fmt.Errorf("%w - could not cleanup for socket: %s",
+						err, cErr)
+				}
+			}
+			results <- listenResult{
+				Listener: listenerWithCleanup{
+					Listener: listener,
+					closer:   closer,
+				},
+				error: err,
 			}
 		}
 	}()
-	return output
+	return results
 }
 
-func mergeListenerResults(car, cdr <-chan listenResult) <-chan listenResult {
-	combined := make(chan listenResult, cap(car)+cap(cdr))
+type maddrWithCloser struct {
+	multiaddr.Multiaddr
+	io.Closer
+	error
+}
+
+func directoryClosersFromMaddrs(maddrs <-chan multiaddr.Multiaddr) <-chan maddrWithCloser {
+	results := make(chan maddrWithCloser, cap(maddrs))
 	go func() {
-		defer close(combined)
-		for v := range car {
-			combined <- v
-		}
-		for v := range cdr {
-			combined <- v
+		defer close(results)
+		for maddr := range maddrs {
+			const permissions = 0o775
+			var (
+				unixSocketPath = getFirstUnixSocketPath(maddr)
+				socketDir      = filepath.Dir(unixSocketPath)
+			)
+			results <- maddrWithCloser{
+				Multiaddr: maddr,
+				error:     os.Mkdir(socketDir, permissions),
+				Closer:    closer(func() error { return os.Remove(socketDir) }),
+			}
 		}
 	}()
-	return combined
+	return results
 }
 
-func getListeners(ctx context.Context, request *cmds.Request,
-	maddrs ...multiaddr.Multiaddr) <-chan listenResult {
-	if listeners := listenersFromCmds(ctx, request, maddrs...); listeners != nil {
-		return listeners
+func mergeListenerResults(sources ...<-chan listenResult) <-chan listenResult {
+	type (
+		source   = <-chan listenResult
+		sourceRw = chan listenResult
+	)
+	var (
+		mergedWg  sync.WaitGroup
+		mergedCh  = make(sourceRw)
+		mergeFrom = func(ch source) {
+			defer mergedWg.Done()
+			for value := range ch {
+				mergedCh <- value
+			}
+		}
+	)
+	mergedWg.Add(len(sources))
+	for _, source := range sources {
+		go mergeFrom(source)
 	}
-	return defaultListeners(ctx)
+	go func() { mergedWg.Wait(); close(mergedCh) }()
+
+	return mergedCh
+}
+
+func generateListeners(ctx context.Context, request *cmds.Request,
+	maddrs ...multiaddr.Multiaddr) (<-chan listenResult, error) {
+	listeners, err := listenersFromCmds(ctx, request, maddrs...)
+	if err != nil {
+		return nil, err
+	}
+	if listeners != nil {
+		return listeners, nil
+	}
+	return listenersFromDefaults(ctx)
 }
 
 // TODO: We need a way to pass listeners from `service` to `daemon`.
@@ -251,29 +225,21 @@ func getListeners(ctx context.Context, request *cmds.Request,
 // (from within `service`, after copying `daemon` add the listeners, then call execute on that)
 // But this is not a proper solution, it's only temporary to not break the existing feature
 // while separating the commands implementations.
-func listenersFromCmdExtra(_ context.Context,
-	cmdsExtra *cmds.Extra) <-chan listenResult {
-	cmdListeners, provided := cmdsExtra.GetValue("magic")
+func listenersFromCmdsExtra(ctx context.Context,
+	cmdsExtra *cmds.Extra) (<-chan listenResult, error) {
+	cmdsListeners, provided := cmdsExtra.GetValue("magic")
 	if !provided {
-		return nil
+		return nil, nil
 	}
-
-	listeners, ok := cmdListeners.([]manet.Listener)
+	listeners, ok := cmdsListeners.([]manet.Listener)
 	if !ok {
-		singleErr := func(err error) <-chan listenResult {
-			singleErr := make(chan listenResult, 1)
-			singleErr <- listenResult{error: err}
-			close(singleErr)
-			return singleErr
-		}
-
-		return singleErr(fmt.Errorf(
+		return nil, fmt.Errorf(
 			"Command.Extra value has wrong type"+
 				"\n\texpected %T"+
 				"\n\tgot: %T",
 			listeners,
-			cmdListeners,
-		))
+			cmdsListeners,
+		)
 	}
 
 	// TODO: replace this direct copy to something like (fd=>listener)
@@ -289,22 +255,23 @@ func listenersFromCmdExtra(_ context.Context,
 	go func() {
 		defer close(results)
 		for _, listener := range listeners {
-			results <- listenResult{Listener: listener}
+			select {
+			case results <- listenResult{Listener: listener}:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 
-	return results
+	return results, nil
 }
 
-func defaultListeners(ctx context.Context) <-chan listenResult {
+func listenersFromDefaults(ctx context.Context) (<-chan listenResult, error) {
 	maddrs, err := UserServiceMaddrs()
 	if err != nil {
-		single := make(chan listenResult, 1)
-		single <- listenResult{error: err}
-		close(single)
-		return single
+		return nil, err
 	}
-	return setupAndListen(ctx, maddrsToChan(ctx, maddrs...))
+	return initializeAndListen(generateMaddrs(ctx, maddrs...)), nil
 }
 
 // getFirstUnixSocketPath returns the path

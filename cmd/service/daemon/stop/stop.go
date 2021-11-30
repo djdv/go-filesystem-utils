@@ -11,7 +11,7 @@ import (
 
 const Name = "stop"
 
-// Stop requests that the running service instance ceases operations.
+// Command `stop` requests that the running service instance ceases operations.
 var Command = &cmds.Command{
 	Helptext: cmds.HelpText{
 		Tagline: "Stop the currently running service instance.",

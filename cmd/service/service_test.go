@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"math/rand"
 	"os"
 	"testing"
 	"time"
@@ -64,7 +65,13 @@ func (sm *serviceMock) Run() error {
 	if err := sm.service.Start(sm); err != nil {
 		return err
 	}
-	<-time.After(4 * time.Second)
+	const runtimeMax = int(8 * time.Second)
+	var (
+		seed    = rand.NewSource(time.Now().UnixNano())
+		rng     = rand.New(seed)
+		runtime = time.Duration(rng.Intn(int(runtimeMax)))
+	)
+	<-time.After(runtime)
 	return sm.service.Stop(sm)
 }
 

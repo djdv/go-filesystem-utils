@@ -15,20 +15,22 @@ import (
 // setupStopper primes the stopper interface
 // and emits it's name to the client.
 func setupStopper(ctx context.Context,
-	request *cmds.Request, emitter cmds.ResponseEmitter,
-	serviceEnv serviceenv.Environment) (stopenv.Environment, <-chan stopenv.Reason, error) {
-	stopper, stopReasons, err := initStopper(ctx, serviceEnv)
+	request *cmds.Request, runEnv *runEnv) (<-chan stopenv.Reason, error) {
+	stopper, stopReasons, err := makeStopper(ctx, runEnv.Environment)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	stopPath := append(request.Path, stop.Name)
-	if err := emitStopListener(emitter, stopPath...); err != nil {
-		return nil, nil, err
+	runEnv.stopper = stopper
+
+	stopperAPIPath := append(request.Path, stop.Name)
+	if err := runEnv.Emit(stopListenerResponse(stopperAPIPath...)); err != nil {
+		return nil, err
 	}
-	return stopper, stopReasons, nil
+
+	return stopReasons, nil
 }
 
-func initStopper(ctx context.Context,
+func makeStopper(ctx context.Context,
 	serviceEnv serviceenv.Environment) (stopenv.Environment,
 	<-chan stopenv.Reason, error) {
 	stopper := serviceEnv.Daemon().Stopper()
@@ -63,46 +65,43 @@ func stopOnSignal(ctx context.Context,
 	return errs
 }
 
-func listenForRequestCancel(ctx context.Context, request *cmds.Request,
+func stopOnRequestCancel(ctx context.Context, request *cmds.Request,
 	stopper stopenv.Environment, stopReason stopenv.Reason) <-chan error {
 	var (
 		triggerCtx = request.Context
 		stop       = stopper.Stop
-		errs       = make(chan error)
+		errs       = make(chan error, 1)
 	)
 	go func() {
 		defer close(errs)
 		select {
 		case <-triggerCtx.Done():
-			if err := stop(stopReason); err != nil {
-				errs <- err
-			} else {
-				errs <- triggerCtx.Err()
+			if sErr := stop(stopReason); sErr != nil {
+				errs <- sErr
 			}
 		case <-ctx.Done():
 		}
 	}()
-
 	return errs
 }
 
-func listenForIdleEvent(ctx context.Context, emitter cmds.ResponseEmitter,
-	stopper stopenv.Environment, interval time.Duration) (<-chan error, error) {
+func stopOnIdleEvent(ctx context.Context,
+	runEnv *runEnv, interval time.Duration) taskErr {
 	// NOTE [placeholder]: This build is never busy.
 	// The ipc env should be used to query activity when implemented.
 	checkIfBusy := func() (bool, error) {
 		return false, nil
 	}
-	if err := emitTickerListener(emitter,
-		interval, "is-service-idle-every"); err != nil {
-		return nil, err
+	if err := runEnv.Emit(tickerListenerResponse(interval, "is-service-idle-every")); err != nil {
+		return taskErr{foreground: err}
 	}
-	return stopOnIdle(ctx, stopper, interval, checkIfBusy), nil
+	return taskErr{
+		background: stopOnIdle(ctx, runEnv.stopper, interval, checkIfBusy),
+	}
 }
 
 type isBusyFunc func() (bool, error)
 
-// TODO: review; jank?
 func stopOnIdle(ctx context.Context, stopper stopenv.Environment,
 	checkInterval time.Duration, checkIfBusy isBusyFunc) <-chan error {
 	errs := make(chan error, 1)

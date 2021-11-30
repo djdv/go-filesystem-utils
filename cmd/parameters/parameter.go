@@ -137,21 +137,25 @@ func NewParameter(description string, options ...ParameterOption) Parameter {
 			panic("runtime could not get program counter address for function")
 		}
 		var (
+			// Documentation refers to this as a
 			// "package path-qualified function name"
 			ppqfn = runtime.FuncForPC(pc).Name()
 			// `pkgName.referenceName`
-			pair = strings.Split(path.Base(ppqfn), ".")
+			namePair = strings.Split(path.Base(ppqfn), ".")
 		)
-		if len(pair) != 2 {
+		if len(namePair) != 2 {
 			panic(fmt.Sprintf(
-				"runtime returned non-standard function name - expecting format `pkg.funcName` got `%s`",
-				ppqfn))
+				"runtime returned non-standard function name"+
+					"\n\texpecting format: `$pkgName.$funcName`"+
+					"\n\tgot: `%s`",
+				ppqfn,
+			))
 		}
 		if !namespace {
-			param.namespace = pair[0]
+			param.namespace = namePair[0]
 		}
 		if !name {
-			param.name = pair[1]
+			param.name = namePair[1]
 		}
 	}
 	if !envPrefix {

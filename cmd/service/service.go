@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -198,14 +197,10 @@ func (svc *daemonCmdWrapper) Start(svcIntf service.Service) error {
 			return sysLog.Info(response.String())
 		}
 
-		responseCtx, responseCancel = context.WithCancel(context.Background())
-		startup, runtime            = daemon.SplitResponse(responseCtx, daemonResponse,
-			startupHandler, runtimeHandler,
-		)
+		startup, runtime = daemon.SplitResponse(daemonResponse, startupHandler, runtimeHandler)
 	)
 
 	if err := startup(); err != nil {
-		responseCancel()
 		return logErr(sysLog, err)
 	}
 
@@ -214,7 +209,6 @@ func (svc *daemonCmdWrapper) Start(svcIntf service.Service) error {
 	runErrs := make(chan error, 1)
 	go func() {
 		defer close(runErrs)
-		defer responseCancel()
 		if runErr := runtime(); err != nil {
 			select {
 			case runErrs <- runErr:
