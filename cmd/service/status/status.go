@@ -2,6 +2,7 @@ package status
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/service/host"
@@ -24,15 +25,61 @@ func (*controller) Stop(service.Service) error  { return errControlOnly }
 const Name = "status"
 
 type (
-	SystemController struct {
-		Error error
-		service.Status
-	}
 	Response struct {
 		SystemController
 		Listeners []multiaddr.Multiaddr
 	}
+	SystemController struct {
+		Error error
+		service.Status
+	}
 )
+
+func (r *Response) String() string {
+	var sb strings.Builder
+	sb.WriteString("Daemon:")
+	listeners := r.Listeners
+	if listeners == nil {
+		sb.WriteString("\n\tNo listeners")
+	}
+	for _, listenerMaddr := range listeners {
+		sb.WriteString("\n\tListening on: " + listenerMaddr.String())
+	}
+	sb.WriteRune('\n')
+
+	sb.WriteString(r.SystemController.String())
+	return sb.String()
+}
+
+func (sc *SystemController) String() string {
+	var (
+		sb                  strings.Builder
+		err                 = sc.Error
+		serviceNotInstalled = err != nil &&
+			errors.Is(err, service.ErrNotInstalled)
+	)
+	status, knownCode := map[service.Status]string{
+		service.StatusRunning: "Running",
+		service.StatusStopped: "Stopped",
+	}[sc.Status]
+	if !knownCode {
+		if serviceNotInstalled {
+			status = "Not installed"
+		} else {
+			status = "Unknown"
+		}
+	}
+	sb.WriteString(
+		"Service controller:" +
+			"\n\tStatus: " + status,
+	)
+	if err != nil && !serviceNotInstalled {
+		sb.WriteString("\n\tError: " + err.Error())
+	}
+
+	sb.WriteRune('\n')
+	return sb.String()
+}
 
 // Status queries the status of the service daemon
 // and the operating system's own service manager.
@@ -43,14 +90,14 @@ var Command = &cmds.Command{
 	NoRemote: true,
 	Encoders: cmds.Encoders,
 	Type:     Response{},
-	Run: func(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
+	Run: func(request *cmds.Request, emitter cmds.ResponseEmitter, _ cmds.Environment) error {
 		ctx := request.Context
 
 		settings, err := parseSettings(ctx, request)
 		if err != nil {
 			return err
 		}
-		serviceConfig := host.ServiceConfig(&settings.host)
+		serviceConfig := host.ServiceConfig(&settings.Host)
 
 		// Query the host system service manager.
 		serviceClient, err := service.New((*controller)(nil), serviceConfig)
@@ -68,15 +115,9 @@ var Command = &cmds.Command{
 		// Query host system service servers.
 		serviceMaddrs := settings.ServiceMaddrs
 		if len(serviceMaddrs) == 0 {
-			userMaddrs, err := daemon.UserServiceMaddrs()
-			if err != nil {
+			if serviceMaddrs, err = defaultMaddrs(); err != nil {
 				return err
 			}
-			systemMaddrs, err := daemon.SystemServiceMaddrs()
-			if err != nil {
-				return err
-			}
-			serviceMaddrs = append(userMaddrs, systemMaddrs...)
 		}
 
 		listeners := make([]multiaddr.Multiaddr, 0, len(serviceMaddrs))
@@ -90,7 +131,7 @@ var Command = &cmds.Command{
 		}
 		if len(listeners) != 0 {
 			// NOTE: This only matters because we're encoding and emitting this struct.
-			// There's no point in processing an empty list versus nil.
+			// There's no point in sending+process an empty slice, versus not sending nil at all.
 			response.Listeners = listeners
 		}
 
@@ -98,14 +139,16 @@ var Command = &cmds.Command{
 	},
 }
 
-func statusString(stat service.Status) string {
-	if status, ok := map[service.Status]string{
-		service.StatusRunning: "Running",
-		service.StatusStopped: "Stopped",
-	}[stat]; ok {
-		return status
+func defaultMaddrs() ([]multiaddr.Multiaddr, error) {
+	userMaddrs, err := daemon.UserServiceMaddrs()
+	if err != nil {
+		return nil, err
 	}
-	return "Unknown"
+	systemMaddrs, err := daemon.SystemServiceMaddrs()
+	if err != nil {
+		return nil, err
+	}
+	return append(userMaddrs, systemMaddrs...), nil
 }
 
 /*

@@ -40,7 +40,7 @@ func GenerateCommands(actions ...string) []*cmds.Command {
 				if err != nil {
 					return err
 				}
-				serviceConfig := host.ServiceConfig(&settings.host)
+				serviceConfig := host.ServiceConfig(&settings.Host)
 				serviceClient, err := service.New((*controller)(nil), serviceConfig)
 				if err != nil {
 					return err

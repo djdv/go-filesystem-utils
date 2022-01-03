@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	fscmds "github.com/djdv/go-filesystem-utils/cmd"
 	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment/service"
 	stopenv "github.com/djdv/go-filesystem-utils/cmd/environment/service/daemon/stop"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
@@ -104,25 +103,20 @@ func systemServiceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env c
 	// errors get logged to `sysLog` internally by called functions/methods.
 	// FIXME: change this^ syslistenrs got reworked
 
-	_, maddrsProvided := request.Options[fscmds.ServiceMaddrs().CommandLine()]
+	// TODO: lint
+	//_, maddrsProvided := request.Options[fscmds.ServiceMaddrs().CommandLine()]
+	maddrsProvided := len(settings.ServiceMaddrs) > 0
 	serviceListeners, cleanup, err := systemListeners(maddrsProvided, sysLog)
 	if err != nil {
+		err = fmt.Errorf("sysListener returned err: %w", err)
 		return err
 	}
 
 	serviceInterface.sysLog = sysLog
 	serviceInterface.sysListeners = serviceListeners
+	serviceInterface.cleanup = cleanup
 
-	err = serviceController.Run()
-
-	if cleanupErr := cleanup(); cleanupErr != nil {
-		if err == nil {
-			err = cleanupErr
-		} else {
-			err = fmt.Errorf("%w - %s", err, cleanupErr)
-		}
-	}
-	return err
+	return serviceController.Run()
 }
 
 type (
@@ -133,7 +127,7 @@ type (
 
 		sysLog  service.Logger
 		runErrs <-chan error
-		cleanup func() error
+		cleanup cleanupFunc
 
 		sysListeners []manet.Listener
 	}
@@ -158,10 +152,13 @@ func (svc *daemonCmdWrapper) Start(svcIntf service.Service) error {
 		sysLog         = svc.sysLog
 		serviceRequest = svc.serviceRequest
 		ctx            = serviceRequest.Context
-		// NOTE: We use the absolute root of the request
-		// rather than the request's relative command.
-		// This is because the daemon will serve whatever the request's Root is.
-		// And thus impact request paths for other command, such as `service daemon stop`.
+		// NOTE: We use an absolute cmds path for the request,
+		// rather than just appending relative to request.Path.
+		// This is because the daemon will serve the passed in Root,
+		// not become a/the cmds Root itself, with this request as a base.
+		// I.e. `service daemon stop` needs to be valid,
+		// even if service is started from  `service start`
+		// (relative valid path would be: `service start daemon stop` which is wrong)
 		daemonCmdPath = []string{Name, daemon.Name}
 	)
 
@@ -183,7 +180,6 @@ func (svc *daemonCmdWrapper) Start(svcIntf service.Service) error {
 	daemonEmitter, daemonResponse := cmds.NewChanResponsePair(daemonRequest)
 	go serviceRequest.Root.Call(daemonRequest, daemonEmitter, svc.environment)
 
-	// Handle the responses from the daemon in 2 phases.
 	var (
 		startupHandler = func(response *daemon.Response) error {
 			return sysLog.Info(response.String())
@@ -200,21 +196,16 @@ func (svc *daemonCmdWrapper) Start(svcIntf service.Service) error {
 		startup, runtime = daemon.SplitResponse(daemonResponse, startupHandler, runtimeHandler)
 	)
 
-	if err := startup(); err != nil {
-		return logErr(sysLog, err)
-	}
-
 	// Daemon started successfully.
 	// Handle any post-init messages from the daemon in the background.
-	runErrs := make(chan error, 1)
+	runErrs := make(chan error, 2)
 	go func() {
 		defer close(runErrs)
+		if startupErr := startup(); err != nil {
+			runErrs <- startupErr
+		}
 		if runErr := runtime(); err != nil {
-			select {
-			case runErrs <- runErr:
-			case <-ctx.Done():
-				return
-			}
+			runErrs <- runErr
 		}
 		if !sawStopResponse {
 			// Ask the system service manager to send our process its stop signal.
@@ -239,23 +230,28 @@ func (svc *daemonCmdWrapper) Start(svcIntf service.Service) error {
 	return nil
 }
 
-func (svc *daemonCmdWrapper) Stop(svcIntf service.Service) error {
+// FIXME: stop should have access to cleanupFn and it should call it if not nil
+func (svc *daemonCmdWrapper) Stop(svcIntf service.Service) (err error) {
 	var (
 		runErrs = svc.runErrs
 		sysLog  = svc.sysLog
+		cleanup = svc.cleanup
 	)
 	if runErrs == nil {
 		return logErr(sysLog, errors.New("service wasn't started"))
 	}
 	svc.runErrs = nil
+	svc.cleanup = nil
 
-	var (
-		err     error
-		stopper = svc.environment.Daemon().Stopper()
-	)
+	defer func() { // NOTE: Read+Writes to named return value.
+		err = cleanupAndLog(sysLog, cleanup, err)
+	}()
+
+	stopper := svc.environment.Daemon().Stopper()
 	select {
-	// If during runtime, env's Stop method was called
-	// or an error was encountered this case should not block.
+	// If an error was encountered during startup|runtime;
+	// env's Stop method should/will be called
+	// and this case will not block.
 	case runErr, ok := <-runErrs:
 		if !ok {
 			// Daemon stopped gracefully already.
@@ -264,13 +260,15 @@ func (svc *daemonCmdWrapper) Stop(svcIntf service.Service) error {
 		}
 		// Buffer the first error we got,
 		// there may be more coming from the channel.
-		err = logErr(sysLog, runErr)
+		// err = logErr(sysLog, runErr)
+		err = runErr
 
 	// Otherwise, we'll call env's Stop method ourself
 	// which will indirectly unblock runErr.
 	default:
 		if stopErr := stopper.Stop(stopenv.Requested); stopErr != nil {
-			return logErr(sysLog, stopErr)
+			err = stopErr
+			return
 		}
 	}
 
@@ -283,6 +281,28 @@ func (svc *daemonCmdWrapper) Stop(svcIntf service.Service) error {
 			err = fmt.Errorf("%w - %s", err, runErr)
 		}
 	}
+	return err
+}
 
+type cleanupFunc func() error
+
+func cleanupAndLog(sysLog service.Logger, cleanup cleanupFunc, err error) error {
+	err = errWithCleanup(err, cleanup)
+	if err != nil {
+		err = logErr(sysLog, err)
+	}
+	return err
+}
+
+func errWithCleanup(err error, cleanup cleanupFunc) error {
+	if cleanup == nil {
+		return err
+	}
+	if cleanupErr := cleanup(); cleanupErr != nil {
+		if err == nil {
+			return cleanupErr
+		}
+		return fmt.Errorf("%w - %s", err, cleanupErr)
+	}
 	return err
 }

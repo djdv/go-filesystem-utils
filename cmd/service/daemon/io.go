@@ -109,16 +109,13 @@ func (me *mutexEmitter) Emit(value interface{}) error {
 // E.g. emulated process "detatch" signal.
 func synchronizeWithStdio(emitter cmds.ResponseEmitter,
 	stdin, stdout, stderr *os.File) (cmds.ResponseEmitter, taskErr) {
-	isPipe, err := isPipe(stdin)
-	if err != nil {
-		return nil, taskErr{foreground: err}
-	}
-	if !isPipe {
+	if !isPipe(stdin) {
 		return emitter, taskErr{}
 	}
 
 	stdoutStat, err := stdout.Stat()
 	if err != nil {
+		err = fmt.Errorf("DBG stdio 1 :%w", err)
 		return nil, taskErr{foreground: err}
 	}
 	var (
@@ -166,13 +163,12 @@ func synchronizeWithStdio(emitter cmds.ResponseEmitter,
 	return muEmitter, taskErr{background: ioErrs}
 }
 
-func isPipe(file *os.File) (bool, error) {
+func isPipe(file *os.File) bool {
 	fStat, err := file.Stat()
 	if err != nil {
-		return false, err
+		return false
 	}
-	isPipe := fStat.Mode().Type()&os.ModeNamedPipe != 0
-	return isPipe, nil
+	return fStat.Mode().Type()&os.ModeNamedPipe != 0
 }
 
 func signalFromReader(signal stdioSignal, reader io.Reader) <-chan error {

@@ -9,10 +9,13 @@ import (
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
-type Settings struct {
-	fscmds.Settings
-	host host.Settings
-}
+type (
+	Host     = host.Settings
+	Settings struct {
+		fscmds.Settings
+		Host
+	}
+)
 
 func (*Settings) Parameters() parameters.Parameters {
 	var (

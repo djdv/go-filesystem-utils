@@ -32,9 +32,9 @@ func systemListeners(maddrsProvided bool, sysLog service.Logger) (serviceListene
 		return // Supply nothing; let the daemon instantiate from the arguments.
 	}
 
-	defer func() { // NOTE: Overwrites named return value.
+	defer func() { // NOTE: Read+Writes to named return value.
 		if err != nil {
-			err = logErr(sysLog, err)
+			err = cleanupAndLog(sysLog, cleanup, err)
 		}
 	}()
 
