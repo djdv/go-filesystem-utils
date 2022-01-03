@@ -1,7 +1,7 @@
 //go:build system
 // +build system
 
-package fscmds_test
+package service_test
 
 import (
 	"context"
@@ -17,6 +17,7 @@ import (
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/executor"
 	"github.com/djdv/go-filesystem-utils/cmd/service"
+	"github.com/djdv/go-filesystem-utils/cmd/service/status"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
 	hostservice "github.com/kardianos/service"
@@ -199,9 +200,9 @@ func TestServiceStatus(t *testing.T) {
 	})
 }
 
-func issueStatusRequest() (*service.ServiceStatus, error) {
+func issueStatusRequest() (*status.Response, error) {
 	ctx := context.Background()
-	statusRequest, err := cmds.NewRequest(ctx, []string{service.Name, "status"},
+	statusRequest, err := cmds.NewRequest(ctx, []string{service.Name, status.Name},
 		nil, nil, nil, testRoot)
 	if err != nil {
 		return nil, err
@@ -239,7 +240,7 @@ func issueStatusRequest() (*service.ServiceStatus, error) {
 		return nil, err
 	}
 
-	serviceStatus, ok := v.(*service.ServiceStatus)
+	serviceStatus, ok := v.(*status.Response)
 	if !ok {
 		return nil, fmt.Errorf("status value is wrong type\n\texpected:%T\n\tgot:%T %v",
 			serviceStatus, v, v)
