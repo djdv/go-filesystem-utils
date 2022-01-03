@@ -25,7 +25,7 @@ var Command = &cmds.Command{
 		Tagline: "Interact with the host system's service manager",
 	},
 	NoRemote: true,
-	Run:      systemServiceRun,
+	Run:      serviceRun,
 	Options:  parameters.CmdsOptionsFrom((*Settings)(nil)),
 	Encoders: formats.CmdsEncoders,
 	Type:     daemon.Response{},
@@ -53,7 +53,7 @@ var Command = &cmds.Command{
 	}(),
 }
 
-func systemServiceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
+func serviceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
 	if service.Interactive() {
 		return fmt.Errorf(
 			"This version of the daemon is intended for use by the host service manager."+
@@ -63,8 +63,7 @@ func systemServiceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env c
 	}
 
 	// NOTE: We don't have the system logger yet.
-	// These early errors will only show up in tests or a debugger.
-
+	// Early errors will only show up in tests or a debugger.
 	serviceEnv, err := serviceenv.Assert(env)
 	if err != nil {
 		return err
@@ -75,20 +74,15 @@ func systemServiceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env c
 	if err != nil {
 		return err
 	}
-	serviceConfig := host.ServiceConfig(&settings.Host)
 
-	// NOTE: The service API doesn't give us a way to get
-	// the system logger without the service interface.
-	// So we have to initialize in a cyclical manner.
-	// Constructing the interface from the struct,
-	// in order to fetch the logger via its method,
-	// then assigning the logger to the struct (further below).
-	serviceInterface := &daemonCmdWrapper{
-		serviceRequest: request,
-		emitter:        emitter,
-		environment:    serviceEnv,
-	}
-
+	var (
+		serviceInterface = &daemonCmdWrapper{
+			serviceRequest: request,
+			emitter:        emitter,
+			environment:    serviceEnv,
+		}
+		serviceConfig = host.ServiceConfig(&settings.Host)
+	)
 	serviceController, err := service.New(serviceInterface, serviceConfig)
 	if err != nil {
 		return err
@@ -99,12 +93,6 @@ func systemServiceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env c
 		return err
 	}
 
-	// NOTE: Below this line,
-	// errors get logged to `sysLog` internally by called functions/methods.
-	// FIXME: change this^ syslistenrs got reworked
-
-	// TODO: lint
-	//_, maddrsProvided := request.Options[fscmds.ServiceMaddrs().CommandLine()]
 	maddrsProvided := len(settings.ServiceMaddrs) > 0
 	serviceListeners, cleanup, err := systemListeners(maddrsProvided, sysLog)
 	if err != nil {
@@ -230,7 +218,6 @@ func (svc *daemonCmdWrapper) Start(svcIntf service.Service) error {
 	return nil
 }
 
-// FIXME: stop should have access to cleanupFn and it should call it if not nil
 func (svc *daemonCmdWrapper) Stop(svcIntf service.Service) (err error) {
 	var (
 		runErrs = svc.runErrs
