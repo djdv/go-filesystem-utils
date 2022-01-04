@@ -17,6 +17,9 @@ type (
 	}
 )
 
+// TODO: move pkg to either cmd/service/daemon/stop/env
+// or cmd/service/daemon/stop if possible. (May encounter dep cyclicals...)
+
 //go:generate stringer -type=Reason -linecomment
 const (
 	_         Reason = iota
