@@ -62,27 +62,12 @@ func TestExecutor(t *testing.T) {
 		name    string
 		cmdPath []string
 	}
-
 	const (
 		rootCmdName   = "root"
 		localCmdName  = "local"
 		remoteCmdName = "remote"
 	)
-
 	var (
-		root = &cmds.Command{
-			Subcommands: map[string]*cmds.Command{
-				localCmdName: {NoRemote: true},
-				remoteCmdName: {
-					NoLocal: true,
-					Run: func(*cmds.Request, cmds.ResponseEmitter, cmds.Environment) error {
-						return nil
-					},
-				},
-				service.Name: service.Command,
-			},
-		}
-
 		remoteCmdTest = testStruct{
 			name:    remoteCmdName,
 			cmdPath: []string{remoteCmdName},
@@ -99,6 +84,18 @@ func TestExecutor(t *testing.T) {
 			},
 			remoteCmdTest,
 		}
+		root = &cmds.Command{
+			Subcommands: map[string]*cmds.Command{
+				localCmdName: {NoRemote: true},
+				remoteCmdName: {
+					NoLocal: true,
+					Run: func(*cmds.Request, cmds.ResponseEmitter, cmds.Environment) error {
+						return nil
+					},
+				},
+				service.Name: service.Command,
+			},
+		}
 	)
 	t.Run("No options", func(t *testing.T) {
 		serviceMaddrs, err := daemon.UserServiceMaddrs()
@@ -107,15 +104,15 @@ func TestExecutor(t *testing.T) {
 		}
 
 		var (
-			launcherIndex = len(tests) - 1
-			subCmdEnv     = new(exec.Cmd)
+			procLauncherIndex = len(tests) - 1
+			subCmdEnv         = new(exec.Cmd)
 		)
 		for i, test := range tests {
 			t.Run(test.name+" request", func(t *testing.T) {
 				request, cmdsEnv := issueRequest(t, root, test.cmdPath, nil)
 				var (
 					execEnv    cmds.Environment
-					useProcEnv = i == launcherIndex
+					useProcEnv = i == procLauncherIndex
 				)
 				if useProcEnv {
 					execEnv = subCmdEnv
@@ -123,7 +120,7 @@ func TestExecutor(t *testing.T) {
 					execEnv = cmdsEnv
 				}
 
-				if _, err = executor.MakeExecutor(request, execEnv); err != nil {
+				if _, err := executor.MakeExecutor(request, execEnv); err != nil {
 					t.Fatal(err)
 				}
 

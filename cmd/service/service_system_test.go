@@ -258,7 +258,7 @@ func waitForUninstall(t *testing.T) {
 
 	const (
 		checkInterval = 100 * time.Millisecond
-		checkTimeout  = 10 * time.Second
+		checkTimeout  = 4 * time.Second
 	)
 	var (
 		ticker  = time.NewTicker(checkInterval)

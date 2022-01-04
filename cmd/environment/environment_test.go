@@ -22,14 +22,4 @@ func TestEnvironment(t *testing.T) {
 	if _, err := environment.MakeEnvironment(ctx, request); err != nil {
 		t.Fatal(err)
 	}
-
-	/* TODO: lint or assert with topmost env
-	if _, err := environment.CastEnvironment(env); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := environment.CastEnvironment(nil); err == nil {
-		t.Fatal("expected to error but did not - nil environment provided")
-	}
-	*/
 }

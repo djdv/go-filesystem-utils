@@ -19,11 +19,7 @@ import (
 
 var ErrCouldNotConnect = errors.New("could not connect to remote API")
 
-//TODO: [current] we need a reliable way for callers to shutdown (and WAIT) for the launched process
-// to exit. We can relay data to the caller via the request, maybe using Extra, or something.
-// To start, it can just be magic (hardcoded string keys for req.Extra)
-// req.extra[magic].WaitForSubProcExit()
-//
+// TODO check if comment is out of date
 // MakeExecutor constructs a cmds-lib executor; which parses the Request and
 // determines whether to execute the Command within the same local process,
 // or within a remote service instance's process.
@@ -119,13 +115,15 @@ func connectToOrLaunchDaemon(cmd *cmds.Command, env cmds.Environment,
 func getFirstConnection(args ...multiaddr.Multiaddr) (cmds.Executor, error) {
 	var errs []error
 	for result := range testConnection(generateMaddrs(args...)) {
-		if err := result.error; err == nil {
-			client, err := daemon.GetClient(result.Multiaddr)
-			if err == nil {
-				return client, nil
-			}
+		if err := result.error; err != nil {
 			errs = append(errs, err)
+			continue
 		}
+		client, err := daemon.GetClient(result.Multiaddr)
+		if err == nil {
+			return client, nil
+		}
+		errs = append(errs, err)
 	}
 	err := ErrCouldNotConnect
 	for _, e := range errs {
@@ -299,6 +297,7 @@ func getFirstServer(results <-chan daemon.ResponseResult) (multiaddr.Multiaddr, 
 	if serverMaddr == nil {
 		return nil, fmt.Errorf("daemon process did not return any server addresses")
 	}
+
 	return serverMaddr, nil
 }
 

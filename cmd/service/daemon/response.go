@@ -225,7 +225,7 @@ func assertResponse(untypedResponse interface{}) (*Response, error) {
 
 func ResponsesFromReaders(ctx context.Context, input, errInput io.Reader) <-chan ResponseResult {
 	return spliceResultsAndErrs(
-		validateResponses(responsesFromReader(ctx, input)),
+		responsesFromReader(ctx, input),
 		errorsFromReader(ctx, errInput),
 	)
 }
@@ -279,27 +279,25 @@ func responsesFromReader(ctx context.Context,
 			}
 		}
 	}()
-	return results
+	return validateResponses(results)
 }
 
 func validateResponses(responses <-chan ResponseResult) <-chan ResponseResult {
-	var (
-		sawResponse bool
-		results     = make(chan ResponseResult, cap(responses))
-	)
+	results := make(chan ResponseResult, cap(responses))
 	go func() {
 		defer close(results)
-		for response := range responses {
-			if response.error != nil {
-				results <- response
+		firstResponse := true
+		for result := range responses {
+			if err := result.error; err != nil {
+				results <- result
 				continue
 			}
-			response := response.Response
-			if err := validateResponse(sawResponse, response); err != nil {
+			if err := validateResponse(firstResponse, result.Response); err != nil {
 				results <- ResponseResult{error: err}
 				continue
 			}
-			sawResponse = true
+			firstResponse = false
+			results <- result
 		}
 	}()
 	return results
@@ -309,10 +307,13 @@ func validateResponse(firstResponse bool, response *Response) (err error) {
 	switch response.Status {
 	case Starting:
 		encodedMaddr := response.ListenerMaddr
+		if firstResponse &&
+			encodedMaddr != nil {
+			err = fmt.Errorf("did not expect maddr with starting response: %v", encodedMaddr)
+		}
 		if !firstResponse &&
 			encodedMaddr == nil {
-			// Expected to be nil only on the first response.
-			err = errors.New("response did not contain listener maddr")
+			err = errors.New("listener response did not contain listener maddr")
 		}
 	case Status(0):
 		if response.Info == "" {
