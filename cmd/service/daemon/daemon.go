@@ -13,6 +13,7 @@ import (
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
+	"github.com/djdv/go-filesystem-utils/filesystem"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -46,6 +47,7 @@ var Command = &cmds.Command{
 		Tagline: "Manages file system requests and instances.",
 	},
 	NoRemote: true,
+	PreRun:   daemonPreRun,
 	Run:      daemonRun,
 	Options:  parameters.CmdsOptionsFrom((*Settings)(nil)),
 	Encoders: formats.CmdsEncoders,
@@ -58,6 +60,10 @@ var Command = &cmds.Command{
 // CmdsPath returns the leading parameters
 // to invoke the daemon's `Run` method from `main`.
 func CmdsPath() []string { return []string{"service", "daemon"} }
+
+func daemonPreRun(*cmds.Request, cmds.Environment) error {
+	return filesystem.RegisterPathMultiaddr()
+}
 
 func daemonRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
 	ctx, cancel := context.WithCancel(context.Background())

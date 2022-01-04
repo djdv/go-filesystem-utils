@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/djdv/go-filesystem-utils/filesystem"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -295,6 +296,13 @@ func assignToArgument(argument *Argument, value interface{}) error {
 	var (
 		leftValue = reflect.ValueOf(argument.ValueReference).Elem()
 		leftType  = leftValue.Type()
+		toString  = func(value interface{}) (string, error) {
+			typedString, isString := value.(string)
+			if !isString {
+				return "", fmt.Errorf("expected %T, got %T", typedString, value)
+			}
+			return typedString, nil
+		}
 	)
 
 	// Special type cases.
@@ -355,6 +363,35 @@ func assignToArgument(argument *Argument, value interface{}) error {
 			}
 		}
 		value = maddrs
+	case *filesystem.ID:
+		fmt.Println("ID case")
+		if _, isId := value.(filesystem.ID); isId {
+			break // Direct assign, no parsing.
+		}
+
+		idString, err := toString(value)
+		if err != nil {
+			return err
+		}
+		id, err := filesystem.StringToID(idString)
+		if err != nil {
+			return err
+		}
+		value = id
+	case *filesystem.API:
+		if _, isApi := value.(filesystem.API); isApi {
+			break // Direct assign, no parsing.
+		}
+
+		apiString, err := toString(value)
+		if err != nil {
+			return err
+		}
+		api, err := filesystem.StringToAPI(apiString)
+		if err != nil {
+			return err
+		}
+		value = api
 	}
 
 	rightValue := reflect.ValueOf(value)
