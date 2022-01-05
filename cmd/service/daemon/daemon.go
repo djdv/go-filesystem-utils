@@ -23,7 +23,6 @@ type (
 		cmds.ResponseEmitter
 		*Settings
 		environment.Environment
-		stopper environment.Stopper // TODO:  duplicate of env?
 	}
 
 	taskErr struct {
@@ -67,11 +66,11 @@ func daemonPreRun(*cmds.Request, cmds.Environment) error {
 func daemonRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	runEnv, setupErrs := setupRunEnv(ctx, request, emitter, env)
+	runEnv, stopReasons, setupErrs := setupRunEnv(ctx, request, emitter, env)
 	if err := setupErrs.foreground; err != nil {
 		return err
 	}
-	return serverRun(ctx, cancel, request, runEnv)
+	return serverRun(ctx, cancel, request, runEnv, stopReasons)
 }
 
 func parseInputs(ctx context.Context, request *cmds.Request,
@@ -98,10 +97,10 @@ func parseCmds(ctx context.Context, request *cmds.Request,
 
 func setupRunEnv(ctx context.Context,
 	request *cmds.Request, emitter cmds.ResponseEmitter,
-	env cmds.Environment) (*runEnv, taskErr) {
+	env cmds.Environment) (*runEnv, <-chan environment.Reason, taskErr) {
 	settings, serviceEnv, err := parseInputs(ctx, request, env)
 	if err != nil {
-		return nil, taskErr{foreground: err}
+		return nil, nil, taskErr{foreground: err}
 	}
 	var (
 		muEmitter, ioErrs = synchronizeWithStdio(
@@ -115,18 +114,26 @@ func setupRunEnv(ctx context.Context,
 		}
 	)
 	if ioErrs.foreground != nil {
-		return nil, ioErrs
-	}
-	if err := muEmitter.Emit(startingResponse()); err != nil {
-		errs := taskErr{foreground: err, background: ioErrs.background}
-		return nil, errs
+		return nil, nil, ioErrs
 	}
 
-	return runEnv, ioErrs
+	stopReasons, err := setupStopper(ctx, request, runEnv)
+	if err != nil {
+		errs := taskErr{foreground: err, background: ioErrs.background}
+		return nil, nil, errs
+	}
+
+	if err := muEmitter.Emit(startingResponse()); err != nil {
+		errs := taskErr{foreground: err, background: ioErrs.background}
+		return nil, nil, errs
+	}
+
+	return runEnv, stopReasons, ioErrs
 }
 
 func serverRun(ctx context.Context, cancel context.CancelFunc,
-	request *cmds.Request, runEnv *runEnv) error {
+	request *cmds.Request,
+	runEnv *runEnv, stopReasons <-chan environment.Reason) error {
 	var (
 		taskErrs []<-chan error
 
@@ -142,11 +149,6 @@ func serverRun(ctx context.Context, cancel context.CancelFunc,
 			return nil
 		}
 	)
-	// TODO: move into setupEnv, pass reasons to us
-	stopReasons, stopErr := setupStopper(ctx, request, runEnv)
-	if stopErr != nil {
-		return checkTask(taskErr{foreground: stopErr})
-	}
 	if err := checkTask(
 		setupPrimaryStoppers(ctx, request, runEnv),
 	); err != nil {
@@ -178,7 +180,8 @@ func setupPrimaryStoppers(ctx context.Context,
 	const reason = environment.Canceled
 	var (
 		notifySignal = os.Interrupt
-		signalErrs   = stopOnSignal(ctx, runEnv.stopper, reason, notifySignal)
+		stopper      = runEnv.Daemon().Stopper()
+		signalErrs   = stopOnSignal(ctx, stopper, reason, notifySignal)
 		errs         = taskErr{background: signalErrs}
 	)
 	if err := runEnv.Emit(signalListenerResponse(notifySignal)); err != nil {
@@ -186,7 +189,7 @@ func setupPrimaryStoppers(ctx context.Context,
 		return errs
 	}
 
-	requestErrs := stopOnRequestCancel(ctx, request, runEnv.stopper, environment.Canceled)
+	requestErrs := stopOnRequestCancel(ctx, request, stopper, environment.Canceled)
 	errs.background = maybeMergeErrs(signalErrs, requestErrs)
 	if err := runEnv.Emit(cmdsListenerResponse()); err != nil {
 		errs.foreground = err

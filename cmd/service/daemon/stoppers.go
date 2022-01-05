@@ -15,11 +15,11 @@ import (
 // and emits it's name to the client.
 func setupStopper(ctx context.Context,
 	request *cmds.Request, runEnv *runEnv) (<-chan environment.Reason, error) {
-	stopper, stopReasons, err := makeStopper(ctx, runEnv.Environment)
+	stopper := runEnv.Daemon().Stopper()
+	stopReasons, err := stopper.Initialize(ctx)
 	if err != nil {
 		return nil, err
 	}
-	runEnv.stopper = stopper
 
 	stopperAPIPath := append(request.Path, stop.Name)
 	if err := runEnv.Emit(stopListenerResponse(stopperAPIPath...)); err != nil {
@@ -27,18 +27,6 @@ func setupStopper(ctx context.Context,
 	}
 
 	return stopReasons, nil
-}
-
-func makeStopper(ctx context.Context,
-	serviceEnv environment.Environment) (environment.Stopper,
-	<-chan environment.Reason, error) {
-	stopper := serviceEnv.Daemon().Stopper()
-	stopReasons, err := stopper.Initialize(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return stopper, stopReasons, nil
 }
 
 func stopOnSignal(ctx context.Context,
@@ -94,8 +82,9 @@ func stopOnIdleEvent(ctx context.Context,
 	if err := runEnv.Emit(tickerListenerResponse(interval, "is-service-idle-every")); err != nil {
 		return taskErr{foreground: err}
 	}
+	stopper := runEnv.Daemon().Stopper()
 	return taskErr{
-		background: stopOnIdle(ctx, runEnv.stopper, interval, checkIfBusy),
+		background: stopOnIdle(ctx, stopper, interval, checkIfBusy),
 	}
 }
 

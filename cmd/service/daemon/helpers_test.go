@@ -18,7 +18,7 @@ import (
 // spawnDaemon sets up the daemon environment and starts the server daemon.
 // The returned context is done when the daemon returns.
 func spawnDaemon(ctx context.Context, t *testing.T,
-	root *cmds.Command, optMap cmds.OptMap) (context.Context, envionment.Environment, cmds.Response) {
+	root *cmds.Command, optMap cmds.OptMap) (context.Context, environment.Environment, cmds.Response) {
 	t.Helper()
 	request, err := cmds.NewRequest(ctx, daemon.CmdsPath(),
 		optMap, nil, nil, root)
@@ -31,7 +31,7 @@ func spawnDaemon(ctx context.Context, t *testing.T,
 	if err != nil {
 		t.Fatal(err)
 	}
-	serviceEnv, err := envionment.Assert(env)
+	serviceEnv, err := environment.Assert(env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,9 +68,10 @@ func daemonDontFindServer(t *testing.T) {
 	}
 }
 
-func stopDaemon(t *testing.T, daemonEnv environment.Environment) {
+func stopDaemon(t *testing.T, daemonEnv environment.Daemon) {
 	t.Helper()
-	if err := daemonEnv.Stopper().Stop(environment.Requested); err != nil {
+	stopper := daemonEnv.Stopper()
+	if err := stopper.Stop(environment.Requested); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -87,7 +88,7 @@ func waitForDaemon(t *testing.T, serverCtx context.Context) {
 }
 
 func stopDaemonAndWait(t *testing.T,
-	daemonEnv environment.Environment, runtime func() error, serverCtx context.Context) {
+	daemonEnv environment.Daemon, runtime func() error, serverCtx context.Context) {
 	t.Helper()
 	stopDaemon(t, daemonEnv)
 	if err := runtime(); err != nil {
