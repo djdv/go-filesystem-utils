@@ -1,4 +1,4 @@
-package mount
+package environment
 
 import (
 	"context"
@@ -27,7 +27,7 @@ import (
 )
 
 type (
-	Environment interface {
+	Mounter interface {
 		Mount(request *cmds.Request) ([]filesystem.MountPoint, error)
 		Unmount(request *cmds.Request) ([]multiaddr.Multiaddr, error)
 	}
@@ -48,7 +48,7 @@ type (
 	maddrString = string
 	ipfsMap     map[maddrString]*ipfsBinding
 
-	environment struct {
+	mounter struct {
 		context.Context
 		hostBinders   binderMap
 		hostInstances instanceMap
@@ -57,15 +57,10 @@ type (
 	}
 )
 
-func MakeEnvironment() Environment {
-	return &environment{
-		Context: context.TODO(),
-	}
-}
-
-func (env *environment) Mount(request *cmds.Request) ([]filesystem.MountPoint, error) {
+func (env *mounter) Mount(request *cmds.Request) ([]filesystem.MountPoint, error) {
 	var (
-		ctx             = env.Context
+		// ctx             = env.Context
+		ctx             = context.TODO()
 		settings        = new(fscmds.MountSettings)
 		unsetArgs, errs = parameters.ParseSettings(ctx, settings,
 			parameters.SettingsFromCmds(request),
@@ -189,7 +184,7 @@ func ipfsMaddrFromConfig() (multiaddr.Multiaddr, error) {
 
 // TODO: [review] I hate all this map allocation business. See if we can simplify.
 // TODO: mutex concerns on map access when called from 2 processes at once.
-func (env *environment) getIPFS(fsid filesystem.ID, ipfsMaddr multiaddr.Multiaddr) (fs.FS, error) {
+func (env *mounter) getIPFS(fsid filesystem.ID, ipfsMaddr multiaddr.Multiaddr) (fs.FS, error) {
 	bindings := env.ipfsBindings
 	if bindings == nil {
 		bindings = make(ipfsMap)
@@ -280,7 +275,7 @@ func resolveMaddr(ctx context.Context, addr multiaddr.Multiaddr) (multiaddr.Mult
 	return addrs[0], nil
 }
 
-func (env *environment) getFuse(bindKey binderPair, fileSystem fs.FS) (filesystem.Mounter, error) {
+func (env *mounter) getFuse(bindKey binderPair, fileSystem fs.FS) (filesystem.Mounter, error) {
 	binders := env.hostBinders
 	if binders == nil {
 		binders = make(binderMap)
@@ -343,7 +338,7 @@ func (m *instanceMap) Close(maddr multiaddr.Multiaddr) error {
 }
 
 // TODO: channel outputs
-func (env *environment) Unmount(request *cmds.Request) ([]multiaddr.Multiaddr, error) {
+func (env *mounter) Unmount(request *cmds.Request) ([]multiaddr.Multiaddr, error) {
 	var (
 		ctx             = request.Context
 		settings        = new(fscmds.UnmountSettings)

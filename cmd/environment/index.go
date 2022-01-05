@@ -1,25 +1,21 @@
-package list
+package environment
 
 import (
-	"github.com/djdv/go-filesystem-utils/filesystem"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
 )
 
 type (
-	Environment interface {
+	Index interface {
 		// TODO: channel outputs
 		List(request *cmds.Request) ([]multiaddr.Multiaddr, error)
 	}
-	environment struct {
+	index struct {
 		hostInstances instanceMap
 	}
-	instanceMap map[string]filesystem.MountPoint
 )
 
-func MakeEnvironment() Environment { return &environment{} }
-
-func (env *environment) List(request *cmds.Request) ([]multiaddr.Multiaddr, error) {
+func (env *index) List(request *cmds.Request) ([]multiaddr.Multiaddr, error) {
 	var (
 		mIndex    int
 		instances = env.hostInstances

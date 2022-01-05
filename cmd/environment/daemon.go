@@ -1,20 +1,15 @@
 package environment
 
-import (
-	list "github.com/djdv/go-filesystem-utils/cmd/list/env"
-	mount "github.com/djdv/go-filesystem-utils/cmd/mount/env"
-)
-
 type (
 	Daemon interface {
 		Stopper() Stopper
-		Lister() list.Environment
-		Mounter() mount.Environment
+		Lister() Index
+		Mounter() Mounter
 	}
 	daemon struct {
 		stopper Stopper
-		lister  list.Environment
-		mounter mount.Environment
+		lister  Index
+		mounter Mounter
 	}
 )
 
@@ -36,28 +31,28 @@ func (env *daemon) Stopper() Stopper {
 	return s
 }
 
-func (env *daemon) Lister() list.Environment {
+func (env *daemon) Lister() Index {
 	l := env.lister
 	if l == nil {
-		l = list.MakeEnvironment()
+		l = new(index)
 		env.lister = l
 	}
 	return l
 }
 
-func (env *daemon) Mounter() mount.Environment {
+func (env *daemon) Mounter() Mounter {
 	m := env.mounter
 	if m == nil {
-		m = mount.MakeEnvironment()
+		m = new(mounter)
 		env.mounter = m
 	}
 	return m
 }
 
-func (env *daemon) Unmounter() mount.Environment {
+func (env *daemon) Unmounter() Mounter { // TODO: separate mount/unmount interfaces
 	u := env.mounter
 	if u == nil {
-		u = mount.MakeEnvironment()
+		u = new(mounter)
 		env.mounter = u
 	}
 	return u
