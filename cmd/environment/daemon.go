@@ -1,5 +1,9 @@
 package environment
 
+import (
+	"context"
+)
+
 type (
 	Daemon interface {
 		Stopper() Stopper
@@ -12,15 +16,6 @@ type (
 		mounter Mounter
 	}
 )
-
-func (env *environment) Daemon() Daemon {
-	d := env.daemon
-	if d == nil {
-		d = new(daemon)
-		env.daemon = d
-	}
-	return d
-}
 
 func (env *daemon) Stopper() Stopper {
 	s := env.stopper
@@ -43,7 +38,7 @@ func (env *daemon) Lister() Index {
 func (env *daemon) Mounter() Mounter {
 	m := env.mounter
 	if m == nil {
-		m = new(mounter)
+		m = &mounter{Context: context.TODO()}
 		env.mounter = m
 	}
 	return m
@@ -52,7 +47,7 @@ func (env *daemon) Mounter() Mounter {
 func (env *daemon) Unmounter() Mounter { // TODO: separate mount/unmount interfaces
 	u := env.mounter
 	if u == nil {
-		u = new(mounter)
+		u = &mounter{Context: context.TODO()}
 		env.mounter = u
 	}
 	return u

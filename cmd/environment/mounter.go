@@ -33,8 +33,8 @@ type (
 	}
 
 	binderPair struct {
-		fsid       filesystem.ID
 		identifier string
+		fsid       filesystem.ID
 	}
 	binderMap map[binderPair]filesystem.Mounter
 
@@ -59,8 +59,7 @@ type (
 
 func (env *mounter) Mount(request *cmds.Request) ([]filesystem.MountPoint, error) {
 	var (
-		// ctx             = env.Context
-		ctx             = context.TODO()
+		ctx             = env.Context
 		settings        = new(fscmds.MountSettings)
 		unsetArgs, errs = parameters.ParseSettings(ctx, settings,
 			parameters.SettingsFromCmds(request),

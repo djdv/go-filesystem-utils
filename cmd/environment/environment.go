@@ -19,6 +19,15 @@ type (
 	}
 )
 
+func (env *environment) Daemon() Daemon {
+	d := env.daemon
+	if d == nil {
+		d = new(daemon)
+		env.daemon = d
+	}
+	return d
+}
+
 func MakeEnvironment(_ context.Context, request *cmds.Request) (cmds.Environment, error) {
 	return new(environment), nil
 }
