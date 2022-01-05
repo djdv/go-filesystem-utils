@@ -8,7 +8,7 @@ import (
 	"os"
 	"sync"
 
-	serviceenv "github.com/djdv/go-filesystem-utils/cmd/service/env"
+	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment"
 	stopenv "github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop/env"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"

@@ -2,7 +2,7 @@ package stop
 
 import (
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
-	serviceenv "github.com/djdv/go-filesystem-utils/cmd/service/env"
+	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop/env"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
