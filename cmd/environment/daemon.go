@@ -1,36 +1,42 @@
-package daemon
+package environment
 
 import (
-	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop/env"
 	list "github.com/djdv/go-filesystem-utils/cmd/list/env"
 	mount "github.com/djdv/go-filesystem-utils/cmd/mount/env"
 )
 
 type (
-	Environment interface {
-		Stopper() stop.Environment
+	Daemon interface {
+		Stopper() Stopper
 		Lister() list.Environment
 		Mounter() mount.Environment
 	}
-	environment struct {
-		stopper stop.Environment
+	daemon struct {
+		stopper Stopper
 		lister  list.Environment
 		mounter mount.Environment
 	}
 )
 
-func MakeEnvironment() Environment { return &environment{} }
+func (env *environment) Daemon() Daemon {
+	d := env.daemon
+	if d == nil {
+		d = new(daemon)
+		env.daemon = d
+	}
+	return d
+}
 
-func (env *environment) Stopper() stop.Environment {
+func (env *daemon) Stopper() Stopper {
 	s := env.stopper
 	if s == nil {
-		s = stop.MakeEnvironment()
+		s = new(stopper)
 		env.stopper = s
 	}
 	return s
 }
 
-func (env *environment) Lister() list.Environment {
+func (env *daemon) Lister() list.Environment {
 	l := env.lister
 	if l == nil {
 		l = list.MakeEnvironment()
@@ -39,7 +45,7 @@ func (env *environment) Lister() list.Environment {
 	return l
 }
 
-func (env *environment) Mounter() mount.Environment {
+func (env *daemon) Mounter() mount.Environment {
 	m := env.mounter
 	if m == nil {
 		m = mount.MakeEnvironment()
@@ -48,7 +54,7 @@ func (env *environment) Mounter() mount.Environment {
 	return m
 }
 
-func (env *environment) Unmounter() mount.Environment {
+func (env *daemon) Unmounter() mount.Environment {
 	u := env.mounter
 	if u == nil {
 		u = mount.MakeEnvironment()

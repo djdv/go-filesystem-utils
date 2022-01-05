@@ -1,4 +1,4 @@
-package stop
+package environment
 
 import (
 	"context"
@@ -6,19 +6,16 @@ import (
 )
 
 type (
-	Reason      uint
-	Environment interface {
+	Reason  uint
+	Stopper interface {
 		Initialize(context.Context) (<-chan Reason, error)
 		Stop(Reason) error
 	}
-	environment struct {
+	stopper struct {
 		stopCtx  context.Context
 		stopChan chan Reason
 	}
 )
-
-// TODO: move pkg to either cmd/service/daemon/stop/env
-// or cmd/service/daemon/stop if possible. (May encounter dep cyclicals...)
 
 //go:generate stringer -type=Reason -linecomment
 const (
@@ -29,22 +26,20 @@ const (
 	Error            // runtime error caused stop to be called
 )
 
-func MakeEnvironment() Environment { return &environment{} }
-
-func (env *environment) Initialize(ctx context.Context) (<-chan Reason, error) {
+func (env *stopper) Initialize(ctx context.Context) (<-chan Reason, error) {
 	if env.stopChan != nil {
 		return nil, fmt.Errorf("stopper already initialized")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	stopChan := make(chan Reason, 1)
+	stopChan := make(chan Reason)
 	env.stopChan = stopChan
 	env.stopCtx = ctx
 	return stopChan, nil
 }
 
-func (env *environment) Stop(reason Reason) error {
+func (env *stopper) Stop(reason Reason) error {
 	var (
 		ctx      = env.stopCtx
 		stopChan = env.stopChan

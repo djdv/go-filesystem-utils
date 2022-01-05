@@ -7,23 +7,20 @@ import (
 	"context"
 	"reflect"
 
-	daemon "github.com/djdv/go-filesystem-utils/cmd/service/daemon/env"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
 type (
 	Environment interface {
-		Daemon() daemon.Environment
+		Daemon() Daemon
 	}
 	environment struct {
-		daemon daemon.Environment
+		*daemon
 	}
 )
 
-var _ Environment = (*environment)(nil)
-
 func MakeEnvironment(_ context.Context, request *cmds.Request) (cmds.Environment, error) {
-	return &environment{}, nil
+	return new(environment), nil
 }
 
 func Assert(environment cmds.Environment) (Environment, error) {
@@ -37,13 +34,4 @@ func Assert(environment cmds.Environment) (Environment, error) {
 		)
 	}
 	return typedEnv, nil
-}
-
-func (env *environment) Daemon() daemon.Environment {
-	d := env.daemon
-	if d == nil {
-		d = daemon.MakeEnvironment()
-		env.daemon = d
-	}
-	return d
 }

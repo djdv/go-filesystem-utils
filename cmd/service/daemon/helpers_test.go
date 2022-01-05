@@ -11,7 +11,7 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment"
-	daemonenv "github.com/djdv/go-filesystem-utils/cmd/service/daemon/env"
+	daemonenv "github.com/djdv/go-filesystem-utils/cmd/environment"
 	stopenv "github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop/env"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	cmds "github.com/ipfs/go-ipfs-cmds"
