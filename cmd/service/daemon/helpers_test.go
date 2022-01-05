@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment/service"
-	daemonenv "github.com/djdv/go-filesystem-utils/cmd/environment/service/daemon"
-	stopenv "github.com/djdv/go-filesystem-utils/cmd/environment/service/daemon/stop"
+	serviceenv "github.com/djdv/go-filesystem-utils/cmd/service/env"
+	daemonenv "github.com/djdv/go-filesystem-utils/cmd/service/daemon/env"
+	stopenv "github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop/env"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"

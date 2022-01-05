@@ -6,7 +6,7 @@ import (
 	"path"
 	"time"
 
-	stopenv "github.com/djdv/go-filesystem-utils/cmd/environment/service/daemon/stop"
+	stopenv "github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop/env"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	"github.com/multiformats/go-multiaddr"
 )

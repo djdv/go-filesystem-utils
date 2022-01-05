@@ -4,7 +4,7 @@ import (
 	"errors"
 	"io"
 
-	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment/service"
+	serviceenv "github.com/djdv/go-filesystem-utils/cmd/service/env"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/filesystem"

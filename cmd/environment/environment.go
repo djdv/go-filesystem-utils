@@ -6,7 +6,7 @@ package environment
 import (
 	"context"
 
-	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment/service"
+	serviceenv "github.com/djdv/go-filesystem-utils/cmd/service/env"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 

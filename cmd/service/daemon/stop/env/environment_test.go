@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/djdv/go-filesystem-utils/cmd/environment/service/daemon/stop"
+	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop/env"
 )
 
 // This is more of  compile time test

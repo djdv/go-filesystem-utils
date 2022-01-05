@@ -1,7 +1,7 @@
 package daemon
 
 import (
-	"github.com/djdv/go-filesystem-utils/cmd/environment/service/daemon/stop"
+	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop/env"
 	list "github.com/djdv/go-filesystem-utils/cmd/list/env"
 	mount "github.com/djdv/go-filesystem-utils/cmd/mount/env"
 )

@@ -6,8 +6,8 @@ import (
 	"os/signal"
 	"time"
 
-	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment/service"
-	stopenv "github.com/djdv/go-filesystem-utils/cmd/environment/service/daemon/stop"
+	serviceenv "github.com/djdv/go-filesystem-utils/cmd/service/env"
+	stopenv "github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop/env"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )

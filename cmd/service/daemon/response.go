@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 
-	stopenv "github.com/djdv/go-filesystem-utils/cmd/environment/service/daemon/stop"
+	stopenv "github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop/env"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )

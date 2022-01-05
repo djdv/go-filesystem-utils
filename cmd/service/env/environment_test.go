@@ -3,7 +3,7 @@ package serviceenv_test
 import (
 	"testing"
 
-	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment/service"
+	serviceenv "github.com/djdv/go-filesystem-utils/cmd/service/env"
 )
 
 func TestAssert(t *testing.T) {

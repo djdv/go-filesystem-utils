@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment/service"
-	stopenv "github.com/djdv/go-filesystem-utils/cmd/environment/service/daemon/stop"
+	serviceenv "github.com/djdv/go-filesystem-utils/cmd/service/env"
+	stopenv "github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop/env"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/cmd/service/control"

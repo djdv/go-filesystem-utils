@@ -3,7 +3,7 @@ package serviceenv
 import (
 	"reflect"
 
-	"github.com/djdv/go-filesystem-utils/cmd/environment/service/daemon"
+	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/env"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
