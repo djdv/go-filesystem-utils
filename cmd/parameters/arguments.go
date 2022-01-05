@@ -364,7 +364,6 @@ func assignToArgument(argument *Argument, value interface{}) error {
 		}
 		value = maddrs
 	case *filesystem.ID:
-		fmt.Println("ID case")
 		if _, isId := value.(filesystem.ID); isId {
 			break // Direct assign, no parsing.
 		}
