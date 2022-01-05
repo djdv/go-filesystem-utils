@@ -4,7 +4,7 @@ import (
 	"errors"
 	"io"
 
-	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment"
+	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	"github.com/djdv/go-filesystem-utils/filesystem"
 	cmds "github.com/ipfs/go-ipfs-cmds"
@@ -33,7 +33,7 @@ func listPreRun(*cmds.Request, cmds.Environment) error {
 }
 
 func listRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
-	serviceEnv, err := serviceenv.Assert(env)
+	serviceEnv, err := environment.Assert(env)
 	if err != nil {
 		return err
 	}

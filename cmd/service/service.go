@@ -5,8 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment"
-	stopenv "github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop/env"
+	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/cmd/service/control"
@@ -64,7 +63,7 @@ func serviceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.En
 
 	// NOTE: We don't have the system logger yet.
 	// Early errors will only show up in tests or a debugger.
-	serviceEnv, err := serviceenv.Assert(env)
+	serviceEnv, err := environment.Assert(env)
 	if err != nil {
 		return err
 	}
@@ -111,7 +110,7 @@ type (
 	daemonCmdWrapper struct {
 		serviceRequest *cmds.Request
 		emitter        cmds.ResponseEmitter
-		environment    serviceenv.Environment
+		environment    environment.Environment
 
 		sysLog  service.Logger
 		runErrs <-chan error
@@ -253,7 +252,7 @@ func (svc *daemonCmdWrapper) Stop(svcIntf service.Service) (err error) {
 	// Otherwise, we'll call env's Stop method ourself
 	// which will indirectly unblock runErr.
 	default:
-		if stopErr := stopper.Stop(stopenv.Requested); stopErr != nil {
+		if stopErr := stopper.Stop(environment.Requested); stopErr != nil {
 			err = stopErr
 			return
 		}

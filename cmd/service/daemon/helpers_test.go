@@ -10,9 +10,6 @@ import (
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment"
-	daemonenv "github.com/djdv/go-filesystem-utils/cmd/environment"
-	stopenv "github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop/env"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
@@ -21,7 +18,7 @@ import (
 // spawnDaemon sets up the daemon environment and starts the server daemon.
 // The returned context is done when the daemon returns.
 func spawnDaemon(ctx context.Context, t *testing.T,
-	root *cmds.Command, optMap cmds.OptMap) (context.Context, serviceenv.Environment, cmds.Response) {
+	root *cmds.Command, optMap cmds.OptMap) (context.Context, envionment.Environment, cmds.Response) {
 	t.Helper()
 	request, err := cmds.NewRequest(ctx, daemon.CmdsPath(),
 		optMap, nil, nil, root)
@@ -34,7 +31,7 @@ func spawnDaemon(ctx context.Context, t *testing.T,
 	if err != nil {
 		t.Fatal(err)
 	}
-	serviceEnv, err := serviceenv.Assert(env)
+	serviceEnv, err := envionment.Assert(env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,9 +68,9 @@ func daemonDontFindServer(t *testing.T) {
 	}
 }
 
-func stopDaemon(t *testing.T, daemonEnv daemonenv.Environment) {
+func stopDaemon(t *testing.T, daemonEnv environment.Environment) {
 	t.Helper()
-	if err := daemonEnv.Stopper().Stop(stopenv.Requested); err != nil {
+	if err := daemonEnv.Stopper().Stop(environment.Requested); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -90,7 +87,7 @@ func waitForDaemon(t *testing.T, serverCtx context.Context) {
 }
 
 func stopDaemonAndWait(t *testing.T,
-	daemonEnv daemonenv.Environment, runtime func() error, serverCtx context.Context) {
+	daemonEnv environment.Environment, runtime func() error, serverCtx context.Context) {
 	t.Helper()
 	stopDaemon(t, daemonEnv)
 	if err := runtime(); err != nil {

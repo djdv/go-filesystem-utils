@@ -6,8 +6,7 @@ import (
 	"os/signal"
 	"time"
 
-	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment"
-	stopenv "github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop/env"
+	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
@@ -15,7 +14,7 @@ import (
 // setupStopper primes the stopper interface
 // and emits it's name to the client.
 func setupStopper(ctx context.Context,
-	request *cmds.Request, runEnv *runEnv) (<-chan stopenv.Reason, error) {
+	request *cmds.Request, runEnv *runEnv) (<-chan environment.Reason, error) {
 	stopper, stopReasons, err := makeStopper(ctx, runEnv.Environment)
 	if err != nil {
 		return nil, err
@@ -31,8 +30,8 @@ func setupStopper(ctx context.Context,
 }
 
 func makeStopper(ctx context.Context,
-	serviceEnv serviceenv.Environment) (stopenv.Environment,
-	<-chan stopenv.Reason, error) {
+	serviceEnv environment.Environment) (environment.Stopper,
+	<-chan environment.Reason, error) {
 	stopper := serviceEnv.Daemon().Stopper()
 	stopReasons, err := stopper.Initialize(ctx)
 	if err != nil {
@@ -43,7 +42,7 @@ func makeStopper(ctx context.Context,
 }
 
 func stopOnSignal(ctx context.Context,
-	stopper stopenv.Environment, stopReason stopenv.Reason,
+	stopper environment.Stopper, stopReason environment.Reason,
 	notifySignal os.Signal) <-chan error {
 	var (
 		errs    = make(chan error)
@@ -66,7 +65,7 @@ func stopOnSignal(ctx context.Context,
 }
 
 func stopOnRequestCancel(ctx context.Context, request *cmds.Request,
-	stopper stopenv.Environment, stopReason stopenv.Reason) <-chan error {
+	stopper environment.Stopper, stopReason environment.Reason) <-chan error {
 	var (
 		triggerCtx = request.Context
 		stop       = stopper.Stop
@@ -102,7 +101,7 @@ func stopOnIdleEvent(ctx context.Context,
 
 type isBusyFunc func() (bool, error)
 
-func stopOnIdle(ctx context.Context, stopper stopenv.Environment,
+func stopOnIdle(ctx context.Context, stopper environment.Stopper,
 	checkInterval time.Duration, checkIfBusy isBusyFunc) <-chan error {
 	errs := make(chan error, 1)
 	go func() {
@@ -120,7 +119,7 @@ func stopOnIdle(ctx context.Context, stopper stopenv.Environment,
 				if busy {
 					continue
 				}
-				if err := stopper.Stop(stopenv.Idle); err != nil {
+				if err := stopper.Stop(environment.Idle); err != nil {
 					errs <- err
 				}
 				return

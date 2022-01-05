@@ -8,8 +8,7 @@ import (
 	"os"
 	"sync"
 
-	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment"
-	stopenv "github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop/env"
+	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
@@ -23,8 +22,8 @@ type (
 	runEnv struct {
 		cmds.ResponseEmitter
 		*Settings
-		serviceenv.Environment
-		stopper stopenv.Environment
+		environment.Environment
+		stopper environment.Stopper // TODO:  duplicate of env?
 	}
 
 	taskErr struct {
@@ -76,7 +75,7 @@ func daemonRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Env
 }
 
 func parseInputs(ctx context.Context, request *cmds.Request,
-	env cmds.Environment) (*Settings, serviceenv.Environment, error) {
+	env cmds.Environment) (*Settings, environment.Environment, error) {
 	settings, serviceEnv, err := parseCmds(ctx, request, env)
 	if err != nil {
 		return nil, nil, err
@@ -85,12 +84,12 @@ func parseInputs(ctx context.Context, request *cmds.Request,
 }
 
 func parseCmds(ctx context.Context, request *cmds.Request,
-	env cmds.Environment) (*Settings, serviceenv.Environment, error) {
+	env cmds.Environment) (*Settings, environment.Environment, error) {
 	settings, err := parseSettings(ctx, request)
 	if err != nil {
 		return nil, nil, err
 	}
-	serviceEnv, err := serviceenv.Assert(env)
+	serviceEnv, err := environment.Assert(env)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -176,7 +175,7 @@ func serverRun(ctx context.Context, cancel context.CancelFunc,
 
 func setupPrimaryStoppers(ctx context.Context,
 	request *cmds.Request, runEnv *runEnv) taskErr {
-	const reason = stopenv.Canceled
+	const reason = environment.Canceled
 	var (
 		notifySignal = os.Interrupt
 		signalErrs   = stopOnSignal(ctx, runEnv.stopper, reason, notifySignal)
@@ -187,7 +186,7 @@ func setupPrimaryStoppers(ctx context.Context,
 		return errs
 	}
 
-	requestErrs := stopOnRequestCancel(ctx, request, runEnv.stopper, stopenv.Canceled)
+	requestErrs := stopOnRequestCancel(ctx, request, runEnv.stopper, environment.Canceled)
 	errs.background = maybeMergeErrs(signalErrs, requestErrs)
 	if err := runEnv.Emit(cmdsListenerResponse()); err != nil {
 		errs.foreground = err
@@ -254,13 +253,13 @@ func setupSecondaryStoppers(ctx context.Context, runEnv *runEnv) taskErr {
 }
 
 func waitForStopOrError(emitter cmds.ResponseEmitter,
-	reasons <-chan stopenv.Reason, errs <-chan error) error {
+	reasons <-chan environment.Reason, errs <-chan error) error {
 	select {
 	case reason := <-reasons:
 		return emitter.Emit(stoppingResponse(reason))
 	case err := <-errs:
 		return maybeWrapErr(err,
-			emitter.Emit(stoppingResponse(stopenv.Error)),
+			emitter.Emit(stoppingResponse(environment.Error)),
 		)
 	}
 }

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"io"
 
-	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment"
+	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	"github.com/djdv/go-filesystem-utils/cmd/mount"
@@ -59,7 +59,7 @@ func unmountRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.En
 	// and it's real-time rather than atomic.
 	// (results come back ASAP, as opposed to returning only after each one has been processed in bulk)
 
-	fsEnv, err := serviceenv.Assert(env)
+	fsEnv, err := environment.Assert(env)
 	if err != nil {
 		return err
 	}

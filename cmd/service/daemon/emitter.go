@@ -6,12 +6,12 @@ import (
 	"path"
 	"time"
 
-	stopenv "github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop/env"
+	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	"github.com/multiformats/go-multiaddr"
 )
 
-func statusResponse(status Status, stopReason stopenv.Reason) *Response {
+func statusResponse(status Status, stopReason environment.Reason) *Response {
 	return &Response{
 		Status:     status,
 		StopReason: stopReason,
@@ -35,7 +35,7 @@ func infoResponsef(fmtStr string, v ...interface{}) *Response {
 
 func startingResponse() *Response { return statusResponse(Starting, 0) }
 func readyResponse() *Response    { return statusResponse(Ready, 0) }
-func stoppingResponse(reason stopenv.Reason) *Response {
+func stoppingResponse(reason environment.Reason) *Response {
 	return statusResponse(Stopping, reason)
 }
 

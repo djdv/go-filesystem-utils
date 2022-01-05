@@ -13,8 +13,7 @@ import (
 	"time"
 
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
-	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment"
-	stopenv "github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop/env"
+	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/service"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
@@ -142,7 +141,7 @@ func testDaemonRemote(t *testing.T, root *cmds.Command) {
 		t.Run(test.name, func(t *testing.T) {
 			var (
 				serverCtx      context.Context
-				serviceEnv     serviceenv.Environment
+				serviceEnv     environment.Environment
 				serverResponse cmds.Response
 
 				ctx               = context.Background()
@@ -279,7 +278,7 @@ func testDaemonAutoExit(t *testing.T, root *cmds.Command) {
 		sawExpected bool
 		expected    = daemon.Response{
 			Status:     daemon.Stopping,
-			StopReason: stopenv.Idle,
+			StopReason: environment.Idle,
 		}
 		idleChecker = func(response *daemon.Response) error {
 			if *response == expected {
@@ -314,7 +313,7 @@ func testFindServer(t *testing.T, root *cmds.Command) {
 		runCtx, runCancel = context.WithCancel(ctx)
 
 		serverCtx  context.Context
-		serviceEnv serviceenv.Environment
+		serviceEnv environment.Environment
 
 		startup, runtime func() error
 	)

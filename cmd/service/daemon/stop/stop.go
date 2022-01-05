@@ -2,8 +2,7 @@ package stop
 
 import (
 	fscmds "github.com/djdv/go-filesystem-utils/cmd"
-	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop/env"
+	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
@@ -18,7 +17,7 @@ var Command = &cmds.Command{
 	},
 	NoLocal:  true,
 	Encoders: formats.CmdsEncoders,
-	Run: func(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
+	Run: func(request *cmds.Request, _ cmds.ResponseEmitter, env cmds.Environment) error {
 		var (
 			ctx             = request.Context
 			settings        = new(fscmds.Settings)
@@ -31,12 +30,12 @@ var Command = &cmds.Command{
 			return err
 		}
 
-		serviceEnv, err := serviceenv.Assert(env)
+		serviceEnv, err := environment.Assert(env)
 		if err != nil {
 			return err
 		}
 
-		if err := serviceEnv.Daemon().Stopper().Stop(stop.Requested); err != nil {
+		if err := serviceEnv.Daemon().Stopper().Stop(environment.Requested); err != nil {
 			return err
 		}
 

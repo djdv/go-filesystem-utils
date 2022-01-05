@@ -4,7 +4,7 @@ import (
 	"errors"
 	"io"
 
-	serviceenv "github.com/djdv/go-filesystem-utils/cmd/environment"
+	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/filesystem"
@@ -45,7 +45,7 @@ func mountPreRun(*cmds.Request, cmds.Environment) error {
 }
 
 func mountRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
-	fsEnv, err := serviceenv.Assert(env)
+	fsEnv, err := environment.Assert(env)
 	if err != nil {
 		return err
 	}

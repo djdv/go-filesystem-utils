@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 
-	stopenv "github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop/env"
+	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
@@ -19,7 +19,7 @@ type (
 		ListenerMaddr *formats.Multiaddr `json:",omitempty"`
 		Info          string             `json:",omitempty"`
 		Status        Status             `json:",omitempty"`
-		StopReason    stopenv.Reason     `json:",omitempty"`
+		StopReason    environment.Reason `json:",omitempty"`
 	}
 	ResponseResult struct {
 		*Response
