@@ -50,7 +50,7 @@ func mountRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Envi
 		return err
 	}
 
-	mounter := fsEnv.Daemon().Mounter()
+	mounter := fsEnv.Daemon()
 	mountPoints, err := mounter.Mount(request)
 	if err != nil {
 		return err

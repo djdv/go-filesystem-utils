@@ -30,15 +30,18 @@ type (
 	Mounter interface {
 		Mount(request *cmds.Request) ([]filesystem.MountPoint, error)
 		Unmount(request *cmds.Request) ([]multiaddr.Multiaddr, error)
+		// TODO: options parameter: ...opts
+		// parse: cmds.Request's `-a` => list(listOptAll(true))
+		List() (<-chan multiaddr.Multiaddr, error)
 	}
+
+	instanceMap map[string]filesystem.MountPoint
 
 	binderPair struct {
 		identifier string
 		fsid       filesystem.ID
 	}
 	binderMap map[binderPair]filesystem.Mounter
-
-	instanceMap map[string]filesystem.MountPoint
 
 	fsidMap     map[filesystem.ID]fs.FS
 	ipfsBinding struct {
@@ -405,4 +408,18 @@ func (env *mounter) Unmount(request *cmds.Request) ([]multiaddr.Multiaddr, error
 	}
 
 	return closed, err
+}
+
+func (env *mounter) List() (<-chan multiaddr.Multiaddr, error) {
+	var (
+		instances = env.hostInstances
+		list      = make(chan multiaddr.Multiaddr, len(instances))
+	)
+	go func() {
+		defer close(list)
+		for _, instance := range instances {
+			list <- instance.Target()
+		}
+	}()
+	return list, nil
 }

@@ -22,7 +22,11 @@ type (
 func (env *environment) Daemon() Daemon {
 	d := env.daemon
 	if d == nil {
-		d = new(daemon)
+		d = &daemon{
+			mounter: mounter{
+				Context: context.TODO(),
+			},
+		}
 		env.daemon = d
 	}
 	return d

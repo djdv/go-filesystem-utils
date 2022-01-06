@@ -38,13 +38,15 @@ func listRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Envir
 		return err
 	}
 
-	lister := serviceEnv.Daemon().Lister()
-	mountPoints, err := lister.List(request)
+	lister := serviceEnv.Daemon()
+	// mountPoints, err := lister.List(request)
+	// TODO: cmds request -> list options
+	mountPoints, err := lister.List()
 	if err != nil {
 		return err
 	}
 
-	for _, mountPoint := range mountPoints {
+	for mountPoint := range mountPoints {
 		if err := emitter.Emit(&Response{
 			Multiaddr: formats.Multiaddr{Interface: mountPoint},
 		}); err != nil {

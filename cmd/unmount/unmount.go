@@ -64,7 +64,7 @@ func unmountRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.En
 		return err
 	}
 
-	unmounter := fsEnv.Daemon().Mounter()
+	unmounter := fsEnv.Daemon()
 	formerTargets, err := unmounter.Unmount(request)
 	if err != nil {
 		return err
