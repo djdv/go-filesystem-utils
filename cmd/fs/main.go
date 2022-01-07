@@ -9,7 +9,7 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/executor"
-	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
+	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	"github.com/djdv/go-filesystem-utils/cmd/list"
 	"github.com/djdv/go-filesystem-utils/cmd/mount"
 	"github.com/djdv/go-filesystem-utils/cmd/service"

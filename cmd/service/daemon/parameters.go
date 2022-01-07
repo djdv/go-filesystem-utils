@@ -3,7 +3,7 @@ package daemon
 import (
 	"context"
 
-	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
+	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )

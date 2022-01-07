@@ -10,7 +10,7 @@ import (
 
 	"github.com/adrg/xdg"
 	"github.com/coreos/go-systemd/activation"
-	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
+	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	"github.com/kardianos/service"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"

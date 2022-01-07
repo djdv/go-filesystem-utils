@@ -9,7 +9,7 @@ import (
 	"io"
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
+	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 

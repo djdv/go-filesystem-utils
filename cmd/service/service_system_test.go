@@ -15,7 +15,7 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/executor"
-	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
+	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	"github.com/djdv/go-filesystem-utils/cmd/service"
 	"github.com/djdv/go-filesystem-utils/cmd/service/status"
 	cmds "github.com/ipfs/go-ipfs-cmds"

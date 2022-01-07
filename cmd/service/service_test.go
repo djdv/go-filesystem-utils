@@ -10,7 +10,7 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/executor"
-	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
+	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	servicecmd "github.com/djdv/go-filesystem-utils/cmd/service"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"

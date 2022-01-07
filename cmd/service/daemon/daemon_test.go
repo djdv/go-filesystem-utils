@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
+	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	"github.com/djdv/go-filesystem-utils/cmd/service"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"

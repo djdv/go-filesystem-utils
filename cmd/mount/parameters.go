@@ -1,8 +1,8 @@
 package mount
 
 import (
-	"github.com/djdv/go-filesystem-utils/cmd/filesystem"
-	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
+	"github.com/djdv/go-filesystem-utils/filesystem/cmds"
+	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 )
 

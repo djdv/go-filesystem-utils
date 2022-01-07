@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
+	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/filesystem"
 	"github.com/djdv/go-filesystem-utils/filesystem/cgofuse"

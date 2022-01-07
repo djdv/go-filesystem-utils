@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
+	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	"github.com/multiformats/go-multiaddr"
 )
 

@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
+	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
 	"github.com/djdv/go-filesystem-utils/filesystem"
