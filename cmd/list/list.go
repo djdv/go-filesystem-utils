@@ -5,7 +5,7 @@ import (
 	"io"
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/formats"
+	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
 	"github.com/djdv/go-filesystem-utils/filesystem"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
@@ -17,7 +17,7 @@ var Command = &cmds.Command{
 		Tagline: "List file systems bound to the host.",
 	},
 	NoLocal:  true, // Always communicate with the file system service (as a client).
-	Encoders: formats.CmdsEncoders,
+	Encoders: fscmds.CmdsEncoders,
 	Type:     Response{},
 	PreRun:   listPreRun,
 	Run:      listRun,
@@ -26,7 +26,7 @@ var Command = &cmds.Command{
 	},
 }
 
-type Response struct{ formats.Multiaddr }
+type Response struct{ fscmds.Multiaddr }
 
 func listPreRun(*cmds.Request, cmds.Environment) error {
 	return filesystem.RegisterPathMultiaddr()
@@ -48,7 +48,7 @@ func listRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Envir
 
 	for mountPoint := range mountPoints {
 		if err := emitter.Emit(&Response{
-			Multiaddr: formats.Multiaddr{Interface: mountPoint},
+			Multiaddr: fscmds.Multiaddr{Interface: mountPoint},
 		}); err != nil {
 			return err
 		}

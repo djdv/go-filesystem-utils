@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/formats"
+	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
 	"github.com/djdv/go-filesystem-utils/filesystem"
@@ -48,7 +48,7 @@ var Command = &cmds.Command{
 	PreRun:   daemonPreRun,
 	Run:      daemonRun,
 	Options:  parameters.CmdsOptionsFrom((*Settings)(nil)),
-	Encoders: formats.CmdsEncoders,
+	Encoders: fscmds.CmdsEncoders,
 	Type:     Response{},
 	Subcommands: map[string]*cmds.Command{
 		stop.Name: stop.Command,

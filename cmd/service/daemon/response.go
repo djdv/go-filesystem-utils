@@ -9,14 +9,14 @@ import (
 	"io"
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/formats"
+	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
 type (
 	Status   uint
 	Response struct {
-		ListenerMaddr *formats.Multiaddr `json:",omitempty"`
+		ListenerMaddr *fscmds.Multiaddr  `json:",omitempty"`
 		Info          string             `json:",omitempty"`
 		Status        Status             `json:",omitempty"`
 		StopReason    environment.Reason `json:",omitempty"`

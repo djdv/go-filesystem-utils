@@ -7,11 +7,11 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 
 	"github.com/adrg/xdg"
 	"github.com/coreos/go-systemd/activation"
-	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
+	"github.com/kardianos/service"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
 )

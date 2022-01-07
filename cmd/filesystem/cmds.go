@@ -1,4 +1,4 @@
-package formats
+package filesystem
 
 import (
 	"fmt"

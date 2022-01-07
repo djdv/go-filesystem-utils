@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/formats"
+	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/cmd/service/control"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
@@ -26,7 +26,7 @@ var Command = &cmds.Command{
 	NoRemote: true,
 	Run:      serviceRun,
 	Options:  parameters.CmdsOptionsFrom((*Settings)(nil)),
-	Encoders: formats.CmdsEncoders,
+	Encoders: fscmds.CmdsEncoders,
 	Type:     daemon.Response{},
 	Subcommands: func() map[string]*cmds.Command {
 		const staticCommands = 2

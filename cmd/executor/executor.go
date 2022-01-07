@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"time"
 
-	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"

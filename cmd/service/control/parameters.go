@@ -3,7 +3,7 @@ package control
 import (
 	"context"
 
-	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/cmd/service/host"
 	cmds "github.com/ipfs/go-ipfs-cmds"

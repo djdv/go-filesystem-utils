@@ -6,7 +6,6 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
-	"github.com/djdv/go-filesystem-utils/cmd/formats"
 	"github.com/djdv/go-filesystem-utils/cmd/mount"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/filesystem"
@@ -38,7 +37,7 @@ var Command = &cmds.Command{
 	},
 }
 
-type Response struct{ formats.Multiaddr }
+type Response struct{ fscmds.Multiaddr }
 
 func unmountPreRun(*cmds.Request, cmds.Environment) error {
 	return filesystem.RegisterPathMultiaddr()
@@ -72,7 +71,7 @@ func unmountRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.En
 
 	for _, target := range formerTargets {
 		if err := emitter.Emit(&Response{
-			Multiaddr: formats.Multiaddr{Interface: target},
+			Multiaddr: fscmds.Multiaddr{Interface: target},
 		}); err != nil {
 			return err
 		}

@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	fscmds "github.com/djdv/go-filesystem-utils/cmd"
+	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/kardianos/service"
 )

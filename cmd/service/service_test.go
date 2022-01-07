@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	fscmds "github.com/djdv/go-filesystem-utils/cmd"
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/executor"
+	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
 	servicecmd "github.com/djdv/go-filesystem-utils/cmd/service"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"

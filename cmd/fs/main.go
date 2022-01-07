@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	fscmds "github.com/djdv/go-filesystem-utils/cmd"
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/executor"
+	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
 	"github.com/djdv/go-filesystem-utils/cmd/list"
 	"github.com/djdv/go-filesystem-utils/cmd/mount"
 	"github.com/djdv/go-filesystem-utils/cmd/service"

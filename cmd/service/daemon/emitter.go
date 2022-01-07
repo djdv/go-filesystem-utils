@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/formats"
+	fscmds "github.com/djdv/go-filesystem-utils/cmd/filesystem"
 	"github.com/multiformats/go-multiaddr"
 )
 
@@ -21,7 +21,7 @@ func statusResponse(status Status, stopReason environment.Reason) *Response {
 func maddrListenerResponse(maddr multiaddr.Multiaddr) *Response {
 	return &Response{
 		Status:        Starting,
-		ListenerMaddr: &formats.Multiaddr{Interface: maddr},
+		ListenerMaddr: &fscmds.Multiaddr{Interface: maddr},
 	}
 }
 
