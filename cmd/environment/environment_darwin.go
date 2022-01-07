@@ -1,4 +1,4 @@
-package serviceenv
+package environment
 
 func systemListeners(maddrsProvided bool, _ service.Logger) (serviceListeners []manet.Listener,
 	cleanup func() error, err error) {
