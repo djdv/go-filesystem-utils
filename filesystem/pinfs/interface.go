@@ -33,7 +33,6 @@ func NewInterface(ctx context.Context, core coreiface.CoreAPI) fs.FS {
 func (*pinInterface) ID() filesystem.ID { return filesystem.PinFS }
 
 func (pi *pinInterface) Open(name string) (fs.File, error) {
-	const op errors.Op = "pinfs.Open"
 	if name == rootName {
 		return pi.OpenDir(name)
 	}
@@ -69,6 +68,6 @@ func (*pinInterface) Rename(_, _ string) error {
 	const op errors.Op = "pinfs.Rename"
 	// TODO: use abstract, consistent, error values
 	// (^ this means reimplementing pkg `iferrors` with new Go conventions)
-	//return errReadOnly
+	// return errReadOnly
 	return errors.New(op, errors.InvalidOperation)
 }

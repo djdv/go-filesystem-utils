@@ -4,9 +4,9 @@ import (
 	"context"
 	"io/fs"
 	"path"
-	"sort"
 
 	"github.com/djdv/go-filesystem-utils/filesystem/errors"
+	gofs "github.com/djdv/go-filesystem-utils/filesystem/go"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 )
 
@@ -21,12 +21,6 @@ type keyDirectory struct {
 	keys   []coreiface.Key
 }
 
-type keysByName []fs.DirEntry
-
-func (keys keysByName) Len() int           { return len(keys) }
-func (keys keysByName) Swap(i, j int)      { keys[i], keys[j] = keys[j], keys[i] }
-func (keys keysByName) Less(i, j int) bool { return keys[i].Name() < keys[j].Name() }
-
 func (kd *keyDirectory) Stat() (fs.FileInfo, error) { return kd.stat, nil }
 
 func (*keyDirectory) Read([]byte) (int, error) {
@@ -34,52 +28,33 @@ func (*keyDirectory) Read([]byte) (int, error) {
 	return -1, errors.New(op, errors.IsDir)
 }
 
-func max(x, y int) int {
-	if x > y {
-		return x
-	}
-	return y
-}
-
 func (kd *keyDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	const op errors.Op = "keyDirectory.ReadDir"
-	entries := kd.keys
-	if entries == nil {
-		keys, err := kd.keyAPI.List(kd.ctx)
+	keys := kd.keys
+	if keys == nil {
+		ks, err := kd.keyAPI.List(kd.ctx)
 		if err != nil {
-			return nil, err
+			return nil, errors.New(op, err)
 		}
-		entries = keys
-		kd.keys = entries
+		keys = ks
+		kd.keys = keys
 	}
 
-	var ents []fs.DirEntry
-	if count <= 0 {
-		// NOTE: [spec] This will cause the loop below to become infinite.
-		// This is intended by the fs.FS spec
-		count = -1
-		ents = make([]fs.DirEntry, 0, len(entries))
-	} else {
-		// If we're dealing with a finite amount, allocate for it.
-		// NOTE: If the caller passes an unreasonably large `count`,
-		// we do nothing to protect against OOM.
-		// This is to be considered a client-side implementation error
-		// and should be fixed caller side.
-		ents = make([]fs.DirEntry, 0, count)
-	}
-
-	for _, key := range entries {
-		if count == 0 {
-			break
+	entries := make(chan fs.DirEntry, len(keys))
+	go func() {
+		defer close(entries)
+		for _, key := range keys {
+			select {
+			case entries <- &keyDirEntry{
+				Key:  key,
+				ipns: kd.ipns,
+			}:
+			case <-kd.ctx.Done():
+				return
+			}
 		}
-		ents = append(ents, &keyDirEntry{Key: key, ipns: kd.ipns})
-		count--
-	}
-	kd.keys = entries[len(ents):]
-
-	sort.Sort(keysByName(ents))
-
-	return ents, nil
+	}()
+	return gofs.ReadDir(count, entries)
 }
 
 type keyDirEntry struct {

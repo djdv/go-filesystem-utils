@@ -531,15 +531,11 @@ type (
 		TestField2 bool
 	}
 	testBadSettingsNonStandardTag struct {
-		TestField  bool `settings:"""arguments"""` // it's like I'm really using Batch
+		TestField  bool `settings:"""arguments"""`
 		TestField2 bool
 	}
 	testBadSettingsShort struct {
 		TestField bool `settings:"arguments"`
-	}
-	testBadSettingsWrongType struct {
-		TestField  bool `settings:"arguments"`
-		TestField2 bool
 	}
 	testBadSettingsUnassignable struct {
 		testField  bool `settings:"arguments"`
@@ -570,7 +566,6 @@ func invalidParamSet() []parameters.Parameter {
 func (*testBadSettingsTagless) Parameters() parameters.Parameters        { return invalidParamSet() }
 func (*testBadSettingsNonStandardTag) Parameters() parameters.Parameters { return invalidParamSet() }
 func (*testBadSettingsShort) Parameters() parameters.Parameters          { return invalidParamSet() }
-func (*testBadSettingsWrongType) Parameters() parameters.Parameters      { return invalidParamSet() }
 func (*testBadSettingsUnassignable) Parameters() parameters.Parameters   { return invalidParamSet() }
 func (*testBadSettingsUnhandledType1) Parameters() parameters.Parameters { return invalidParamSet() }
 func (*testBadSettingsUnhandledType2) Parameters() parameters.Parameters { return invalidParamSet() }

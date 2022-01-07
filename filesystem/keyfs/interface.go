@@ -71,7 +71,7 @@ func (ki *keyInterface) Open(name string) (fs.File, error) {
 	}
 	translated, err := ki.translateName(name)
 	if err != nil {
-		return nil, err
+		return nil, errors.New(op, err)
 	}
 	return ki.ipns.Open(translated)
 }
@@ -98,7 +98,7 @@ func (ki *keyInterface) OpenDir(name string) (fs.ReadDirFile, error) {
 
 	translated, err := ki.translateName(name)
 	if err != nil {
-		return nil, err
+		return nil, errors.New(op, err)
 	}
 
 	return ipns.OpenDir(translated)
@@ -111,6 +111,6 @@ func (*keyInterface) Rename(_, _ string) error {
 	const op errors.Op = "keyfs.Rename"
 	// TODO: use abstract, consistent, error values
 	// (^ this means reimplementing pkg `iferrors` with new Go conventions)
-	//return errReadOnly
+	// return errReadOnly
 	return errors.New(op, errors.InvalidOperation)
 }

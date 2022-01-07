@@ -5,18 +5,12 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
-	"sort"
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/filesystem/errors"
+	gofs "github.com/djdv/go-filesystem-utils/filesystem/go"
 	"github.com/ipfs/go-mfs"
 )
-
-type entsByName []fs.DirEntry
-
-func (ents entsByName) Len() int           { return len(ents) }
-func (ents entsByName) Swap(i, j int)      { ents[i], ents[j] = ents[j], ents[i] }
-func (ents entsByName) Less(i, j int) bool { return ents[i].Name() < ents[j].Name() }
 
 func (md *mfsDirectory) Stat() (fs.FileInfo, error) { return md.stat, nil }
 
@@ -67,57 +61,37 @@ type mfsDirectory struct {
 	cancel context.CancelFunc
 	stat   *rootStat // TODO: don't store this here; generate a rootstat on demand
 	// store creation time here instead of the magic type cast+copy we do with the rootStat
-	mfsDir  *mfs.Directory
-	entries []mfs.NodeListing
-}
-
-func max(x, y int) int {
-	if x > y {
-		return x
-	}
-	return y
+	mfsDir *mfs.Directory
+	nodes  []mfs.NodeListing
 }
 
 func (md *mfsDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	const op errors.Op = "mfsDirectory.ReadDir"
 
-	entries := md.entries
-	if entries == nil {
-		ents, err := md.mfsDir.List(md.ctx)
+	nodes := md.nodes
+	if nodes == nil {
+		listings, err := md.mfsDir.List(md.ctx)
 		if err != nil {
 			return nil, errors.New(op, err) // TODO we could probably add more context
 		}
-		entries = ents
-		md.entries = entries
+		nodes = listings
+		md.nodes = nodes
 	}
 
-	var ents []fs.DirEntry
-	if count <= 0 {
-		// NOTE: [spec] This will cause the loop below to become infinite.
-		// This is intended by the fs.FS spec
-		count = -1
-		ents = make([]fs.DirEntry, 0, len(entries))
-	} else {
-		// If we're dealing with a finite amount, allocate for it.
-		// NOTE: If the caller passes an unreasonably large `count`,
-		// we do nothing to protect against OOM.
-		// This is to be considered a client-side implementation error
-		// and should be fixed caller side.
-		ents = make([]fs.DirEntry, 0, count)
-	}
-
-	for _, ent := range entries {
-		if count == 0 {
-			break
+	entries := make(chan fs.DirEntry, len(nodes))
+	go func() {
+		for _, node := range nodes {
+			select {
+			case entries <- &mfsDirEntry{
+				node:         node,
+				creationTime: *(*time.Time)(md.stat),
+			}:
+			case <-md.ctx.Done():
+				return
+			}
 		}
-		ents = append(ents, &mfsDirEntry{node: ent, creationTime: *(*time.Time)(md.stat)})
-		count--
-	}
-	md.entries = entries[len(ents):]
-
-	sort.Sort(entsByName(ents))
-
-	return ents, nil
+	}()
+	return gofs.ReadDir(count, entries)
 }
 
 func (md *mfsDirectory) Close() error {
@@ -165,6 +139,7 @@ func (es *entryStat) Size() int64        { return es.node.Size }
 func (es *entryStat) ModTime() time.Time { return es.creationTime }
 func (es *entryStat) IsDir() bool        { return es.Mode().IsDir() } // [spec] Don't hardcode this.
 func (es *entryStat) Sys() interface{}   { return es }
+
 func (es *entryStat) Mode() fs.FileMode {
 	// TODO: we should just stat the full node up front
 	// mfs ents don't give us enough information about the type here
