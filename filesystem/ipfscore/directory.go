@@ -15,21 +15,21 @@ import (
 
 type rootDirectory time.Time // Time of our creation.
 
-func (r *rootDirectory) Stat() (fs.FileInfo, error) { return (*rootStat)(r), nil }
+func (rd *rootDirectory) Stat() (fs.FileInfo, error) { return (*rootStat)(rd), nil }
 
-func (r *rootDirectory) Read([]byte) (int, error) {
+func (rd *rootDirectory) Read([]byte) (int, error) {
 	const op errors.Op = "root.Read"
 	return -1, errors.New(op, errors.IsDir)
 }
 
-func (r *rootDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
+func (rd *rootDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	if count > 0 {
 		return nil, io.EOF
 	}
 	return nil, nil
 }
 
-func (r *rootDirectory) Close() error { return nil }
+func (rd *rootDirectory) Close() error { return nil }
 
 // TODO: we should probablt split sequential directories from stream variants
 // one can embed the other - stream should be lighter and preferred (like the original was)
@@ -173,7 +173,7 @@ func (de *ufsDirEntry) Info() (fs.FileInfo, error) {
 	return &stat{
 		name:   de.DirEntry.Name,
 		typ:    de.DirEntry.Type,
-		size:   de.DirEntry.Size,
+		size:   de.Size,
 		crtime: de.crtime,
 	}, nil
 }

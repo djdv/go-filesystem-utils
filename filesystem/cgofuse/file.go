@@ -31,7 +31,7 @@ func (fuse *hostBinding) Open(path string, flags int) (int, uint64) {
 	defer fuse.systemLock.Access(path)()
 	fuse.log.Debugf("Open - {%X}%q", flags, path)
 
-	// TODO: this when OpenDir is implimented
+	// TODO: this when OpenDir is implemented
 	// if path == posixRoot {
 	//fs.log.Error(fuselib.Error(-fuselib.EISDIR))
 	//return -fuselib.EISDIR, errorHandle

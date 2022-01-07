@@ -36,24 +36,24 @@ type (
 )
 
 func (r *Response) String() string {
-	var sb strings.Builder
-	sb.WriteString("Daemon:")
+	var output strings.Builder
+	output.WriteString("Daemon:")
 	listeners := r.Listeners
 	if listeners == nil {
-		sb.WriteString("\n\tNo listeners")
+		output.WriteString("\n\tNo listeners")
 	}
 	for _, listenerMaddr := range listeners {
-		sb.WriteString("\n\tListening on: " + listenerMaddr.String())
+		output.WriteString("\n\tListening on: " + listenerMaddr.String())
 	}
-	sb.WriteRune('\n')
+	output.WriteRune('\n')
 
-	sb.WriteString(r.SystemController.String())
-	return sb.String()
+	output.WriteString(r.SystemController.String())
+	return output.String()
 }
 
 func (sc *SystemController) String() string {
 	var (
-		sb                  strings.Builder
+		output              strings.Builder
 		err                 = sc.Error
 		serviceNotInstalled = err != nil &&
 			errors.Is(err, service.ErrNotInstalled)
@@ -69,16 +69,16 @@ func (sc *SystemController) String() string {
 			status = "Unknown"
 		}
 	}
-	sb.WriteString(
+	output.WriteString(
 		"Service controller:" +
 			"\n\tStatus: " + status,
 	)
 	if err != nil && !serviceNotInstalled {
-		sb.WriteString("\n\tError: " + err.Error())
+		output.WriteString("\n\tError: " + err.Error())
 	}
 
-	sb.WriteRune('\n')
-	return sb.String()
+	output.WriteRune('\n')
+	return output.String()
 }
 
 // Status queries the status of the service daemon

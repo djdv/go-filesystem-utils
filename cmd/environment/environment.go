@@ -20,16 +20,16 @@ type (
 )
 
 func (env *environment) Daemon() Daemon {
-	d := env.daemon
-	if d == nil {
-		d = &daemon{
+	service := env.daemon
+	if service == nil {
+		service = &daemon{
 			mounter: mounter{
 				Context: context.TODO(),
 			},
 		}
-		env.daemon = d
+		env.daemon = service
 	}
-	return d
+	return service
 }
 
 func MakeEnvironment(_ context.Context, request *cmds.Request) (cmds.Environment, error) {

@@ -104,40 +104,38 @@ func (fuse *hostBinding) Readdir(path string,
 		// guarantee that we die on destroy at least.
 		readCtx, readCancel = context.WithCancel(context.TODO())
 		entries             = make(chan fs.DirEntry, buffSize)
-		// TODO: type saftey; revert this when the indexes are split
-		errs = filesystem.StreamDir(directory.goFile.(fs.ReadDirFile), readCtx, entries)
+		// TODO: type safety; revert this when the indexes are split
+		errs = filesystem.StreamDir(readCtx, directory.goFile.(fs.ReadDirFile), entries)
 	)
 	defer readCancel()
 
-	var (
-		statFn = func(ent fs.DirEntry) *fuselib.Stat_t {
-			if !canReaddirPlus {
-				return nil
-			}
-
-			goStat, err := ent.Info()
-			if err != nil {
-				fuse.log.Error(err)
-				return nil
-			}
-			mTime := fuselib.NewTimespec(goStat.ModTime())
-
-			// FIXME: We need to obtain these values during Opendir.
-			// And assign them here.
-			// They are NOT guaranteed to be valid within calls to Readdir.
-			// (some platforms may return data here)
-			//stat.Uid, stat.Gid, _ = fuselib.Getcontext()
-			return &fuselib.Stat_t{
-				Mode: goToPosix(goStat.Mode()) |
-					IRXA&^(fuselib.S_IXOTH), // TODO: const permissions; used here and in getattr
-				Size:     goStat.Size(),
-				Atim:     mTime,
-				Mtim:     mTime,
-				Ctim:     mTime,
-				Birthtim: mTime,
-			}
+	statFn := func(ent fs.DirEntry) *fuselib.Stat_t {
+		if !canReaddirPlus {
+			return nil
 		}
-	)
+
+		goStat, err := ent.Info()
+		if err != nil {
+			fuse.log.Error(err)
+			return nil
+		}
+		mTime := fuselib.NewTimespec(goStat.ModTime())
+
+		// FIXME: We need to obtain these values during Opendir.
+		// And assign them here.
+		// They are NOT guaranteed to be valid within calls to Readdir.
+		// (some platforms may return data here)
+		// stat.Uid, stat.Gid, _ = fuselib.Getcontext()
+		return &fuselib.Stat_t{
+			Mode: goToPosix(goStat.Mode()) |
+				IRXA&^(fuselib.S_IXOTH), // TODO: const permissions; used here and in getattr
+			Size:     goStat.Size(),
+			Atim:     mTime,
+			Mtim:     mTime,
+			Ctim:     mTime,
+			Birthtim: mTime,
+		}
+	}
 
 	// TODO: The flow control here isn't as obvious or direct as it probably could be.
 	for entries != nil {

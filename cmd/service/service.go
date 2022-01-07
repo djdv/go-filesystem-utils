@@ -185,14 +185,16 @@ func (svc *daemonCmdWrapper) Start(svcIntf service.Service) error {
 
 	// Daemon started successfully.
 	// Handle any post-init messages from the daemon in the background.
-	runErrs := make(chan error, 2)
+	runErrs := make(chan error)
 	go func() {
 		defer close(runErrs)
-		if startupErr := startup(); err != nil {
-			runErrs <- startupErr
-		}
-		if runErr := runtime(); err != nil {
-			runErrs <- runErr
+		for _, f := range []func() error{
+			startup,
+			runtime,
+		} {
+			if err := f(); err != nil {
+				runErrs <- err
+			}
 		}
 		if !sawStopResponse {
 			// Ask the system service manager to send our process its stop signal.

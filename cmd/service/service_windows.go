@@ -135,7 +135,7 @@ func getServiceSecurityTemplate(systemSid *windows.SID) (*windows.ACL, error) {
 }
 
 func getServiceSecurityAttributes(systemSid *windows.SID, dacl *windows.ACL) (*windows.SecurityAttributes, error) {
-	sd, err := windows.NewSecurityDescriptor()
+	securityDesc, err := windows.NewSecurityDescriptor()
 	if err != nil {
 		return nil, err
 	}
@@ -145,19 +145,19 @@ func getServiceSecurityAttributes(systemSid *windows.SID, dacl *windows.ACL) (*w
 		return nil, err
 	}
 
-	if err := sd.SetDACL(dacl, true, false); err != nil {
+	if err := securityDesc.SetDACL(dacl, true, false); err != nil {
 		return nil, err
 	}
-	if err := sd.SetOwner(systemSid, false); err != nil {
+	if err := securityDesc.SetOwner(systemSid, false); err != nil {
 		return nil, err
 	}
-	if err := sd.SetGroup(adminSid, false); err != nil {
+	if err := securityDesc.SetGroup(adminSid, false); err != nil {
 		return nil, err
 	}
 
 	securityAttributes := new(windows.SecurityAttributes)
 	securityAttributes.Length = uint32(unsafe.Sizeof(*securityAttributes))
-	securityAttributes.SecurityDescriptor = sd
+	securityAttributes.SecurityDescriptor = securityDesc
 
 	return securityAttributes, nil
 }

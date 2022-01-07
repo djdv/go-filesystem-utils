@@ -137,23 +137,23 @@ func New(args ...interface{}) error {
 		case Path:
 			e.Path = string(arg)
 		case string:
-			e.PathError.Err = errors.New(arg)
+			e.Err = errors.New(arg)
 		case Kind:
 			e.Kind = arg
 		case *Error:
 			// We may modify this value
 			// (we don't want to modify the original)
-			copy := *arg
-			e.PathError.Err = &copy
+			errCopy := *arg
+			e.Err = &errCopy
 		case error:
-			e.PathError.Err = arg
+			e.Err = arg
 		default:
 			panic(fmt.Errorf("unknown type %T, value %v in error call", arg, arg))
 		}
 	}
 
-	prev, ok := e.PathError.Err.(*Error)
-	if !ok {
+	var prev *Error
+	if !errors.As(e.Err, &prev) {
 		return e
 	}
 

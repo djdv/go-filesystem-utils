@@ -15,9 +15,6 @@ type (
 		data sync.RWMutex
 	}
 
-	// TODO: we don't actually do any reference counting or deletes yet
-	// the lock map can grow infinitely large right now.
-	// unlock fn needs to atomically decrement and acquire the global write lock.
 	fileSystemLockRef struct {
 		fileSystemLock
 		ref int
@@ -64,7 +61,7 @@ func pathIndex(path string) []int {
 	const (
 		delim      = '/'
 		indexAlloc = 8 // NOTE: Arbitrary; change if it makes sense to.
-		//Should be some average path depth.
+		// Should be some average path depth.
 	)
 	var (
 		fullPath       = len(path)
@@ -95,81 +92,7 @@ func pathIndex(path string) []int {
 
 func newOperationsLock() operationsLock { return new(mapPathLocker) }
 
-// TODO: dedupe; we should be able to reduce these down to a single function
-// that takes in a switch
-// E.g. lock(intermediates, target struct{path{r|w}, data{r|w})
-// just, something that informs it which locks to take for which components.
-
 func (ml *mapPathLocker) CreateOrDelete(fusePath string) unlockFn {
-	ml.global.Lock()
-	var (
-		locks          = ml.locks
-		componentIndex = pathIndex(fusePath)
-		lastComponent  = len(componentIndex) - 1
-		lockCount      = len(componentIndex)
-		lockers        = make([]lockFn, lockCount)
-		unlockers      = make([]unlockFn, lockCount)
-	)
-	if locks == nil {
-		locks = make(fsLockMap)
-		ml.locks = locks
-	}
-
-	for i, pIndex := range componentIndex {
-		var (
-			lockFn           lockFn
-			unlockFn         unlockFn
-			path             = fusePath[:pIndex]
-			lock, lockExists = locks[path]
-		)
-		if !lockExists {
-			lock = &fileSystemLockRef{ref: 1}
-			locks[path] = lock
-		} else {
-			lock.ref++
-		}
-
-		// Intermediates.
-		if i != lastComponent {
-			lockFn = lock.path.RLock
-			unlockFn = lock.path.RUnlock
-		} else { // Target.
-			lockFn = func() { lock.path.Lock(); lock.data.Lock() }
-			unlockFn = func() { lock.data.Unlock(); lock.path.Unlock() }
-		}
-
-		lockers[i] = lockFn
-		unlockers[i] = func() {
-			lock.ref--
-			if lock.ref == 0 {
-				delete(locks, path)
-			}
-			unlockFn()
-		}
-	}
-
-	ml.global.Unlock()
-
-	// Block the caller until they can do their operation.
-	for _, lockFn := range lockers {
-		lockFn()
-	}
-
-	return unlockerWithCleanup(ml, unlockers)
-}
-
-func unlockerWithCleanup(ml *mapPathLocker, unlockers []unlockFn) unlockFn {
-	return func() {
-		// We might manipulate the lock table if a lock's refcount is 0.
-		ml.global.Lock()
-		defer ml.global.Unlock()
-		for i := len(unlockers) - 1; i != -1; i-- {
-			unlockers[i]()
-		}
-	}
-}
-
-func (ml *mapPathLocker) Access(fusePath string) unlockFn {
 	ml.global.Lock()
 	var (
 		locks          = ml.locks
@@ -227,62 +150,23 @@ func (ml *mapPathLocker) Access(fusePath string) unlockFn {
 	return unlockerWithCleanup(ml, unlockers)
 }
 
+func unlockerWithCleanup(ml *mapPathLocker, unlockers []unlockFn) unlockFn {
+	return func() {
+		// We might manipulate the lock table if a lock's refcount is 0.
+		ml.global.Lock()
+		defer ml.global.Unlock()
+		for i := len(unlockers) - 1; i != -1; i-- {
+			unlockers[i]()
+		}
+	}
+}
+
+func (ml *mapPathLocker) Access(fusePath string) unlockFn {
+	return ml.CreateOrDelete(fusePath)
+}
+
 func (ml *mapPathLocker) Modify(fusePath string) unlockFn {
-	ml.global.Lock()
-	var (
-		locks          = ml.locks
-		componentIndex = pathIndex(fusePath)
-		lastComponent  = len(componentIndex) - 1
-		lockCount      = len(componentIndex)
-		lockers        = make([]lockFn, lockCount)
-		unlockers      = make([]unlockFn, lockCount)
-	)
-	if locks == nil {
-		locks = make(fsLockMap)
-		ml.locks = locks
-	}
-
-	for i, pIndex := range componentIndex {
-		var (
-			lockFn           lockFn
-			unlockFn         unlockFn
-			path             = fusePath[:pIndex]
-			lock, lockExists = locks[path]
-		)
-		if !lockExists {
-			lock = &fileSystemLockRef{ref: 1}
-			locks[path] = lock
-		} else {
-			lock.ref++
-		}
-
-		// Intermediates.
-		if i != lastComponent {
-			lockFn = lock.path.RLock
-			unlockFn = lock.path.RUnlock
-		} else { // Target.
-			lockFn = func() { lock.path.RLock(); lock.data.Lock() }
-			unlockFn = func() { lock.data.Unlock(); lock.path.RUnlock() }
-		}
-
-		lockers[i] = lockFn
-		unlockers[i] = func() {
-			lock.ref--
-			if lock.ref == 0 {
-				delete(locks, path)
-			}
-			unlockFn()
-		}
-	}
-
-	ml.global.Unlock()
-
-	// Block the caller until they can do their operation.
-	for _, lockFn := range lockers {
-		lockFn()
-	}
-
-	return unlockerWithCleanup(ml, unlockers)
+	return ml.CreateOrDelete(fusePath)
 }
 
 // TODO: We need this for write calls when implemented.

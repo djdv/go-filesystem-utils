@@ -21,7 +21,7 @@ type (
 	ID uint
 
 	MountPoint interface {
-		//Source() multiaddr.Multiaddr
+		// Source() multiaddr.Multiaddr
 		Target() multiaddr.Multiaddr
 		io.Closer
 	}
@@ -66,26 +66,26 @@ func RegisterPathMultiaddr() error {
 	})
 }
 
-func StringToID(s string) (ID, error) {
-	normalized := strings.ToLower(s)
+func StringToID(str string) (ID, error) {
+	normalized := strings.ToLower(str)
 	for i := idStart + 1; i != idEnd; i++ {
 		var (
-			id     ID = i
-			strVal    = strings.ToLower(id.String())
+			id     = i
+			strVal = strings.ToLower(id.String())
 		)
 		if normalized == strVal {
 			return id, nil
 		}
 	}
-	return 0, fmt.Errorf("invalid ID name \"%s\"", s)
+	return 0, fmt.Errorf("invalid ID name \"%s\"", str)
 }
 
 func StringToAPI(s string) (API, error) {
 	normalized := strings.ToLower(s)
 	for i := apiStart + 1; i != apiEnd; i++ {
 		var (
-			api    API = i
-			strVal     = strings.ToLower(api.String())
+			api    = i
+			strVal = strings.ToLower(api.String())
 		)
 		if normalized == strVal {
 			return api, nil

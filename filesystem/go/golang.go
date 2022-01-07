@@ -4,12 +4,9 @@ import (
 	"io"
 	"io/fs"
 	"sort"
-
-	"github.com/djdv/go-filesystem-utils/filesystem/errors"
 )
 
 func ReadDir(count int, entries <-chan fs.DirEntry) ([]fs.DirEntry, error) {
-	const op errors.Op = "gofs.ReadDir"
 	var ents []fs.DirEntry
 	if count > 0 {
 		// If we're dealing with a finite amount, allocate for it.

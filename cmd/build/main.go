@@ -59,5 +59,5 @@ func main() {
 			err, output,
 		)
 	}
-	fmt.Printf("%s", output)
+	fmt.Fprint(os.Stdout, string(output))
 }

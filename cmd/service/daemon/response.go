@@ -16,10 +16,10 @@ import (
 type (
 	Status   uint
 	Response struct {
-		ListenerMaddr *fscmds.Multiaddr  `json:",omitempty"`
-		Info          string             `json:",omitempty"`
-		Status        Status             `json:",omitempty"`
-		StopReason    environment.Reason `json:",omitempty"`
+		ListenerMaddr *fscmds.Multiaddr  `json:"listenerMaddr,omitempty"`
+		Info          string             `json:"info,omitempty"`
+		Status        Status             `json:"status,omitempty"`
+		StopReason    environment.Reason `json:"stopReason,omitempty"`
 	}
 	ResponseResult struct {
 		*Response

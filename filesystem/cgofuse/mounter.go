@@ -56,7 +56,6 @@ func NewMounter(ctx context.Context, fileSystem fs.FS) (filesystem.Mounter, erro
 }
 
 func (m *mounter) Mount(ctx context.Context, target multiaddr.Multiaddr) (filesystem.MountPoint, error) {
-
 	// NOTE: We don't use target.ValueForProtocol
 	// because it processes the value, rather than returning it raw.
 	// (For filepaths this can cause issues on non-Unix systems)

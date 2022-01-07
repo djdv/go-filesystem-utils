@@ -59,8 +59,8 @@ type (
 )
 
 // TODO: review; hasty
-func StreamDir(directory fs.ReadDirFile,
-	ctx context.Context, entries chan<- fs.DirEntry) <-chan error {
+func StreamDir(ctx context.Context,
+	directory fs.ReadDirFile, entries chan<- fs.DirEntry) <-chan error {
 	stream, ok := directory.(StreamDirFile)
 	if ok {
 		return stream.StreamDir(ctx, entries)

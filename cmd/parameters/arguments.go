@@ -364,7 +364,7 @@ func assignToArgument(argument *Argument, value interface{}) error {
 		}
 		value = maddrs
 	case *filesystem.ID:
-		if _, isId := value.(filesystem.ID); isId {
+		if _, isID := value.(filesystem.ID); isID {
 			break // Direct assign, no parsing.
 		}
 
@@ -378,7 +378,7 @@ func assignToArgument(argument *Argument, value interface{}) error {
 		}
 		value = id
 	case *filesystem.API:
-		if _, isApi := value.(filesystem.API); isApi {
+		if _, isAPI := value.(filesystem.API); isAPI {
 			break // Direct assign, no parsing.
 		}
 
