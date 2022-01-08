@@ -57,7 +57,7 @@ var Command = &cmds.Command{
 
 // CmdsPath returns the leading parameters
 // to invoke the daemon's `Run` method from `main`.
-func CmdsPath() []string { return []string{"service", "daemon"} }
+func CmdsPath() []string { return []string{"service", Name} }
 
 func daemonPreRun(*cmds.Request, cmds.Environment) error {
 	return filesystem.RegisterPathMultiaddr()

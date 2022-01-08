@@ -13,7 +13,6 @@ import (
 	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
-	manet "github.com/multiformats/go-multiaddr/net"
 )
 
 const Name = "service"
@@ -84,9 +83,11 @@ func serviceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.En
 		err = fmt.Errorf("sysListener returned err: %w", err)
 		return err
 	}
+	if serviceListeners != nil {
+		daemon.UseListeners(serviceListeners...)
+	}
 
 	serviceInterface.sysLog = sysLog
-	serviceInterface.sysListeners = serviceListeners
 	serviceInterface.cleanup = cleanup
 
 	return serviceController.Run()
@@ -101,8 +102,6 @@ type (
 		sysLog  service.Logger
 		runErrs <-chan error
 		cleanup cleanupFunc
-
-		sysListeners []manet.Listener
 	}
 )
 
@@ -115,7 +114,6 @@ func logErr(logger service.Logger, err error) error {
 	return err
 }
 
-// TODO: comments may be out of date - we refactored things. Make a pass.
 func (svc *daemonCmdWrapper) Start(svcIntf service.Service) error {
 	if svc.runErrs != nil {
 		return errors.New("service already started")
@@ -125,22 +123,12 @@ func (svc *daemonCmdWrapper) Start(svcIntf service.Service) error {
 		sysLog         = svc.sysLog
 		serviceRequest = svc.serviceRequest
 		ctx            = serviceRequest.Context
-		// NOTE: We use an absolute cmds path for the request,
-		// rather than just appending relative to request.Path.
-		// This is because the daemon will serve the passed in Root,
-		// not become a/the cmds Root itself, with this request as a base.
-		// I.e. `service daemon stop` needs to be valid,
-		// even if service is started from  `service start`
-		// (relative valid path would be: `service start daemon stop` which is wrong)
-		daemonCmdPath = []string{Name, daemon.Name}
 	)
-
-	daemonRequest, err := cmds.NewRequest(ctx, daemonCmdPath,
+	daemonRequest, err := cmds.NewRequest(ctx, daemon.CmdsPath(),
 		serviceRequest.Options, nil, nil, serviceRequest.Root)
 	if err != nil {
 		return logErr(sysLog, err)
 	}
-	daemon.SetExistingListeners(daemonRequest, svc.sysListeners...)
 
 	// The daemon command should block until the daemon stops listening
 	// or encounters an error. Emitting responses while it runs.

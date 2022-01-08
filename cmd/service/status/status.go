@@ -70,7 +70,7 @@ func (sc *SystemController) String() string {
 	return output.String()
 }
 
-// Status queries the status of the service daemon
+// Command status queries the status of the service daemon
 // and the operating system's own service manager.
 var Command = &cmds.Command{
 	Helptext: cmds.HelpText{

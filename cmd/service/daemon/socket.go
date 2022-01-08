@@ -20,12 +20,9 @@ const (
 	cmdsSocketKey byte = asciiENQ
 )
 
-// TODO: return error?
-func SetExistingListeners(request *cmds.Request,
-	listeners ...manet.Listener) {
-	extra := request.Command.Extra
-	// TODO: check extra for existing listeners and append if found?
-	request.Command.Extra = extra.SetValue(cmdsSocketKey, listeners)
+// UseListeners will use the provided listeners during daemon initialization.
+func UseListeners(listeners ...manet.Listener) {
+	Command.Extra = Command.Extra.SetValue(cmdsSocketKey, listeners)
 }
 
 type closer func() error
