@@ -9,10 +9,10 @@ import (
 	"sync"
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
 	"github.com/djdv/go-filesystem-utils/filesystem"
+	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -31,10 +31,10 @@ type (
 	}
 )
 
-// End Of Transmission `♦` may be sent to stdin.
-// Sender must close stdin after sending the signal.
-// Receiver will close stdout and stderr.
 const (
+	// End Of Transmission `♦` may be sent to stdin.
+	// Sender must close stdin after sending the signal.
+	// Receiver will close stdout and stderr.
 	ASCIIEOT stdioSignal = 0x4
 
 	Name = "daemon"

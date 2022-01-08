@@ -2,8 +2,8 @@ package stop
 
 import (
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
+	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 

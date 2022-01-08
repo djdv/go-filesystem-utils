@@ -15,17 +15,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-/* NOTE: [MSDN]
-"If an application requires normal Users to have write access to an application
-specific subdirectory of CSIDL_COMMON_APPDATA,
-then the application must explicitly modify the security
-on that sub-directory during application setup."
-
-WSA currently (v19043.928) requires
-read, write, and delete for unix domain sockets to `connect`.
-We want 'Users' to be able to do that, so we allow that access
-on files underneath the service directory.
-*/
 func systemListeners(maddrsProvided bool, sysLog service.Logger) (serviceListeners []manet.Listener,
 	cleanup func() error, err error) {
 	if maddrsProvided {
@@ -38,32 +27,63 @@ func systemListeners(maddrsProvided bool, sysLog service.Logger) (serviceListene
 		}
 	}()
 
-	var (
-		systemSid          *windows.SID
-		dacl               *windows.ACL
-		securityAttributes *windows.SecurityAttributes
-		pszServiceDir      *uint16
-		serviceDir         = filepath.Join(
-			xdg.ConfigDirs[len(xdg.ConfigDirs)-1],
-			daemon.ServerRootName,
-		)
+	serviceDir := filepath.Join(
+		xdg.ConfigDirs[len(xdg.ConfigDirs)-1],
+		daemon.ServerRootName,
 	)
+	if cleanup, err = createSystemServiceDirectory(serviceDir); err != nil {
+		return
+	}
 
-	if systemSid, err = windows.CreateWellKnownSid(windows.WinLocalSystemSid); err != nil {
+	serviceListeners, err = systemServiceListen(serviceDir)
+	return
+}
+
+/* NOTE:
+1) [MSDN]
+"If an application requires normal Users to have write access to an application
+specific subdirectory of CSIDL_COMMON_APPDATA,
+then the application must explicitly modify the security
+on that sub-directory during application setup."
+
+2)
+WSA currently (v19043.928) requires
+read, write, and delete for `connect` to succeed with unix domain sockets.
+We allow to be able to do that, so we allow that access
+on files underneath the service directory.
+*/
+func createSystemServiceDirectory(serviceDir string) (cleanup func() error, err error) {
+	var (
+		systemSid, adminSid, usersSid *windows.SID
+		dacl                          *windows.ACL
+		securityAttributes            *windows.SecurityAttributes
+		pszServiceDir                 *uint16
+	)
+	{
+		sids := []**windows.SID{&systemSid, &adminSid, &usersSid}
+		for i, sid := range []windows.WELL_KNOWN_SID_TYPE{
+			windows.WinLocalSystemSid,
+			windows.WinBuiltinAdministratorsSid,
+			windows.WinBuiltinUsersSid,
+		} {
+			if *(sids[i]), err = windows.CreateWellKnownSid(sid); err != nil {
+				return
+			}
+		}
+	}
+
+	if dacl, err = makeServiceACL(systemSid, usersSid); err != nil {
 		return
 	}
-	if dacl, err = getServiceSecurityTemplate(systemSid); err != nil {
-		return
-	}
-	if securityAttributes, err = getServiceSecurityAttributes(systemSid, dacl); err != nil {
+	if securityAttributes, err = makeServiceSecurityAttributes(systemSid, adminSid, dacl); err != nil {
 		return
 	}
 	if pszServiceDir, err = windows.UTF16PtrFromString(serviceDir); err != nil {
 		return
 	}
 
-	// NOTE: Regardless of the state of the file system, we're about to own
-	// - and later destroy - this directory.
+	// NOTE: Regardless of the state of the file system;
+	// we're about to own (and later destroy) this directory.
 	if err = windows.CreateDirectory(pszServiceDir, securityAttributes); err != nil {
 		if !errors.Is(err, fs.ErrExist) {
 			return
@@ -80,67 +100,44 @@ func systemListeners(maddrsProvided bool, sysLog service.Logger) (serviceListene
 	// Allow the service directory to be deleted
 	// when the caller is done with it.
 	cleanup = func() error { return os.Remove(serviceDir) }
-
-	// Create a socket within the service directory
-	// and start listening on it.
-	var (
-		socketPath      = filepath.Join(serviceDir, daemon.ServerName)
-		multiaddrString = "/unix/" + socketPath
-		serviceMaddr    multiaddr.Multiaddr
-		listener        manet.Listener
-	)
-	if serviceMaddr, err = multiaddr.NewMultiaddr(multiaddrString); err != nil {
-		return
-	}
-	if listener, err = manet.Listen(serviceMaddr); err != nil {
-		return
-	}
-
-	serviceListeners = []manet.Listener{listener}
 	return
 }
 
-func getServiceSecurityTemplate(systemSid *windows.SID) (*windows.ACL, error) {
-	usersSid, err := windows.CreateWellKnownSid(windows.WinBuiltinUsersSid)
-	if err != nil {
-		return nil, err
-	}
+func makeServiceACL(ownerSid, clientSid *windows.SID) (*windows.ACL, error) {
 	aces := []windows.EXPLICIT_ACCESS{
-		{ // recursive ALL for systemSid
+		{ // Service level 0+ (/**)
+			// Grant ALL ...
 			AccessPermissions: windows.GENERIC_ALL,
 			AccessMode:        windows.GRANT_ACCESS,
-			Inheritance:       windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT,
-			Trustee: windows.TRUSTEE{
+			Inheritance:       windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT, // recursively ...
+			Trustee: windows.TRUSTEE{ // ... to the service owner.
 				TrusteeForm:  windows.TRUSTEE_IS_SID,
 				TrusteeType:  windows.TRUSTEE_IS_USER,
-				TrusteeValue: windows.TrusteeValueFromSID(systemSid),
+				TrusteeValue: windows.TrusteeValueFromSID(ownerSid),
 			},
 		},
-		{ // level 1 files (/service-dir/*), such as the unix socket
+		{ // Level 1 - (/*)
+			// Grant permissions required to operate Unix socket objects ...
 			AccessPermissions: windows.GENERIC_READ |
 				windows.GENERIC_WRITE |
 				windows.DELETE,
 			AccessMode: windows.GRANT_ACCESS,
-			Inheritance: windows.OBJECT_INHERIT_ACE |
-				windows.INHERIT_ONLY_ACE | // does not apply to the container (level 0)
-				windows.INHERIT_NO_PROPAGATE, // level 2+ does not get this
-			Trustee: windows.TRUSTEE{
+			Inheritance: windows.INHERIT_ONLY_ACE | // but not in our container (Level 0) ...
+				windows.OBJECT_INHERIT_ACE | // and only to objects (files in Level 1) ...
+				windows.INHERIT_NO_PROPAGATE, // and not in levels 2+ ...
+			Trustee: windows.TRUSTEE{ // ... to clients of this scope.
 				TrusteeForm:  windows.TRUSTEE_IS_SID,
 				TrusteeType:  windows.TRUSTEE_IS_GROUP,
-				TrusteeValue: windows.TrusteeValueFromSID(usersSid),
+				TrusteeValue: windows.TrusteeValueFromSID(clientSid),
 			},
 		},
 	}
 	return windows.ACLFromEntries(aces, nil)
 }
 
-func getServiceSecurityAttributes(systemSid *windows.SID, dacl *windows.ACL) (*windows.SecurityAttributes, error) {
+func makeServiceSecurityAttributes(ownerSid, groupSid *windows.SID,
+	dacl *windows.ACL) (*windows.SecurityAttributes, error) {
 	securityDesc, err := windows.NewSecurityDescriptor()
-	if err != nil {
-		return nil, err
-	}
-
-	adminSid, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
 	if err != nil {
 		return nil, err
 	}
@@ -148,10 +145,10 @@ func getServiceSecurityAttributes(systemSid *windows.SID, dacl *windows.ACL) (*w
 	if err := securityDesc.SetDACL(dacl, true, false); err != nil {
 		return nil, err
 	}
-	if err := securityDesc.SetOwner(systemSid, false); err != nil {
+	if err := securityDesc.SetOwner(ownerSid, false); err != nil {
 		return nil, err
 	}
-	if err := securityDesc.SetGroup(adminSid, false); err != nil {
+	if err := securityDesc.SetGroup(groupSid, false); err != nil {
 		return nil, err
 	}
 
@@ -160,4 +157,23 @@ func getServiceSecurityAttributes(systemSid *windows.SID, dacl *windows.ACL) (*w
 	securityAttributes.SecurityDescriptor = securityDesc
 
 	return securityAttributes, nil
+}
+
+func systemServiceListen(serviceDir string) ([]manet.Listener, error) {
+	var (
+		socketPath      = filepath.Join(serviceDir, daemon.ServerName)
+		multiaddrString = "/unix/" + socketPath
+		serviceMaddr    multiaddr.Multiaddr
+		listener        manet.Listener
+	)
+	serviceMaddr, err := multiaddr.NewMultiaddr(multiaddrString)
+	if err != nil {
+		return nil, err
+	}
+	listener, err = manet.Listen(serviceMaddr)
+	if err != nil {
+		return nil, err
+	}
+
+	return []manet.Listener{listener}, nil
 }

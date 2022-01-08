@@ -11,17 +11,6 @@ import (
 	"github.com/multiformats/go-multiaddr"
 )
 
-// controller implements a `Service`,
-// that can (only) query the service's status
-// and issue control requests;
-// it is not runnable.
-type controller struct{}
-
-var errControlOnly = errors.New("tried to run service client, not service itself")
-
-func (*controller) Start(service.Service) error { return errControlOnly }
-func (*controller) Stop(service.Service) error  { return errControlOnly }
-
 const Name = "status"
 
 type (
@@ -100,7 +89,7 @@ var Command = &cmds.Command{
 		serviceConfig := host.ServiceConfig(&settings.Host)
 
 		// Query the host system service manager.
-		serviceClient, err := service.New((*controller)(nil), serviceConfig)
+		serviceClient, err := service.New((service.Interface)(nil), serviceConfig)
 		if err != nil {
 			return err
 		}
@@ -150,76 +139,3 @@ func defaultMaddrs() ([]multiaddr.Multiaddr, error) {
 	}
 	return append(userMaddrs, systemMaddrs...), nil
 }
-
-/*
-func formatStatus(response cmds.Response, emitter cmds.ResponseEmitter) error {
-	outputs := formats.MakeOptionalOutputs(response.Request(), emitter)
-	for {
-		untypedResponse, err := response.Next()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				err = nil
-			}
-			return err
-		}
-
-		responseValue, ok := untypedResponse.(*Response)
-		if !ok {
-			return cmds.Errorf(cmds.ErrImplementation,
-				"emitter sent unexpected type+value: %#v", untypedResponse)
-		}
-
-		if err := outputs.Emit(responseValue); err != nil {
-			return err
-		}
-
-		var (
-			daemonStatus    string
-			daemonListeners = responseValue.Listeners
-		)
-		if len(daemonListeners) == 0 {
-			daemonStatus = "Daemon: Not running.\n"
-		} else {
-			// TODO: tabularize instead
-			var sb strings.Builder
-			sb.WriteString("Daemon listening on:")
-			for _, listenerMaddr := range daemonListeners {
-				sb.WriteString("\n\t" + listenerMaddr.String())
-			}
-			sb.WriteString("\n")
-			daemonStatus = sb.String()
-		}
-		if err = outputs.Print(daemonStatus); err != nil {
-			return err
-		}
-
-		var (
-			svcErr              = responseValue.SystemController.Error
-			serviceNotInstalled = svcErr != nil &&
-				errors.Is(svcErr, service.ErrNotInstalled)
-		)
-		if svcErr != nil && !serviceNotInstalled {
-			controllerMessage := fmt.Sprintf("Service controller: %s\n",
-				svcErr)
-			if err = outputs.Print(controllerMessage); err != nil {
-				return err
-			}
-		}
-
-		if err := outputs.Print("System service status: "); err != nil {
-			return err
-		}
-
-		var serviceStatus string
-		if serviceNotInstalled {
-			serviceStatus = "Not Installed.\n"
-		} else {
-			serviceStatus = statusString(responseValue.SystemController.Status) + ".\n"
-		}
-
-		if err := outputs.Print(serviceStatus); err != nil {
-			return err
-		}
-	}
-}
-*/

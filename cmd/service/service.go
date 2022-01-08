@@ -6,12 +6,11 @@ import (
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
-	"github.com/djdv/go-filesystem-utils/cmd/service/control"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/service/host"
 	"github.com/djdv/go-filesystem-utils/cmd/service/status"
+	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
 	manet "github.com/multiformats/go-multiaddr/net"
@@ -28,27 +27,14 @@ var Command = &cmds.Command{
 	Options:  parameters.CmdsOptionsFrom((*Settings)(nil)),
 	Encoders: fscmds.CmdsEncoders,
 	Type:     daemon.Response{},
-	Subcommands: func() map[string]*cmds.Command {
-		const staticCommands = 2
-		var (
-			actions         = service.ControlAction[:]
-			controlCommands = control.GenerateCommands(actions...)
-
-			dynamicCommands = len(controlCommands)
-			subcommands     = make(map[string]*cmds.Command,
-				staticCommands+dynamicCommands)
-		)
-
-		// Dynamic Commands:
-		for i, action := range actions {
-			subcommands[action] = controlCommands[i]
-		}
-
-		// Static commands:
-		subcommands[status.Name] = status.Command
-		subcommands[daemon.Name] = daemon.Command
-
-		return subcommands
+	Subcommands: func() (subCmds map[string]*cmds.Command) {
+		const staticCmdsCount = 2
+		subCmds = make(map[string]*cmds.Command,
+			staticCmdsCount+len(service.ControlAction))
+		subCmds[status.Name] = status.Command
+		subCmds[daemon.Name] = daemon.Command
+		registerControllerCommands(subCmds, service.ControlAction[:]...)
+		return
 	}(),
 }
 
@@ -154,13 +140,7 @@ func (svc *daemonCmdWrapper) Start(svcIntf service.Service) error {
 	if err != nil {
 		return logErr(sysLog, err)
 	}
-
-	// TODO: HACK
-	// This is not a real solution, we need to do arguments properly (later)
-	extra := new(cmds.Extra)
-	extra.SetValue("magic", svc.sysListeners)
-	daemonRequest.Command.Extra = extra
-	//
+	daemon.SetExistingListeners(daemonRequest, svc.sysListeners...)
 
 	// The daemon command should block until the daemon stops listening
 	// or encounters an error. Emitting responses while it runs.

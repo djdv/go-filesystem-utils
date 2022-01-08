@@ -15,6 +15,19 @@ import (
 	manet "github.com/multiformats/go-multiaddr/net"
 )
 
+const (
+	asciiENQ           = 0x5
+	cmdsSocketKey byte = asciiENQ
+)
+
+// TODO: return error?
+func SetExistingListeners(request *cmds.Request,
+	listeners ...manet.Listener) {
+	extra := request.Command.Extra
+	// TODO: check extra for existing listeners and append if found?
+	request.Command.Extra = extra.SetValue(cmdsSocketKey, listeners)
+}
+
 type closer func() error
 
 func (fn closer) Close() error { return fn() }
@@ -212,22 +225,9 @@ func generateListeners(ctx context.Context, request *cmds.Request,
 	return listenersFromDefaults(ctx)
 }
 
-// TODO: We need a way to pass listeners from `service` to `daemon`.
-// Easiest way would be to add a parameter for it of type `[]net.Listener`.
-// This would need to be of typed as `[]string` in the cmds.Option,
-// which could be in a specific format.
-// Anything usable with `os.NewFile`->`net.FileListener`.
-// E.g.
-// CSV of `file-descriptor $groupseperator  file-name`
-// As `fs.exe service daemon --existing-sockets="3:systemdSock1,4:systemdSock2"`
-//
-// For now, we can sidestep this at the API level and just use command.Extra
-// (from within `service`, after copying `daemon` add the listeners, then call execute on that)
-// But this is not a proper solution, it's only temporary to not break the existing feature
-// while separating the commands implementations.
 func listenersFromCmdsExtra(ctx context.Context,
 	cmdsExtra *cmds.Extra) (<-chan listenResult, error) {
-	cmdsListeners, provided := cmdsExtra.GetValue("magic")
+	cmdsListeners, provided := cmdsExtra.GetValue(cmdsSocketKey)
 	if !provided {
 		return nil, nil
 	}
@@ -241,16 +241,10 @@ func listenersFromCmdsExtra(ctx context.Context,
 			cmdsListeners,
 		)
 	}
+	if len(listeners) == 0 {
+		return nil, nil
+	}
 
-	// TODO: replace this direct copy to something like (fd=>listener)
-	// caller passes as --someArg=fd1:unix,fd2:tcp,...
-	// maybe --unix-listeners=fd1,--tcp-listeners=fd2,...
-	// the caller would parse this and pass it to us.
-	// Like (unix,tcp,udp []fdint) or something.
-	// NOTE: Currently, no error is possible
-	// since listeners are passed and asserted directly.
-	// This will likely change when going from
-	// fd (int) -> go interface assertions, done for each fd.
 	results := make(chan listenResult, len(listeners))
 	go func() {
 		defer close(results)

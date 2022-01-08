@@ -3,15 +3,13 @@ package daemon
 import (
 	"context"
 
-	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	"github.com/djdv/go-filesystem-utils/cmd/parameters"
+	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
 type Settings struct {
 	fscmds.Settings
-	// TODO: --file-ids=[]FID{$fileSocket, $tcpListener, ...} <- come from os/service manager
-	// ^ current workaround is using cmds.request.extra["magic"] <- remove this for that ^
 }
 
 func (*Settings) Parameters() parameters.Parameters {
