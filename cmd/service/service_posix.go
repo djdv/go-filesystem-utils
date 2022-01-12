@@ -10,7 +10,7 @@ import (
 
 	"github.com/adrg/xdg"
 	"github.com/coreos/go-systemd/activation"
-	fscmds "github.com/djdv/go-filesystem-utils/filesystem/cmds"
+	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/kardianos/service"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
@@ -49,7 +49,7 @@ func systemListeners(maddrsProvided bool, sysLog service.Logger) (serviceListene
 		socketPath   string
 		serviceMaddr multiaddr.Multiaddr
 	)
-	socketPath, err = xdg.ConfigFile(filepath.Join(fscmds.ServiceName, fscmds.ServerName))
+	socketPath, err = xdg.ConfigFile(filepath.Join(daemon.ServerRootName, daemon.ServerName))
 	if err != nil {
 		return
 	}
@@ -59,7 +59,11 @@ func systemListeners(maddrsProvided bool, sysLog service.Logger) (serviceListene
 	if serviceMaddr, err = multiaddr.NewMultiaddr(multiaddrString); err != nil {
 		return
 	}
-	serviceListeners, err = listen(serviceMaddr)
+	var listener manet.Listener
+	if listener, err = manet.Listen(serviceMaddr); err != nil {
+		return
+	}
+	serviceListeners = []manet.Listener{listener}
 
 	return
 }
