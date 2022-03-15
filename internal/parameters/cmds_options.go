@@ -92,26 +92,43 @@ func MustMakeCmdsOptions(set Settings, options ...CmdsOptionOption) []cmds.Optio
 	}
 
 	var (
+		maybeBuiltin        []cmds.Option
 		constructorSettings = parseCmdsOptionOptions(options...)
-		makers              = constructorSettings.customMakers
-
-		parameterCount = len(parameters)
-		cmdsOptions    = make([]cmds.Option, 0, parameterCount)
-		makeOpt        = func(field optionField) error {
-			cmdsOptions = append(cmdsOptions,
-				makeCmdsOption(field.StructField, field.Parameter, makers))
-			return nil
-		}
 	)
-	if err := forEachOrError(ctx, optionFields, generatorErrs, makeOpt); err != nil {
-		panic(err)
-	}
-
 	if constructorSettings.includeBuiltin {
-		cmdsOptions = appendBuiltinOptions(cmdsOptions)
+		maybeBuiltin = builtinOptions()
 	}
 
+	var (
+		parameterCount = len(parameters)
+		cmdsOptions    = make([]cmds.Option, 0, parameterCount+len(maybeBuiltin))
+	)
+	if parameterCount != 0 {
+		var (
+			makers  = constructorSettings.customMakers
+			makeOpt = func(field optionField) error {
+				cmdsOptions = append(cmdsOptions,
+					makeCmdsOption(field.StructField, field.Parameter, makers))
+				return nil
+			}
+		)
+		if err := forEachOrError(ctx, optionFields, generatorErrs, makeOpt); err != nil {
+			panic(err)
+		}
+	}
+
+	cmdsOptions = append(cmdsOptions, maybeBuiltin...)
 	return cmdsOptions
+}
+
+func builtinOptions() []cmds.Option {
+	return []cmds.Option{
+		cmds.OptionEncodingType,
+		cmds.OptionTimeout,
+		cmds.OptionStreamChannels,
+		cmds.BoolOption(cmds.OptLongHelp, "Show the full command help text."),
+		cmds.BoolOption(cmds.OptShortHelp, "Show a short version of the command help text."),
+	}
 }
 
 func optionsFromSettings(ctx context.Context, set Settings) (optionFields, errorCh, error) {
@@ -222,16 +239,6 @@ func skipEmbeddedOptions(field reflect.StructField,
 	}
 
 	return fieldBuffer, skipped, nil
-}
-
-func appendBuiltinOptions(options []cmds.Option) []cmds.Option {
-	return append(options,
-		cmds.OptionEncodingType,
-		cmds.OptionTimeout,
-		cmds.OptionStreamChannels,
-		cmds.BoolOption(cmds.OptLongHelp, "Show the full command help text."),
-		cmds.BoolOption(cmds.OptShortHelp, "Show a short version of the command help text."),
-	)
 }
 
 func makeCmdsOption(field reflect.StructField, parameter Parameter, makers optionMakers) cmds.Option {
