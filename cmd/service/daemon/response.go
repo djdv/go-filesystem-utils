@@ -292,27 +292,28 @@ func validateResponses(responses <-chan ResponseResult) <-chan ResponseResult {
 				results <- result
 				continue
 			}
-			if err := validateResponse(firstResponse, result.Response); err != nil {
+			if err := validateResponse(&firstResponse, result.Response); err != nil {
 				results <- ResponseResult{error: err}
 				continue
 			}
-			firstResponse = false
+			//firstResponse = false
 			results <- result
 		}
 	}()
 	return results
 }
 
-func validateResponse(firstResponse bool, response *Response) (err error) {
+func validateResponse(firstResponse *bool, response *Response) (err error) {
 	switch response.Status {
 	case Starting:
 		encodedMaddr := response.ListenerMaddr
-		if firstResponse &&
-			encodedMaddr != nil {
-			err = fmt.Errorf("did not expect maddr with starting response: %v", encodedMaddr)
-		}
-		if !firstResponse &&
-			encodedMaddr == nil {
+		if *firstResponse {
+			if encodedMaddr != nil {
+				err = fmt.Errorf("did not expect maddr with starting response: %v", encodedMaddr)
+			} else {
+				*firstResponse = false
+			}
+		} else if encodedMaddr == nil {
 			err = errors.New("listener response did not contain listener maddr")
 		}
 	case Status(0):
