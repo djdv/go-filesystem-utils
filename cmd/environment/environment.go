@@ -11,9 +11,22 @@ import (
 )
 
 type (
-	Environment interface{}
-	environment struct{}
+	Environment interface {
+		Daemon() Daemon
+	}
+	environment struct {
+		*daemon
+	}
 )
+
+func (env *environment) Daemon() Daemon {
+	service := env.daemon
+	if service == nil {
+		service = &daemon{}
+		env.daemon = service
+	}
+	return service
+}
 
 func MakeEnvironment(_ context.Context, request *cmds.Request) (cmds.Environment, error) {
 	return new(environment), nil

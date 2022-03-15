@@ -10,6 +10,7 @@ import (
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/executor"
 	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
+	"github.com/djdv/go-filesystem-utils/cmd/service"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
@@ -24,6 +25,9 @@ func main() {
 			),
 			Helptext: cmds.HelpText{
 				Tagline: "File system service utility.",
+			},
+			Subcommands: map[string]*cmds.Command{
+				service.Name: service.Command,
 			},
 		}
 		// cmdline[0] is used literally in helptext generation.
