@@ -80,8 +80,9 @@ func handlers() []parameters.TypeParser {
 	}
 }
 
-func MakeOptions[setPtr SetConstraint[setPtr]](empty setPtr) []cmds.Option {
-	return parameters.MustMakeCmdsOptions(empty, optionMakers()...)
+func MakeOptions[setPtr SetConstraint[setPtr]](empty setPtr,
+	options ...parameters.CmdsOptionOption) []cmds.Option {
+	return parameters.MustMakeCmdsOptions(empty, append(optionMakers(), options...)...)
 }
 
 func optionMakers() []parameters.CmdsOptionOption {

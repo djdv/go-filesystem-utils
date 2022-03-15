@@ -23,7 +23,7 @@ func main() {
 	var (
 		ctx  = context.Background()
 		root = &cmds.Command{
-			Options: parameters.MustMakeCmdsOptions((*settings.Settings)(nil),
+			Options: settings.MakeOptions((*settings.Settings)(nil),
 				parameters.WithBuiltin(true),
 			),
 			Helptext: cmds.HelpText{
