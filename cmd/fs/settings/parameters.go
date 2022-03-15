@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/djdv/go-filesystem-utils/filesystem"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
@@ -33,29 +34,6 @@ func (*Settings) Parameters() parameters.Parameters {
 	}
 }
 
-func handlers() []parameters.TypeParser {
-	var (
-		maddrType   = reflect.TypeOf((*multiaddr.Multiaddr)(nil)).Elem()
-		maddrParser = func(argument string) (interface{}, error) {
-			return multiaddr.NewMultiaddr(argument)
-		}
-		durationType   = reflect.TypeOf((*time.Duration)(nil)).Elem()
-		durationParser = func(argument string) (interface{}, error) {
-			return time.ParseDuration(argument)
-		}
-	)
-	return []parameters.TypeParser{
-		{
-			Type:      maddrType,
-			ParseFunc: maddrParser,
-		},
-		{
-			Type:      durationType,
-			ParseFunc: durationParser,
-		},
-	}
-}
-
 type SetConstraint[structPtr any] interface {
 	parameters.Settings
 }
@@ -70,6 +48,68 @@ func ParseAll[setPtr SetConstraint[setPtr]](ctx context.Context,
 		}
 	)
 	return parameters.Parse(ctx, empty, sources, typeHandlers...)
+}
+
+// TODO: Name.
+func handlers() []parameters.TypeParser {
+	return []parameters.TypeParser{
+		{
+			Type: reflect.TypeOf((*multiaddr.Multiaddr)(nil)).Elem(),
+			ParseFunc: func(argument string) (interface{}, error) {
+				return multiaddr.NewMultiaddr(argument)
+			},
+		},
+		{
+			Type: reflect.TypeOf((*time.Duration)(nil)).Elem(),
+			ParseFunc: func(argument string) (interface{}, error) {
+				return time.ParseDuration(argument)
+			},
+		},
+		{
+			Type: reflect.TypeOf((*filesystem.ID)(nil)).Elem(),
+			ParseFunc: func(argument string) (interface{}, error) {
+				return filesystem.StringToID(argument)
+			},
+		},
+		{
+			Type: reflect.TypeOf((*filesystem.API)(nil)).Elem(),
+			ParseFunc: func(argument string) (interface{}, error) {
+				return filesystem.StringToAPI(argument)
+			},
+		},
+	}
+}
+
+func MakeOptions[setPtr SetConstraint[setPtr]](empty setPtr) []cmds.Option {
+	return parameters.MustMakeCmdsOptions(empty, optionMakers()...)
+}
+
+func optionMakers() []parameters.CmdsOptionOption {
+	var (
+		makers = []parameters.OptionMaker{
+			{
+				Type:           reflect.TypeOf((*multiaddr.Multiaddr)(nil)).Elem(),
+				MakeOptionFunc: cmds.StringOption,
+			},
+			{
+				Type:           reflect.TypeOf((*time.Duration)(nil)).Elem(),
+				MakeOptionFunc: cmds.StringOption,
+			},
+			{
+				Type:           reflect.TypeOf((*filesystem.ID)(nil)).Elem(),
+				MakeOptionFunc: cmds.StringOption,
+			},
+			{
+				Type:           reflect.TypeOf((*filesystem.API)(nil)).Elem(),
+				MakeOptionFunc: cmds.StringOption,
+			},
+		}
+		opts = make([]parameters.CmdsOptionOption, len(makers))
+	)
+	for i, maker := range makers {
+		opts[i] = parameters.WithMaker(maker)
+	}
+	return opts
 }
 
 func ServiceMaddrs() parameters.Parameter {

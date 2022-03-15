@@ -3,9 +3,11 @@ package environment
 type (
 	Daemon interface {
 		Stopper() Stopper
+		Mounter
 	}
 	daemon struct {
 		stopper Stopper
+		mounter
 	}
 )
 

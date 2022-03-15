@@ -10,7 +10,10 @@ import (
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/executor"
 	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
+	"github.com/djdv/go-filesystem-utils/cmd/list"
+	"github.com/djdv/go-filesystem-utils/cmd/mount"
 	"github.com/djdv/go-filesystem-utils/cmd/service"
+	"github.com/djdv/go-filesystem-utils/cmd/unmount"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
@@ -28,6 +31,9 @@ func main() {
 			},
 			Subcommands: map[string]*cmds.Command{
 				service.Name: service.Command,
+				mount.Name:   mount.Command,
+				list.Name:    list.Command,
+				unmount.Name: unmount.Command,
 			},
 		}
 		// cmdline[0] is used literally in helptext generation.
