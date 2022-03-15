@@ -209,17 +209,29 @@ func skipEmbeddedOptions(field reflect.StructField,
 		return []reflect.StructField{field}, 0, nil
 	}
 	var (
-		sawTag        bool
-		skipped       int
+		sawTag              bool
+		skipped, fieldIndex int
+		indexField          = func(field reflect.StructField) int {
+			return field.Index[len(field.Index)-1]
+		}
 		fieldsCap     = cap(fields)
 		arbitrarySize = fieldsCap / 2 // We'll trade memory for allocs.
 		fieldBuffer   = make([]reflect.StructField, 0, arbitrarySize)
 	)
 	for ok := true; ok; field, ok = <-fields {
-		if climbedUp := len(field.Index) == 1; climbedUp {
+		var (
+			// HACK: needs review. Probably doesn't work when 2 settings are embedded side-by-side.
+			// Works when secondary is both embedded without tag, and should be included.
+			curIndex  = indexField(field)
+			newStruct = curIndex < fieldIndex
+			climbedUp = len(field.Index) == 1
+			cond      = climbedUp || newStruct
+		)
+		if cond {
 			fieldBuffer = append(fieldBuffer, field)
 			break
 		}
+		fieldIndex = curIndex
 		skipped++
 		if !sawTag {
 			var err error
