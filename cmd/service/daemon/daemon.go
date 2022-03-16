@@ -10,15 +10,10 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
-	fscmds "github.com/djdv/go-filesystem-utils/cmd/fs/settings"
-	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
-	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
 type (
-	stdioSignal = byte
-
 	runEnv struct {
 		cmds.ResponseEmitter
 		*Settings
@@ -30,33 +25,6 @@ type (
 		background <-chan error
 	}
 )
-
-const (
-	// End Of Transmission `♦` may be sent to stdin.
-	// Sender must close stdin after sending the signal.
-	// Receiver will close stdout and stderr.
-	ASCIIEOT stdioSignal = 0x4
-
-	Name = "daemon"
-)
-
-var Command = &cmds.Command{
-	Helptext: cmds.HelpText{
-		Tagline: "Manages file system requests and instances.",
-	},
-	NoRemote: true,
-	Run:      daemonRun,
-	Options:  parameters.MustMakeCmdsOptions((*Settings)(nil)),
-	Encoders: fscmds.CmdsEncoders,
-	Type:     Response{},
-	Subcommands: map[string]*cmds.Command{
-		stop.Name: stop.Command,
-	},
-}
-
-// CmdsPath returns the leading parameters
-// to invoke the daemon's `Run` method from `main`.
-func CmdsPath() []string { return []string{"service", Name} }
 
 func daemonRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
 	ctx, cancel := context.WithCancel(context.Background())

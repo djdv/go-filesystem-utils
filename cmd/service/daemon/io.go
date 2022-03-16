@@ -14,6 +14,13 @@ import (
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
+// End Of Transmission `♦` may be sent to stdin.
+// Sender must close stdin after sending the signal.
+// Receiver will close stdout and stderr.
+const ASCIIEOT stdioSignal = 0x4
+
+type stdioSignal = byte
+
 func reattachToDiscardIO(stdio *os.File, mode os.FileMode) error {
 	discard, err := os.OpenFile(os.DevNull, int(mode), mode.Perm())
 	if err != nil {

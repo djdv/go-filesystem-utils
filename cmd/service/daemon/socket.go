@@ -20,11 +20,6 @@ const (
 	cmdsSocketKey byte = asciiENQ
 )
 
-// UseListeners will use the provided listeners during daemon initialization.
-func UseListeners(listeners ...manet.Listener) {
-	Command.Extra = Command.Extra.SetValue(cmdsSocketKey, listeners)
-}
-
 type closer func() error
 
 func (fn closer) Close() error { return fn() }
@@ -36,7 +31,7 @@ type listenResult struct {
 
 func listenersFromCmds(ctx context.Context, request *cmds.Request,
 	maddrs ...multiaddr.Multiaddr) (<-chan listenResult, error) {
-	results, err := listenersFromCmdsExtra(ctx, request.Command.Extra)
+	results, err := hostListenersFromRequest(ctx, request)
 	if err != nil {
 		return nil, err
 	}
@@ -222,20 +217,25 @@ func generateListeners(ctx context.Context, request *cmds.Request,
 	return listenersFromDefaults(ctx)
 }
 
-func listenersFromCmdsExtra(ctx context.Context,
-	cmdsExtra *cmds.Extra) (<-chan listenResult, error) {
-	cmdsListeners, provided := cmdsExtra.GetValue(cmdsSocketKey)
+func UseHostListeners(request *cmds.Request, listeners []manet.Listener) error {
+	request.Options[string(cmdsSocketKey)] = listeners
+	return nil
+}
+
+func hostListenersFromRequest(ctx context.Context,
+	request *cmds.Request) (<-chan listenResult, error) {
+	cmdsListeners, provided := request.Options[string(cmdsSocketKey)]
 	if !provided {
 		return nil, nil
 	}
 	listeners, ok := cmdsListeners.([]manet.Listener)
 	if !ok {
 		return nil, fmt.Errorf(
-			"Command.Extra value has wrong type"+
-				"\n\texpected %T"+
-				"\n\tgot: %T",
-			listeners,
+			"request value has wrong type"+
+				"\n\tgot: %T"+
+				"\n\twant: %T",
 			cmdsListeners,
+			listeners,
 		)
 	}
 	if len(listeners) == 0 {

@@ -7,13 +7,13 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
-	fscmds "github.com/djdv/go-filesystem-utils/cmd/fs/settings"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/service/host"
 	"github.com/djdv/go-filesystem-utils/cmd/service/status"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
+	manet "github.com/multiformats/go-multiaddr/net"
 )
 
 const Name = "service"
@@ -25,14 +25,14 @@ var Command = &cmds.Command{
 	NoRemote: true,
 	Run:      serviceRun,
 	Options:  parameters.MustMakeCmdsOptions((*Settings)(nil)),
-	Encoders: fscmds.CmdsEncoders,
+	Encoders: settings.CmdsEncoders,
 	Type:     daemon.Response{},
 	Subcommands: func() (subCmds map[string]*cmds.Command) {
 		const staticCmdsCount = 2
 		subCmds = make(map[string]*cmds.Command,
 			staticCmdsCount+len(service.ControlAction))
 		subCmds[status.Name] = status.Command
-		subCmds[daemon.Name] = daemon.Command
+		subCmds[daemon.Name] = daemon.Command()
 		registerControllerCommands(subCmds, service.ControlAction[:]...)
 		return
 	}(),
@@ -86,7 +86,7 @@ func serviceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.En
 		return err
 	}
 	if serviceListeners != nil {
-		daemon.UseListeners(serviceListeners...)
+		serviceInterface.hostListeners = serviceListeners
 	}
 
 	serviceInterface.sysLog = sysLog
@@ -100,6 +100,7 @@ type (
 		serviceRequest *cmds.Request
 		emitter        cmds.ResponseEmitter
 		environment    environment.Environment
+		hostListeners  []manet.Listener
 
 		sysLog  service.Logger
 		runErrs <-chan error
@@ -130,6 +131,11 @@ func (svc *daemonCmdWrapper) Start(svcIntf service.Service) error {
 		serviceRequest.Options, nil, nil, serviceRequest.Root)
 	if err != nil {
 		return logErr(sysLog, err)
+	}
+	if listeners := svc.hostListeners; listeners != nil {
+		if err := daemon.UseHostListeners(daemonRequest, listeners); err != nil {
+			return logErr(sysLog, err)
+		}
 	}
 
 	// The daemon command should block until the daemon stops listening
