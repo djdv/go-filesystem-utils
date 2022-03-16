@@ -38,7 +38,7 @@ func registerMountSubcommands(parent *cmds.Command) {
 	)
 	for _, api := range []filesystem.API{
 		filesystem.Fuse,
-		filesystem.Plan9Protocol,
+		//filesystem.Plan9Protocol,
 	} {
 		var (
 			hostAPIName = strings.ToLower(api.String())
