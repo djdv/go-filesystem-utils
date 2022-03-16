@@ -3,6 +3,8 @@ package mount
 import (
 	"errors"
 	"io"
+	"runtime"
+	"strings"
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
@@ -14,9 +16,12 @@ import (
 const (
 	Name = "mount"
 
-	ArgumentName        = "targets"
+	ArgumentName = "targets"
+)
+
+var (
 	ArgumentDescription = "Multiaddr style targets to bind to host. " + targetExamples
-	targetExamples      = "(e.g. `/path/ipfs /path/ipns ...`)" // TODO: platform specific examples
+	targetExamples      = descriptionString(examplePaths())
 )
 
 var Command = &cmds.Command{
@@ -65,6 +70,34 @@ func mountRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Envi
 	}
 
 	return nil
+}
+
+func examplePaths() []string {
+	// TODO: build constraints
+	if runtime.GOOS == "windows" {
+		return []string{
+			`/path/I:`,
+			`/path/C:\ipfs`,
+			`/path/\\localhost\ipfs`,
+		}
+	}
+	return []string{
+		`/path/mnt/ipfs`,
+		`/path/mnt/ipns`,
+	}
+}
+
+func descriptionString(paths []string) string {
+	var builder strings.Builder
+	builder.WriteString("(E.g. `")
+
+	for _, path := range paths {
+		builder.WriteString(path)
+		builder.WriteRune(' ')
+	}
+
+	builder.WriteString("...`)")
+	return builder.String()
 }
 
 /*
