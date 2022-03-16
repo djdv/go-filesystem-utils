@@ -16,6 +16,7 @@ func Command() *cmds.Command {
 			Tagline: "Manages file system requests and instances.",
 		},
 		NoRemote: true,
+		PreRun:   daemonPreRun,
 		Run:      daemonRun,
 		Options:  parameters.MustMakeCmdsOptions((*Settings)(nil)),
 		Encoders: settings.CmdsEncoders,

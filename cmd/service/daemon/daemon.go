@@ -10,6 +10,7 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
+	"github.com/djdv/go-filesystem-utils/filesystem"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -25,6 +26,10 @@ type (
 		background <-chan error
 	}
 )
+
+func daemonPreRun(*cmds.Request, cmds.Environment) error {
+	return filesystem.RegisterPathMultiaddr()
+}
 
 func daemonRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
 	ctx, cancel := context.WithCancel(context.Background())
