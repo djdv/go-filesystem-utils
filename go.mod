@@ -27,6 +27,8 @@ require (
 	golang.org/x/sys v0.0.0-20211025201205-69cdffdb9359
 )
 
+replace github.com/kardianos/service => github.com/djdv/service v1.2.1-0.20210722163916-5625a2cdd715
+
 require (
 	bazil.org/fuse v0.0.0-20200117225306-7b5117fecadc // indirect
 	github.com/AndreasBriese/bbloom v0.0.0-20190825152654-46b345b51c96 // indirect
