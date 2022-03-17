@@ -31,7 +31,7 @@ func main() {
 			},
 			Subcommands: map[string]*cmds.Command{
 				service.Name: service.Command,
-				mount.Name:   mount.Command,
+				mount.Name:   mount.Command(),
 				list.Name:    list.Command,
 				unmount.Name: unmount.Command,
 			},

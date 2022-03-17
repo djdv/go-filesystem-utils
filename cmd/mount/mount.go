@@ -16,36 +16,41 @@ import (
 const (
 	Name = "mount"
 
-	ArgumentName = "targets"
+	ArgumentName        = "targets"
+	ArgumentDescription = "Multiaddr style targets to bind to host."
 )
 
-var (
-	ArgumentDescription = "Multiaddr style targets to bind to host. " + targetExamples
-	targetExamples      = descriptionString(examplePaths())
-)
-
-var Command = &cmds.Command{
-	Arguments: []cmds.Argument{
-		cmds.StringArg(ArgumentName, false, true, ArgumentDescription),
-		// TODO: stdin handling
-	},
-	Helptext: cmds.HelpText{
-		Tagline: "Bind file systems to the host.",
-	},
-	NoLocal:  true, // Always communicate with the file system service (as a client).
-	Encoders: cmds.Encoders,
-	Type:     Response{},
-	PreRun:   mountPreRun,
-	Run:      mountRun,
-	Options:  settings.MakeOptions((*Settings)(nil)),
-	PostRun: cmds.PostRunMap{
-		cmds.CLI: formatMount,
-	},
+func Command() *cmds.Command {
+	var Command = &cmds.Command{
+		Arguments: []cmds.Argument{
+			cmds.StringArg(ArgumentName, false, true,
+				ArgumentDescription+" "+descriptionString(true, examplePaths()),
+			),
+			// TODO: stdin handling
+		},
+		Helptext: cmds.HelpText{
+			Tagline: "Bind file systems to the host.",
+		},
+		NoLocal:  true, // Always communicate with the file system service (as a client).
+		Encoders: cmds.Encoders,
+		Type:     Response{},
+		PreRun:   mountPreRun,
+		Run:      mountRun,
+		Options:  settings.MakeOptions((*Settings)(nil)),
+		PostRun: cmds.PostRunMap{
+			cmds.CLI: formatMount,
+		},
+	}
+	registerMountSubcommands(Command)
+	return Command
 }
 
 type Response struct{ fscmds.Multiaddr }
 
-func mountPreRun(*cmds.Request, cmds.Environment) error {
+func mountPreRun(request *cmds.Request, _ cmds.Environment) error {
+	if err := checkSubCmd(2, request.Path); err != nil {
+		return err
+	}
 	return filesystem.RegisterPathMultiaddr()
 }
 
@@ -76,22 +81,28 @@ func examplePaths() []string {
 	// TODO: build constraints
 	if runtime.GOOS == "windows" {
 		return []string{
-			`/path/I:`,
-			`/path/C:\ipfs`,
-			`/path/\\localhost\ipfs`,
+			`I:`,
+			`C:\ipfs`,
+			`\\localhost\ipfs`,
 		}
 	}
 	return []string{
-		`/path/mnt/ipfs`,
-		`/path/mnt/ipns`,
+		`/mnt/ipfs`,
+		`/mnt/ipns`,
 	}
 }
 
-func descriptionString(paths []string) string {
+func descriptionString(canonical bool, paths []string) string {
 	var builder strings.Builder
 	builder.WriteString("(E.g. `")
 
 	for _, path := range paths {
+		if canonical {
+			builder.WriteString("/path")
+			if runtime.GOOS == "windows" {
+				builder.WriteRune('/')
+			}
+		}
 		builder.WriteString(path)
 		builder.WriteRune(' ')
 	}
