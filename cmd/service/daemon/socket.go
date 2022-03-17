@@ -218,7 +218,7 @@ func generateListeners(ctx context.Context, request *cmds.Request,
 }
 
 func UseHostListeners(request *cmds.Request, listeners []manet.Listener) error {
-	request.Options[string(cmdsSocketKey)] = listeners
+	request.SetOption(string(cmdsSocketKey), listeners)
 	return nil
 }
 
