@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"os"
 	"os/user"
 	"path/filepath"
 	"strings"
@@ -107,7 +108,7 @@ func registerSystemIDCmds(template *cmds.Command, fsIDs []filesystem.ID) subcmds
 		request.SetOption(idName, strings.ToLower(subCmd))
 
 		for i, arg := range request.Arguments {
-			mountPoint, err := filepath.Abs(maybeExpandTilde(arg))
+			mountPoint, err := filepath.Abs(maybeExpandArg(arg))
 			if err != nil {
 				return err
 			}
@@ -129,6 +130,12 @@ func checkSubCmd(depth int, path []string) error {
 		return cmds.ClientError("This command needs to called with a subcommand.")
 	}
 	return nil
+}
+
+func maybeExpandArg(path string) string {
+	return os.ExpandEnv(
+		maybeExpandTilde(path),
+	)
 }
 
 func maybeExpandTilde(path string) string {
