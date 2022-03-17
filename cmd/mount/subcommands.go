@@ -9,7 +9,6 @@ import (
 	"github.com/djdv/go-filesystem-utils/filesystem"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
-	"github.com/multiformats/go-multiaddr"
 )
 
 type subcmdsMap map[string]*cmds.Command
@@ -112,11 +111,7 @@ func registerSystemIDCmds(template *cmds.Command, fsIDs []filesystem.ID) subcmds
 			if err != nil {
 				return err
 			}
-			pathMaddr, err := multiaddr.NewMultiaddr("/path/" + mountPoint)
-			if err != nil {
-				return err
-			}
-			request.Arguments[i] = pathMaddr.String()
+			request.Arguments[i] = "/path/" + mountPoint
 		}
 
 		return nil
