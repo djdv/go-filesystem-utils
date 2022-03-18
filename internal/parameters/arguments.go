@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+
+	. "github.com/djdv/go-filesystem-utils/internal/generic"
 )
 
 type (
@@ -65,10 +67,10 @@ func Parse(ctx context.Context, set Settings,
 	}
 
 	var (
-		errs  = ctxMerge(subCtx, errChans...)
+		errs  = CtxMerge(subCtx, errChans...)
 		drain = func(Argument) error { return nil }
 	)
-	if err := forEachOrError(subCtx, unsetArgs, errs, drain); err != nil {
+	if err := ForEachOrError(subCtx, unsetArgs, errs, drain); err != nil {
 		return fmt.Errorf("Parse encountered an error: %w", err)
 	}
 	return subCtx.Err()
@@ -114,7 +116,7 @@ func argsFromSettings(ctx context.Context, settings Settings) (Arguments, errorC
 			}
 		)
 
-		processResults(ctx, fields, arguments, errs, fieldToArg)
+		ProcessResults(ctx, fields, arguments, errs, fieldToArg)
 
 		if ctx.Err() == nil { // Don't validate if we're canceled.
 			expected := len(parameters)
@@ -127,7 +129,7 @@ func argsFromSettings(ctx context.Context, settings Settings) (Arguments, errorC
 		}
 	}()
 
-	return arguments, ctxMerge(ctx, fieldsErrs, errs), nil
+	return arguments, CtxMerge(ctx, fieldsErrs, errs), nil
 }
 
 func generateSettingsFields(ctx context.Context,
@@ -142,7 +144,7 @@ func generateSettingsFields(ctx context.Context,
 		taggedFields, tagErrs = fieldsAfterTag(subCtx, tag, allFields)
 
 		paramCount    = len(parameters)
-		reducedFields = ctxTakeAndCancel(subCtx, cancel, paramCount, taggedFields)
+		reducedFields = CtxTakeAndCancel(subCtx, cancel, paramCount, taggedFields)
 	)
 
 	return reducedFields, tagErrs

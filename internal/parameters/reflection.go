@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/djdv/go-filesystem-utils/internal/generic"
+	. "github.com/djdv/go-filesystem-utils/internal/generic"
 )
 
 const (
@@ -145,7 +148,7 @@ func expandFields(ctx context.Context, fields structFields) structFields {
 				prefixedFields = prefixIndex(subCtx, field.Index, embeddedFields)
 				recursedFields = expandFields(subCtx, prefixedFields)
 			)
-			for field := range ctxRange(ctx, recursedFields) {
+			for field := range CtxRange(ctx, recursedFields) {
 				select {
 				case out <- field:
 				case <-ctx.Done():
@@ -154,7 +157,7 @@ func expandFields(ctx context.Context, fields structFields) structFields {
 			}
 			return nil
 		}
-		forEachOrError(ctx, fields, nil, relayOrExpand)
+		ForEachOrError(ctx, fields, nil, relayOrExpand)
 	}()
 	return out
 }
@@ -167,7 +170,7 @@ func prefixIndex(ctx context.Context, prefix []int, fields structFields) structF
 			field.Index = append(prefix, field.Index...)
 			return field, nil
 		}
-		processResults(ctx, fields, prefixed, nil, descend)
+		ProcessResults(ctx, fields, prefixed, nil, descend)
 	}()
 	return prefixed
 }
@@ -191,13 +194,13 @@ func fieldsAfterTag(ctx context.Context, tag structTagPair,
 						return reflect.StructField{}, err
 					}
 					if !sawTag {
-						return reflect.StructField{}, errSkip
+						return reflect.StructField{}, generic.ErrSkip
 					}
 				}
 				return field, nil
 			}
 		)
-		processResults(ctx, fields, out, errs, filterBeforeTag)
+		ProcessResults(ctx, fields, out, errs, filterBeforeTag)
 		if !sawTag {
 			err := fmt.Errorf("%w: %s", errNoTag, tag)
 			select {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 
+	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -112,7 +113,7 @@ func MustMakeCmdsOptions(set Settings, options ...CmdsOptionOption) []cmds.Optio
 				return nil
 			}
 		)
-		if err := forEachOrError(ctx, optionFields, generatorErrs, makeOpt); err != nil {
+		if err := ForEachOrError(ctx, optionFields, generatorErrs, makeOpt); err != nil {
 			panic(err)
 		}
 	}
@@ -152,7 +153,7 @@ func generateOptionFields(ctx context.Context,
 		taggedFields, tagErrs = fieldsAfterTag(subCtx, tag, allFields)
 
 		paramCount    = len(parameters)
-		reducedFields = ctxTakeAndCancel(subCtx, cancel, paramCount, taggedFields)
+		reducedFields = CtxTakeAndCancel(subCtx, cancel, paramCount, taggedFields)
 
 		results = make(chan optionField, cap(reducedFields))
 		errs    = make(chan error)
@@ -191,7 +192,7 @@ func generateOptionFields(ctx context.Context,
 				}
 			}
 		)
-		maybeSendErr(forEachOrError(ctx, reducedFields, tagErrs, relay))
+		maybeSendErr(ForEachOrError(ctx, reducedFields, tagErrs, relay))
 		if ctx.Err() == nil { // Don't validate if we're canceled.
 			expected := len(parameters)
 			maybeSendErr(checkParameterCount(parameterIndex, expected, typ, parameters))
