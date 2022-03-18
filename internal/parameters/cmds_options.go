@@ -132,7 +132,7 @@ func builtinOptions() []cmds.Option {
 	}
 }
 
-func optionsFromSettings(ctx context.Context, set Settings) (optionFields, errorCh, error) {
+func optionsFromSettings(ctx context.Context, set Settings) (optionFields, errCh, error) {
 	typ, err := checkType(set)
 	if err != nil {
 		return nil, nil, err
@@ -143,7 +143,7 @@ func optionsFromSettings(ctx context.Context, set Settings) (optionFields, error
 
 func generateOptionFields(ctx context.Context,
 	typ reflect.Type, parameters Parameters,
-) (optionFields, errorCh) {
+) (optionFields, errCh) {
 	subCtx, cancel := context.WithCancel(ctx)
 	var (
 		baseFields = generateFields(subCtx, typ)

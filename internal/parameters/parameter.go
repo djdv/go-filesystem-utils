@@ -73,7 +73,7 @@ type (
 
 	stringMapperFunc func(r rune) rune
 
-	errorCh <-chan error
+	errCh = <-chan error
 )
 
 const (

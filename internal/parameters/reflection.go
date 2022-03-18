@@ -80,7 +80,7 @@ func checkType(structPtr Settings) (reflect.Type, error) {
 // so that only the `providedFunc` needs to be implemented per `Source`.
 func setEach(ctx context.Context,
 	providedFn providedFunc, argsToSet Arguments,
-) (Arguments, <-chan error) {
+) (Arguments, errCh) {
 	var (
 		unsetArgs = make(chan Argument, cap(argsToSet))
 		errs      = make(chan error)
@@ -177,7 +177,7 @@ func prefixIndex(ctx context.Context, prefix []int, fields structFields) structF
 
 func fieldsAfterTag(ctx context.Context, tag structTagPair,
 	fields structFields,
-) (structFields, errorCh) {
+) (structFields, errCh) {
 	var (
 		out  = make(chan reflect.StructField, cap(fields))
 		errs = make(chan error)

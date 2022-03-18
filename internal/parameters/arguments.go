@@ -57,11 +57,11 @@ func Parse(ctx context.Context, set Settings,
 	}
 
 	const generatorChanCount = 1
-	errChans := make([]<-chan error, 0, len(setFuncs)+generatorChanCount)
+	errChans := make([]errCh, 0, len(setFuncs)+generatorChanCount)
 	errChans = append(errChans, generatorErrs)
 
 	for _, setter := range setFuncs {
-		var errCh <-chan error
+		var errCh errCh
 		unsetArgs, errCh = setter(subCtx, unsetArgs, parsers...)
 		errChans = append(errChans, errCh)
 	}
@@ -76,7 +76,7 @@ func Parse(ctx context.Context, set Settings,
 	return subCtx.Err()
 }
 
-func argsFromSettings(ctx context.Context, settings Settings) (Arguments, errorCh, error) {
+func argsFromSettings(ctx context.Context, settings Settings) (Arguments, errCh, error) {
 	typ, err := checkType(settings)
 	if err != nil {
 		return nil, nil, err
@@ -134,7 +134,7 @@ func argsFromSettings(ctx context.Context, settings Settings) (Arguments, errorC
 
 func generateSettingsFields(ctx context.Context,
 	typ reflect.Type, parameters Parameters,
-) (structFields, errorCh) {
+) (structFields, errCh) {
 	subCtx, cancel := context.WithCancel(ctx)
 	var (
 		baseFields = generateFields(subCtx, typ)
