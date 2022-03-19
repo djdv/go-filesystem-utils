@@ -22,11 +22,8 @@ type (
 func (env *environment) Daemon() Daemon {
 	service := env.daemon
 	if service == nil {
-		service = &daemon{
-			mounter: mounter{
-				Context: context.TODO(),
-			},
-		}
+		service = new(daemon)
+		service.mounter.Context = context.TODO()
 		env.daemon = service
 	}
 	return service
