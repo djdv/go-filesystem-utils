@@ -7,85 +7,93 @@ import (
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
-// setupStopper primes the stopper interface
+// setupStopperAPI primes the stopper interface
 // and emits it's name to the client.
-func setupStopper(ctx context.Context,
-	request *cmds.Request, runEnv *runEnv) (<-chan environment.Reason, error) {
-	stopper := runEnv.Daemon().Stopper()
-	stopReasons, err := stopper.Initialize(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	stopperAPIPath := append(request.Path, stop.Name)
-	if err := runEnv.Emit(stopListenerResponse(stopperAPIPath...)); err != nil {
-		return nil, err
-	}
-
-	return stopReasons, nil
+func setupStopperAPI(ctx context.Context, apiPath []string,
+	daemon environment.Daemon) (<-chan *Response, <-chan environment.Reason, error) {
+	var (
+		stopper          = daemon.Stopper()
+		stopReasons, err = stopper.Initialize(ctx)
+		responses        = make(chan *Response, 1)
+	)
+	defer close(responses)
+	responses <- stopListenerResponse(apiPath)
+	return responses, stopReasons, err
 }
 
 func stopOnSignal(ctx context.Context,
-	stopper environment.Stopper, stopReason environment.Reason,
-	notifySignal os.Signal) <-chan error {
+	stopper environment.Stopper, notifySignal os.Signal) (responses, errCh) {
 	var (
-		errs    = make(chan error)
-		sigChan = make(chan os.Signal, 1)
+		stop      = stopper.Stop
+		errs      = make(chan error, 1)
+		responses = make(chan *Response, 1)
+		sigChan   = make(chan os.Signal, 1)
 	)
+	defer close(responses)
 	signal.Notify(sigChan, notifySignal)
+	responses <- signalListenerResponse(notifySignal)
 	go func() {
 		defer close(sigChan)
 		defer close(errs)
 		defer signal.Reset(notifySignal)
 		select {
 		case <-sigChan:
-			if err := stopper.Stop(stopReason); err != nil {
-				errs <- err
-			}
-		case <-ctx.Done():
-		}
-	}()
-	return errs
-}
-
-func stopOnRequestCancel(ctx context.Context, request *cmds.Request,
-	stopper environment.Stopper, stopReason environment.Reason) <-chan error {
-	var (
-		triggerCtx = request.Context
-		stop       = stopper.Stop
-		errs       = make(chan error, 1)
-	)
-	go func() {
-		defer close(errs)
-		select {
-		case <-triggerCtx.Done():
-			if sErr := stop(stopReason); sErr != nil {
+			const reason = environment.Canceled
+			if sErr := stop(reason); sErr != nil {
 				errs <- sErr
 			}
 		case <-ctx.Done():
 		}
 	}()
-	return errs
+	return responses, errs
+}
+
+func stopOnRequestCancel(ctx context.Context, stopper environment.Stopper, request *cmds.Request) (responses, errCh) {
+	var (
+		triggerCtx = request.Context
+		stop       = stopper.Stop
+		errs       = make(chan error)
+		responses  = make(chan *Response, 1)
+	)
+	defer close(responses)
+	responses <- cmdsRequestListenerResponse()
+	go func() {
+		defer close(errs)
+		select {
+		case <-triggerCtx.Done():
+			const reason = environment.Canceled
+			if sErr := stop(reason); sErr != nil {
+				select {
+				case errs <- sErr:
+				case <-ctx.Done():
+				}
+			}
+		case <-ctx.Done():
+		}
+	}()
+	return responses, errs
 }
 
 func stopOnIdleEvent(ctx context.Context,
-	runEnv *runEnv, interval time.Duration) taskErr {
-	// NOTE [placeholder]: This build is never busy.
-	// The ipc env should be used to query activity when implemented.
-	checkIfBusy := func() (bool, error) {
-		return false, nil
-	}
-	if err := runEnv.Emit(tickerListenerResponse(interval, "is-service-idle-every")); err != nil {
-		return taskErr{foreground: err}
-	}
-	stopper := runEnv.Daemon().Stopper()
-	return taskErr{
-		background: stopOnIdle(ctx, stopper, interval, checkIfBusy),
-	}
+	serviceEnv environment.Environment, interval time.Duration) (responses, errCh) {
+	var (
+		// NOTE [placeholder]: This build is never busy.
+		// The ipc env should be used to query activity when implemented.
+		daemon      = serviceEnv.Daemon()
+		checkIfBusy = func() (bool, error) {
+			var _ environment.Daemon = daemon
+			return false, nil
+		}
+		responses = make(chan *Response, 1)
+	)
+	defer close(responses)
+	responses <- tickerListenerResponse(interval, "is-service-idle-every")
+
+	stopper := daemon.Stopper()
+	return responses, stopOnIdle(ctx, stopper, interval, checkIfBusy)
 }
 
 type isBusyFunc func() (bool, error)

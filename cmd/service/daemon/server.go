@@ -56,9 +56,9 @@ func servicePathsToServiceMaddrs(servicePaths ...string) ([]multiaddr.Multiaddr,
 	for _, servicePath := range servicePaths {
 		if _, alreadySeen := multiaddrSet[servicePath]; alreadySeen {
 			continue // Don't return duplicates in our slice.
-		} else {
-			multiaddrSet[servicePath] = struct{}{}
 		}
+		multiaddrSet[servicePath] = struct{}{}
+
 		maddrString := path.Join("/unix/",
 			filepath.Join(servicePath, ServerRootName, ServerName))
 		serviceMaddr, err := multiaddr.NewMultiaddr(maddrString)

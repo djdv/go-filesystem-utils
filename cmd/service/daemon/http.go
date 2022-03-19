@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/djdv/go-filesystem-utils/cmd/environment"
+	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	cmdshttp "github.com/ipfs/go-ipfs-cmds/http"
 	"github.com/multiformats/go-multiaddr"
@@ -14,6 +16,19 @@ import (
 )
 
 var ErrSubcommandsOnly = errors.New("only subcommands of this command are allowed")
+
+type (
+	serverListener struct {
+		*http.Server
+		manet.Listener
+		//multiaddr.Multiaddr
+	}
+	serverInstance struct {
+		//*http.Server
+		serverListener
+		errs errCh
+	}
+)
 
 // TODO: English.
 // allowRemoteAccess modifies leading commands in the component path,
@@ -73,71 +88,103 @@ func cmdsHTTPServer(serverRoot *cmds.Command, serverEnv cmds.Environment) *http.
 	}
 }
 
-func serveHTTP(ctx context.Context,
-	listener manet.Listener, server *http.Server,
-	shutdownTimeout time.Duration) <-chan error {
-	errs := make(chan error)
+func generateServers(ctx context.Context, request *cmds.Request,
+	serviceEnv environment.Environment, listeners listeners) (<-chan serverListener, errCh) {
+	var (
+		serverInstances = make(chan serverListener, cap(listeners))
+		errs            = make(chan error)
+	)
 	go func() {
+		defer close(serverInstances)
 		defer close(errs)
-		serveErr := make(chan error)
-		go func() {
-			defer close(serveErr)
-			err := server.Serve(manet.NetListener(listener))
-			if err != nil &&
-				!errors.Is(err, http.ErrServerClosed) {
-				serveErr <- err
+		var (
+			serverRoot = allowRemoteAccess(request.Root, request.Path)
+			serve      = func(listener manet.Listener) (serverListener, error) {
+				instance := serverListener{
+					Server:   cmdsHTTPServer(serverRoot, serviceEnv),
+					Listener: listener,
+				}
+				return instance, nil
 			}
-		}()
-		select {
-		case err := <-serveErr:
-			errs <- err
-		case <-ctx.Done():
-			sCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-			defer cancel()
-			if err := server.Shutdown(sCtx); err != nil {
-				errs <- err
-			}
-			if err := <-serveErr; err != nil {
-				errs <- err
-			}
-		}
+		)
+		ProcessResults(ctx, listeners, serverInstances, errs, serve)
 	}()
-	return errs
+	return serverInstances, errs
 }
 
-type serveResult struct {
-	serverAddress multiaddr.Multiaddr
-	serverErrs    <-chan error
-	error
-}
-
-func listenAndServeCmdsHTTP(ctx context.Context, request *cmds.Request, runEnv *runEnv) (<-chan serveResult, error) {
-	listenResults, err := generateListeners(ctx, request, runEnv.ServiceMaddrs...)
-	if err != nil {
-		return nil, err
-	}
-
-	serveResults := make(chan serveResult, cap(listenResults))
+func startServers(ctx context.Context,
+	listeners <-chan serverListener) <-chan serverInstance {
+	servers := make(chan serverInstance, cap(listeners))
 	go func() {
-		defer close(serveResults)
-		serverRoot := allowRemoteAccess(request.Root, request.Path)
-		for result := range listenResults {
-			if err := result.error; err != nil {
-				serveResults <- serveResult{error: err}
-				continue
+		defer close(servers)
+		serve := func(server serverListener) (serverInstance, error) {
+			instance := serverInstance{
+				serverListener: server,
+				errs:           serveHTTP(ctx, server),
 			}
-			const shutdownGrace = 30 * time.Second
+			return instance, nil
+		}
+		ProcessResults(ctx, listeners, servers, nil, serve)
+	}()
+	return servers
+}
+
+// TODO needs emitter? "shutting down: $maddr"
+// ^ caller should do it, emit it when they receive the result
+func shutdownServers(ctx context.Context, timeout time.Duration,
+	servers <-chan serverInstance) (maddrs, errCh) {
+
+	//combine Server and Shutdown error
+	// filter out expected http.Error (shutting down or whatever)
+	// return either the maddr or error on the channel
+
+	// Caller must not cancel us, so all shutdowns complete
+	var (
+		maddrs = make(chan multiaddr.Multiaddr, cap(servers))
+		errs   = make(chan error)
+	)
+	go func() {
+		defer close(maddrs)
+		defer close(errs)
+		shutdown := func(instance serverInstance) (multiaddr.Multiaddr, error) {
 			var (
-				listener  = result.Listener
-				server    = cmdsHTTPServer(serverRoot, runEnv.Environment)
-				serveErrs = serveHTTP(ctx, listener, server, shutdownGrace)
+				maddr           = instance.Multiaddr()
+				serveErrs       = instance.errs
+				timeout, cancel = context.WithTimeout(ctx, timeout)
 			)
-			serveResults <- serveResult{
-				serverAddress: listener.Multiaddr(),
-				serverErrs:    serveErrs,
+			defer cancel()
+			err := instance.Shutdown(timeout)
+			for serveErr := range serveErrs {
+				err = maybeWrapErr(err, serveErr)
+			}
+			return maddr, err
+		}
+		ProcessResults(ctx, servers, maddrs, errs, shutdown)
+	}()
+
+	return maddrs, errs
+}
+
+func serveHTTP(ctx context.Context,
+	serverListener serverListener) <-chan error {
+	var (
+		listener = serverListener.Listener
+		server   = serverListener.Server
+		serveErr = make(chan error)
+	)
+	go func() {
+		defer close(serveErr)
+		var (
+			stdListener = manet.NetListener(listener)
+			err         = server.Serve(stdListener)
+		)
+		if err != nil &&
+			!errors.Is(err, http.ErrServerClosed) {
+			select {
+			case serveErr <- err:
+			case <-ctx.Done():
 			}
 		}
 	}()
-
-	return serveResults, nil
+	return serveErr
 }

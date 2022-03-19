@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	fscmds "github.com/djdv/go-filesystem-utils/cmd/fs/settings"
@@ -21,6 +22,9 @@ type (
 		Status        Status             `json:"status,omitempty"`
 		StopReason    environment.Reason `json:"stopReason,omitempty"`
 	}
+	responses = <-chan *Response
+
+	// TODO: del
 	ResponseResult struct {
 		*Response
 		error
@@ -60,10 +64,14 @@ func (response *Response) String() string {
 	case Ready:
 		return status.String()
 	case Stopping:
-		return fmt.Sprintf(
-			"%s: %s",
-			status.String(), response.StopReason.String(),
-		)
+		var sb strings.Builder
+		sb.WriteString(status.String())
+		if maddr := response.ListenerMaddr; maddr != nil {
+			sb.WriteRune(' ')
+			sb.WriteString(maddr.String())
+		}
+		sb.WriteString(": " + response.StopReason.String())
+		return sb.String()
 	default:
 		if response.Info != "" {
 			return response.Info

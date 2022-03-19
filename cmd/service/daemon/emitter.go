@@ -25,6 +25,14 @@ func maddrListenerResponse(maddr multiaddr.Multiaddr) *Response {
 	}
 }
 
+func maddrShutdownResponse(maddr multiaddr.Multiaddr, reason environment.Reason) *Response {
+	return &Response{
+		Status:        Stopping,
+		StopReason:    reason,
+		ListenerMaddr: &fscmds.Multiaddr{Interface: maddr},
+	}
+}
+
 func listenerResponse(name string) *Response {
 	return infoResponsef("listening on: %s", name)
 }
@@ -39,11 +47,9 @@ func stoppingResponse(reason environment.Reason) *Response {
 	return statusResponse(Stopping, reason)
 }
 
-func stopListenerResponse(apiPath ...string) *Response {
-	return listenerResponse(path.Join(append(
-		[]string{"/api/"},
-		apiPath...,
-	)...,
+func stopListenerResponse(apiPath []string) *Response {
+	return listenerResponse(path.Join(
+		append([]string{"/api/"}, apiPath...)...,
 	))
 }
 
@@ -51,7 +57,7 @@ func signalListenerResponse(sig os.Signal) *Response {
 	return listenerResponse(path.Join("/os/", sig.String()))
 }
 
-func cmdsListenerResponse() *Response {
+func cmdsRequestListenerResponse() *Response {
 	return listenerResponse("/go/cmds/request")
 }
 

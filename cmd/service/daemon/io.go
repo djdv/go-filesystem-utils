@@ -3,6 +3,7 @@ package daemon
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"io/fs"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -30,18 +32,19 @@ func reattachToDiscardIO(stdio *os.File, mode os.FileMode) error {
 	return nil
 }
 
-func handleStderr(stream *os.File, err error) error {
+func handleStderr(err error) error {
+	stdStream := os.Stderr
 	var (
-		_, sErr       = stream.Stat()
+		_, sErr       = stdStream.Stat()
 		errStreamOpen = sErr == nil
 		haveError     = err != nil
 	)
 	if !errStreamOpen {
 		if !haveError {
-			return reattachToDiscardIO(stream, fs.FileMode(os.O_RDWR))
+			return reattachToDiscardIO(stdStream, fs.FileMode(os.O_RDWR))
 		}
 		var (
-			streamName     = stream.Name()
+			streamName     = stdStream.Name()
 			streamBaseName = filepath.Base(streamName)
 			namePattern    = tempfilePatternName(streamBaseName)
 		)
@@ -49,11 +52,20 @@ func handleStderr(stream *os.File, err error) error {
 			err = maybeWrapErr(err, fErr)
 			return err
 		}
-		if nullErr := reattachToDiscardIO(stream, fs.FileMode(os.O_RDWR)); nullErr != nil {
+		if nullErr := reattachToDiscardIO(stdStream, fs.FileMode(os.O_RDWR)); nullErr != nil {
 			err = maybeWrapErr(err, nullErr)
 		}
 	}
 	return err
+}
+
+func maybeWrapErr(car, cdr error) error {
+	if car == nil {
+		return cdr
+	} else if cdr != nil {
+		return fmt.Errorf("%w\n\t%s", car, cdr)
+	}
+	return car
 }
 
 /*
@@ -112,23 +124,26 @@ func (me *mutexEmitter) Emit(value interface{}) error {
 	return me.ResponseEmitter.Emit(value)
 }
 
-// TODO: document our protocol, uses ASCIIEOT as signal to close all stdio streams.
-// E.g. emulated process "detatch" signal.
-func synchronizeWithStdio(emitter cmds.ResponseEmitter,
-	stdin, stdout, stderr *os.File) (cmds.ResponseEmitter, taskErr) {
+//TODO: rename? synchronizeWithEmitter
+// TODO: document our protocol; uses ASCIIEOT as signal to close all stdio streams.
+// E.g. emulated process "detach" signal.
+func synchronizeWithStdio(ctx context.Context, emitter cmds.ResponseEmitter,
+	//stdin, stdout, stderr *os.File) (chan<- *Response, errCh, error) {
+	stdin, stdout, stderr *os.File) (cmds.ResponseEmitter, errCh, error) {
 	if !isPipe(stdin) {
-		return emitter, taskErr{}
+		errs := make(chan error)
+		close(errs)
+		return emitter, errs, nil
 	}
 
 	stdoutStat, err := stdout.Stat()
 	if err != nil {
-		err = fmt.Errorf("DBG stdio 1 :%w", err)
-		return nil, taskErr{foreground: err}
+		return nil, nil, err
 	}
 	var (
 		stdoutMode = stdoutStat.Mode()
 
-		ioErrs    = make(chan error)
+		errs      = make(chan error)
 		stdioMu   = new(sync.RWMutex)
 		muEmitter = &mutexEmitter{
 			ResponseEmitter: emitter,
@@ -136,13 +151,12 @@ func synchronizeWithStdio(emitter cmds.ResponseEmitter,
 		}
 	)
 	go func() {
-		defer close(ioErrs)
-		gotErr := false // TODO: convert to wrapped stack error; send in fewer places/branches
-		for err := range signalFromReader(ASCIIEOT, stdin) {
-			gotErr = true
-			ioErrs <- err
-		}
-		if gotErr {
+		defer close(errs)
+		for err := range signalFromReader(ctx, ASCIIEOT, stdin) {
+			select {
+			case errs <- err:
+			case <-ctx.Done():
+			}
 			return
 		}
 		// NOTE:
@@ -154,20 +168,30 @@ func synchronizeWithStdio(emitter cmds.ResponseEmitter,
 		// Close our ends of stdio.
 		for _, closer := range []io.Closer{stdin, stdout, stderr} {
 			if err := closer.Close(); err != nil {
-				ioErrs <- err
+				select {
+				case errs <- err:
+				case <-ctx.Done():
+				}
+				return
 			}
 		}
 
 		// Send emits to nowhere.
 		if err := reattachToDiscardIO(stdout, stdoutMode); err != nil {
-			ioErrs <- err
+			select {
+			case errs <- err:
+			case <-ctx.Done():
+			}
+			return
+
 		}
 		// Leave stderr closed.
 		// Caller can inspect+reopen dynamically
 		// if/when it encounters an error.
 	}()
 
-	return muEmitter, taskErr{background: ioErrs}
+	//emitterChan, emitErrs := emitterChan(ctx, muEmitter)
+	return muEmitter, errs, nil
 }
 
 func isPipe(file *os.File) bool {
@@ -178,45 +202,74 @@ func isPipe(file *os.File) bool {
 	return fStat.Mode().Type()&os.ModeNamedPipe != 0
 }
 
-func signalFromReader(signal stdioSignal, reader io.Reader) <-chan error {
-	errs := make(chan error)
+func signalFromReader(ctx context.Context, signal stdioSignal, reader io.Reader) errCh {
+	var (
+		bytesChan, scanErrs = scanBytes(ctx, reader)
+		errs                = make(chan error)
+	)
 	go func() {
 		defer close(errs)
-		scanner := bufio.NewScanner(reader)
-		scanner.Split(bufio.ScanBytes)
-		var err error
-		for scanner.Scan() {
-			var (
-				expected = []byte{signal}
-				buffer   = scanner.Bytes()
-			)
-			if !bytes.Equal(expected, buffer) {
-				err = fmt.Errorf(
+		expected := []byte{signal}
+		for signal := range CtxRange(ctx, bytesChan) {
+			if !bytes.Equal(expected, signal) {
+				err := fmt.Errorf(
 					"unexpected response on stdin"+
 						"\n\t wanted: %#v"+
 						"\n\tgot: %#v",
-					expected, buffer,
+					expected, signal,
 				)
-				break
+				select {
+				case errs <- err:
+				case <-ctx.Done():
+				}
+				return
 			}
-			var (
-				buf, rErr      = io.ReadAll(reader)
-				inputStillOpen = rErr == nil && len(buf) > 0
+		}
+
+		var (
+			buf, rErr      = io.ReadAll(reader)
+			inputStillOpen = rErr == nil && len(buf) > 0
+		)
+		if inputStillOpen {
+			err := fmt.Errorf(
+				"expected stdin to be closed after writing EOT(%X)",
+				ASCIIEOT,
 			)
-			if inputStillOpen {
-				err = fmt.Errorf(
-					"expected stdin to be closed after writing EOT(%X)",
-					ASCIIEOT,
-				)
-				break
+			select {
+			case errs <- err:
+			case <-ctx.Done():
+				return
 			}
-		}
-		if sErr := scanner.Err(); sErr != nil {
-			err = maybeWrapErr(err, sErr)
-		}
-		if err != nil {
-			errs <- err
 		}
 	}()
-	return errs
+
+	return CtxMerge(ctx, scanErrs, errs)
+}
+
+func scanBytes(ctx context.Context, source io.Reader) (<-chan []byte, errCh) {
+	var (
+		out  = make(chan []byte)
+		errs = make(chan error)
+	)
+	go func() {
+		defer close(out)
+		defer close(errs)
+		scanner := bufio.NewScanner(source)
+		scanner.Split(bufio.ScanBytes)
+		for scanner.Scan() {
+			select {
+			case out <- scanner.Bytes():
+			case <-ctx.Done():
+				return
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			select {
+			case errs <- err:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out, errs
 }

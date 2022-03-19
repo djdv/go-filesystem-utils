@@ -4,27 +4,16 @@ package daemon
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
+	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
 	"github.com/djdv/go-filesystem-utils/filesystem"
+	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	cmds "github.com/ipfs/go-ipfs-cmds"
-)
-
-type (
-	runEnv struct {
-		cmds.ResponseEmitter
-		*Settings
-		environment.Environment
-	}
-
-	taskErr struct {
-		foreground error
-		background <-chan error
-	}
+	"github.com/multiformats/go-multiaddr"
 )
 
 func daemonPreRun(*cmds.Request, cmds.Environment) error {
@@ -34,290 +23,191 @@ func daemonPreRun(*cmds.Request, cmds.Environment) error {
 func daemonRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	runEnv, stopReasons, setupErrs := setupRunEnv(ctx, request, emitter, env)
-	if err := setupErrs.foreground; err != nil {
-		return err
-	}
-	return serverRun(ctx, cancel, request, runEnv, stopReasons)
-}
 
-func parseInputs(ctx context.Context, request *cmds.Request,
-	env cmds.Environment) (*Settings, environment.Environment, error) {
 	settings, serviceEnv, err := parseCmds(ctx, request, env)
 	if err != nil {
-		return nil, nil, err
-	}
-	return settings, serviceEnv, nil
-}
-
-func parseCmds(ctx context.Context, request *cmds.Request,
-	env cmds.Environment) (*Settings, environment.Environment, error) {
-	var (
-		daemonSettings = new(Settings)
-		err            = settings.ParseAll(ctx, daemonSettings, request)
-	)
-	if err != nil {
-		return nil, nil, err
-	}
-	serviceEnv, err := environment.Assert(env)
-	if err != nil {
-		return nil, nil, err
-	}
-	return daemonSettings, serviceEnv, nil
-}
-
-func setupRunEnv(ctx context.Context,
-	request *cmds.Request, emitter cmds.ResponseEmitter,
-	env cmds.Environment) (*runEnv, <-chan environment.Reason, taskErr) {
-	settings, serviceEnv, err := parseInputs(ctx, request, env)
-	if err != nil {
-		return nil, nil, taskErr{foreground: err}
-	}
-	var (
-		muEmitter, ioErrs = synchronizeWithStdio(
-			emitter,
-			os.Stdin, os.Stdout, os.Stderr,
-		)
-		runEnv = &runEnv{
-			Settings:        settings,
-			Environment:     serviceEnv,
-			ResponseEmitter: muEmitter,
-		}
-	)
-	if ioErrs.foreground != nil {
-		return nil, nil, ioErrs
-	}
-
-	stopReasons, err := setupStopper(ctx, request, runEnv)
-	if err != nil {
-		errs := taskErr{foreground: err, background: ioErrs.background}
-		return nil, nil, errs
-	}
-
-	if err := muEmitter.Emit(startingResponse()); err != nil {
-		errs := taskErr{foreground: err, background: ioErrs.background}
-		return nil, nil, errs
-	}
-
-	return runEnv, stopReasons, ioErrs
-}
-
-func serverRun(ctx context.Context, cancel context.CancelFunc,
-	request *cmds.Request,
-	runEnv *runEnv, stopReasons <-chan environment.Reason) error {
-	var (
-		taskErrs []<-chan error
-
-		stderr    = os.Stderr
-		checkTask = func(errs taskErr) error {
-			if bgErrs := errs.background; bgErrs != nil {
-				taskErrs = append(taskErrs, bgErrs)
-			}
-			if err := errs.foreground; err != nil {
-				errs.background = flattenErrs(taskErrs...)
-				return shutdownDaemon(ctx, cancel, stderr, errs)
-			}
-			return nil
-		}
-	)
-	if err := checkTask(
-		setupPrimaryStoppers(ctx, request, runEnv),
-	); err != nil {
 		return err
 	}
 
-	if err := checkTask(
-		setupServers(ctx, request, runEnv),
-	); err != nil {
-		return err
-	}
-
-	if err := checkTask(
-		setupSecondaryStoppers(ctx, runEnv),
-	); err != nil {
-		return err
-	}
-	// TODO: collapse above further
-
-	errs := flattenErrs(taskErrs...)
-	return shutdownDaemon(ctx, cancel, stderr, taskErr{
-		foreground: waitForStopOrError(runEnv.ResponseEmitter, stopReasons, errs),
-		background: errs,
-	})
-}
-
-func setupPrimaryStoppers(ctx context.Context,
-	request *cmds.Request, runEnv *runEnv) taskErr {
-	const reason = environment.Canceled
-	var (
-		notifySignal = os.Interrupt
-		stopper      = runEnv.Daemon().Stopper()
-		signalErrs   = stopOnSignal(ctx, stopper, reason, notifySignal)
-		errs         = taskErr{background: signalErrs}
-	)
-	if err := runEnv.Emit(signalListenerResponse(notifySignal)); err != nil {
-		errs.foreground = err
-		return errs
-	}
-
-	requestErrs := stopOnRequestCancel(ctx, request, stopper, environment.Canceled)
-	errs.background = maybeMergeErrs(signalErrs, requestErrs)
-	if err := runEnv.Emit(cmdsListenerResponse()); err != nil {
-		errs.foreground = err
-	}
-
-	return errs
-}
-
-func setupServers(ctx context.Context,
-	request *cmds.Request, runEnv *runEnv) taskErr {
-	listenErrs := listenAndServe(ctx, request, runEnv)
-	if listenErrs.foreground != nil {
-		return listenErrs
-	}
-	if err := runEnv.Emit(readyResponse()); err != nil {
-		return taskErr{foreground: err, background: listenErrs.background}
-	}
-	return listenErrs
-}
-
-func listenAndServe(ctx context.Context,
-	request *cmds.Request, runEnv *runEnv) taskErr {
-	return makeCmdsServers(ctx, request, runEnv)
-}
-
-func makeCmdsServers(ctx context.Context,
-	request *cmds.Request, runEnv *runEnv) taskErr {
-	var (
-		errs               []error
-		serverResults, err = listenAndServeCmdsHTTP(ctx, request, runEnv)
-		allServerErrs      = make([]<-chan error, 0, cap(serverResults))
+	daemonCtx, daemonCancel := context.WithCancel(ctx)
+	defer daemonCancel()
+	muEmitter, emitErrs, err := synchronizeWithStdio(daemonCtx,
+		emitter,
+		os.Stdin, os.Stdout, os.Stderr,
 	)
 	if err != nil {
-		return taskErr{foreground: err}
+		return err
 	}
-	for result := range serverResults {
-		err := result.error
-		if err == nil {
-			serverErrs := result.serverErrs
-			allServerErrs = append(allServerErrs, serverErrs)
-			err = runEnv.Emit(maddrListenerResponse(result.serverAddress))
-		}
-		if err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return taskErr{
-		foreground: flattenErr(errs...),
-		background: mergeErrs(allServerErrs...),
-	}
-}
 
-func setupSecondaryStoppers(ctx context.Context, runEnv *runEnv) taskErr {
 	var (
-		settings          = runEnv.Settings
+		daemonEnv  = serviceEnv.Daemon()
+		daemonPath = request.Path
+		stopPath   = append(daemonPath, stop.Name)
+	)
+	stopperResponses, stopperReasons, err := setupStopperAPI(ctx, stopPath, daemonEnv)
+	if err != nil {
+		return err
+	}
+	// TODO: names
+	goResponses, goErrs := setupGoStoppers(daemonCtx, request, daemonEnv.Stopper())
+
+	listeners, listenErrs, err := settingsToListeners(ctx, request, settings)
+	if err != nil {
+		return err
+	}
+	var (
+		serverListeners, serveErrs   = generateServers(ctx, request, serviceEnv, listeners)
+		servers                      = startServers(ctx, serverListeners)
+		serverResponses, serverCache = respondAndCache(ctx, servers)
+
+		respond   = func(response *Response) error { return muEmitter.Emit(response) }
+		responses = []responses{
+			goResponses,
+			stopperResponses,
+			serverResponses,
+		}
+		errs = []errCh{
+			goErrs,
+			emitErrs,
+			listenErrs,
+			serveErrs,
+		}
+
 		exitCheckInterval = settings.AutoExitInterval
 		exitWhenIdle      = exitCheckInterval != 0
 	)
-	if !exitWhenIdle {
-		return taskErr{}
+	if exitWhenIdle {
+		idleResponses, idleErrs := stopOnIdleEvent(ctx, serviceEnv, settings.AutoExitInterval)
+		responses = append(responses, idleResponses)
+		errs = append(errs, idleErrs)
 	}
-	var ()
-	return stopOnIdleEvent(ctx, runEnv, exitCheckInterval)
-}
 
-func waitForStopOrError(emitter cmds.ResponseEmitter,
-	reasons <-chan environment.Reason, errs <-chan error) error {
-	select {
-	case reason := <-reasons:
-		return emitter.Emit(stoppingResponse(reason))
-	case err := <-errs:
-		return maybeWrapErr(err,
-			emitter.Emit(stoppingResponse(environment.Error)),
-		)
-	}
-}
+	var (
+		emitResponses = func() error {
+			if err := respond(startingResponse()); err != nil {
+				return err
+			}
+			responses := CtxMerge(ctx, responses...)
+			return ForEachOrError(ctx, responses, nil, respond)
+		}
 
-func shutdownDaemon(ctx context.Context, cancel context.CancelFunc,
-	stderr *os.File, errs taskErr) error {
-	return handleStderr(stderr,
-		stopDaemon(ctx, cancel, errs),
+		stopReason environment.Reason
+		wait       = func() error {
+			var (
+				finalErrs        = CtxMerge(ctx, errs...)
+				cancelAndRespond = func(reason environment.Reason) error {
+					daemonCancel()
+					stopReason = reason
+					response := stoppingResponse(reason)
+					if err := respond(response); err != nil {
+						return err
+					}
+					return nil
+				}
+			)
+			return ForEachOrError(ctx, stopperReasons, finalErrs, cancelAndRespond)
+		}
 	)
+
+	if err := emitResponses(); err != nil {
+		return err
+	}
+
+	if err := wait(); err != nil {
+		stopReason = environment.Error
+		// TODO: wrap err?
+		respond(stoppingResponse(stopReason))
+		return err
+	}
+
+	shutdown := func(ctx context.Context, servers <-chan serverInstance) error {
+		const shutdownGrace = 30 * time.Second
+		var (
+			shutdownMaddrs, shutdownErrs = shutdownServers(ctx, shutdownGrace, servers)
+			broadcastShutdown            = func(maddr multiaddr.Multiaddr) error {
+				return respond(maddrShutdownResponse(maddr, stopReason))
+			}
+		)
+		return ForEachOrError(ctx, shutdownMaddrs, shutdownErrs, broadcastShutdown)
+	}
+	return handleStderr(shutdown(ctx, serverCache))
 }
 
-func stopDaemon(ctx context.Context, cancel context.CancelFunc, errs taskErr) error {
-	select {
-	case <-ctx.Done():
-	default:
-		cancel()
-	}
-	err := errs.foreground
-	if errs.background != nil {
-		err = maybeWrapErr(err, combineErrs(errs.background))
-	}
-	return err
+func setupGoStoppers(ctx context.Context, request *cmds.Request, stopper environment.Stopper) (responses, errCh) {
+	var (
+		signalResponses, signalErrs   = stopOnSignal(ctx, stopper, os.Interrupt)
+		requestResponses, requestErrs = stopOnRequestCancel(ctx, stopper, request)
+	)
+	return CtxMerge(ctx, signalResponses, requestResponses),
+		CtxMerge(ctx, signalErrs, requestErrs)
 }
 
-func flattenErr(errors ...error) (err error) {
-	for _, e := range errors {
-		err = maybeWrapErr(err, e)
-	}
-	return
-}
-
-func maybeWrapErr(car, cdr error) error {
-	if car == nil {
-		return cdr
-	} else if cdr != nil {
-		return fmt.Errorf("%w\n\t%s", car, cdr)
-	}
-	return car
-}
-
-func flattenErrs(chans ...<-chan error) (errs <-chan error) {
-	for _, ch := range chans {
-		errs = maybeMergeErrs(errs, ch)
-	}
-	return
-}
-
-func maybeMergeErrs(car, cdr <-chan error) <-chan error {
-	if car == nil {
-		return cdr
-	} else if cdr != nil {
-		return mergeErrs(car, cdr)
-	}
-	return car
-}
-
-func combineErrs(errs <-chan error) error {
-	combinedErrs := make([]error, 0, cap(errs))
-	for e := range errs {
-		combinedErrs = append(combinedErrs, e)
-	}
-	return flattenErr(combinedErrs...)
-}
-
-func mergeErrs(sources ...<-chan error) <-chan error {
-	type (
-		source   = <-chan error
-		sourceRw = chan error
+func respondAndCache(ctx context.Context,
+	instances <-chan serverInstance) (responses, <-chan serverInstance) {
+	const readyResponseCount = 1
+	var (
+		cacheWg sync.WaitGroup
+		cache   = make([]serverInstance, 0, cap(instances)+readyResponseCount)
 	)
 	var (
-		mergedWg  sync.WaitGroup
-		mergedCh  = make(sourceRw)
-		mergeFrom = func(ch source) {
-			defer mergedWg.Done()
-			for value := range ch {
-				mergedCh <- value
+		responses = make(chan *Response, cap(instances))
+		respond   = func() {
+			defer close(responses)
+			defer cacheWg.Done()
+			splitInstance := func(instance serverInstance) error {
+				select {
+				case responses <- maddrListenerResponse(instance.Multiaddr()):
+					cache = append(cache, instance)
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			ForEachOrError(ctx, instances, nil, splitInstance)
+			select {
+			case responses <- readyResponse():
+			case <-ctx.Done():
 			}
 		}
 	)
-	mergedWg.Add(len(sources))
-	for _, source := range sources {
-		go mergeFrom(source)
-	}
-	go func() { mergedWg.Wait(); close(mergedCh) }()
+	cacheWg.Add(1)
+	go respond()
 
-	return mergedCh
+	relay := make(chan serverInstance, len(cache))
+	go func() {
+		cacheWg.Wait()
+		defer close(relay)
+		if ctx.Err() != nil {
+			return
+		}
+		for _, instance := range cache {
+			if ctx.Err() != nil {
+				return
+			}
+			relay <- instance
+		}
+	}()
+	return responses, relay
+}
+
+func waitForStopOrError(reasons <-chan environment.Reason, errs <-chan error) (responses, errCh) {
+	var (
+		responses = make(chan *Response, 1)
+		outErrs   = make(chan error)
+	)
+	go func() {
+		defer close(responses)
+		defer close(outErrs)
+		select {
+		case reason := <-reasons:
+			responses <- stoppingResponse(reason)
+		case err := <-errs:
+			responses <- stoppingResponse(environment.Error)
+			outErrs <- err
+			for err := range errs {
+				outErrs <- err
+			}
+		}
+	}()
+	return responses, outErrs
 }
