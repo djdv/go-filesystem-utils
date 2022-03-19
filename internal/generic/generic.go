@@ -125,9 +125,10 @@ func ProcessResults[in, out any](ctx context.Context,
 			}
 			select {
 			case errors <- err:
+				continue
 			case <-ctx.Done():
+				return
 			}
-			return
 		}
 		select {
 		case output <- result:
