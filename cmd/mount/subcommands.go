@@ -4,7 +4,9 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"unicode"
 
 	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
 	"github.com/djdv/go-filesystem-utils/filesystem"
@@ -108,6 +110,15 @@ func registerSystemIDCmds(template *cmds.Command, fsIDs []filesystem.ID) subcmds
 		request.SetOption(idName, strings.ToLower(subCmd))
 
 		for i, arg := range request.Arguments {
+			// HACK: we need a better interface here for platform specifics
+			if runtime.GOOS == "windows" {
+				if len(arg) == 2 &&
+					unicode.IsLetter(rune(arg[0])) &&
+					arg[1] == ':' {
+					request.Arguments[i] = "/path/" + arg
+					continue
+				}
+			}
 			mountPoint, err := filepath.Abs(maybeExpandArg(arg))
 			if err != nil {
 				return err
