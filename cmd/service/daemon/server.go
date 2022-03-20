@@ -37,7 +37,14 @@ var ErrServiceNotFound = errors.New("could not find service instance")
 // UserServiceMaddrs returns a list of multiaddrs that servers and client commands
 // may try to use when hosting or querying a user-level file system service.
 func UserServiceMaddrs() ([]multiaddr.Multiaddr, error) {
-	return servicePathsToServiceMaddrs(xdg.StateHome, xdg.RuntimeDir)
+	paths := []string{
+		xdg.StateHome,
+		xdg.RuntimeDir,
+	}
+	for i, path := range paths {
+		paths[i] = filepath.Join(path, ServerRootName, ServerName)
+	}
+	return pathsToUnixMaddrs(paths...)
 }
 
 // TODO: We should be consistent and return channel, not a slice.
@@ -48,19 +55,10 @@ func SystemServiceMaddrs() ([]multiaddr.Multiaddr, error) {
 	return systemServiceMaddrs() // Platform specific.
 }
 
-func servicePathsToServiceMaddrs(servicePaths ...string) ([]multiaddr.Multiaddr, error) {
-	var (
-		serviceMaddrs = make([]multiaddr.Multiaddr, 0, len(servicePaths))
-		multiaddrSet  = make(map[string]struct{}, len(servicePaths))
-	)
+func pathsToUnixMaddrs(servicePaths ...string) ([]multiaddr.Multiaddr, error) {
+	serviceMaddrs := make([]multiaddr.Multiaddr, 0, len(servicePaths))
 	for _, servicePath := range servicePaths {
-		if _, alreadySeen := multiaddrSet[servicePath]; alreadySeen {
-			continue // Don't return duplicates in our slice.
-		}
-		multiaddrSet[servicePath] = struct{}{}
-
-		maddrString := path.Join("/unix/",
-			filepath.Join(servicePath, ServerRootName, ServerName))
+		maddrString := path.Join("/unix/", servicePath)
 		serviceMaddr, err := multiaddr.NewMultiaddr(maddrString)
 		if err != nil {
 			return nil, err

@@ -77,7 +77,7 @@ func daemonRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Env
 		exitWhenIdle      = exitCheckInterval != 0
 	)
 	if exitWhenIdle {
-		idleResponses, idleErrs := stopOnIdleEvent(ctx, serviceEnv, settings.AutoExitInterval)
+		idleResponses, idleErrs := stopOnIdleEvent(daemonCtx, serviceEnv, settings.AutoExitInterval)
 		responses = append(responses, idleResponses)
 		errs = append(errs, idleErrs)
 	}

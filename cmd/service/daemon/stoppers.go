@@ -108,7 +108,7 @@ type isBusyFunc func() (bool, error)
 
 func stopOnIdle(ctx context.Context, stopper environment.Stopper,
 	checkInterval time.Duration, checkIfBusy isBusyFunc) <-chan error {
-	errs := make(chan error, 1)
+	errs := make(chan error)
 	go func() {
 		idleCheckTicker := time.NewTicker(checkInterval)
 		defer idleCheckTicker.Stop()
@@ -118,14 +118,20 @@ func stopOnIdle(ctx context.Context, stopper environment.Stopper,
 			case <-idleCheckTicker.C:
 				busy, err := checkIfBusy()
 				if err != nil {
-					errs <- err
+					select {
+					case errs <- err:
+					case <-ctx.Done():
+					}
 					return
 				}
 				if busy {
 					continue
 				}
 				if err := stopper.Stop(environment.Idle); err != nil {
-					errs <- err
+					select {
+					case errs <- err:
+					case <-ctx.Done():
+					}
 				}
 				return
 			case <-ctx.Done():
