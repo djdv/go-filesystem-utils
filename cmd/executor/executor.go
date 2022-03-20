@@ -76,12 +76,15 @@ func connectToOrLaunchDaemon(cmd *cmds.Command, env cmds.Environment,
 		return getFirstConnection(args...)
 	}
 
-	var defaults []multiaddr.Multiaddr
-	for _, fn := range []func() ([]multiaddr.Multiaddr, error){
-		daemon.UserServiceMaddrs,
-		daemon.SystemServiceMaddrs,
-	} {
-		maddrs, err := fn()
+	var (
+		sources = []func() ([]multiaddr.Multiaddr, error){
+			daemon.UserServiceMaddrs,
+			daemon.SystemServiceMaddrs,
+		}
+		defaults []multiaddr.Multiaddr
+	)
+	for _, defaultMaddrs := range sources {
+		maddrs, err := defaultMaddrs()
 		if err != nil {
 			return nil, err
 		}
