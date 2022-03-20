@@ -32,6 +32,7 @@ type (
 		Unmount(request *cmds.Request) ([]multiaddr.Multiaddr, error)
 		// TODO: options parameter: ...opts
 		// parse: cmds.Request's `-a` => list(listOptAll(true))
+		// TODO: List should take a context.
 		List() (<-chan multiaddr.Multiaddr, error)
 	}
 

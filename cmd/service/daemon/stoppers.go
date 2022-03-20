@@ -84,8 +84,16 @@ func stopOnIdleEvent(ctx context.Context,
 		// The ipc env should be used to query activity when implemented.
 		daemon      = serviceEnv.Daemon()
 		checkIfBusy = func() (bool, error) {
-			var _ environment.Daemon = daemon
-			return false, nil
+			instances, err := daemon.List()
+			if err != nil {
+				return false, err
+			}
+
+			var activeInstances bool
+			for range instances {
+				activeInstances = true
+			}
+			return activeInstances, nil
 		}
 		responses = make(chan *Response, 1)
 	)
