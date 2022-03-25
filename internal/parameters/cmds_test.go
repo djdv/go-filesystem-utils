@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
-	"github.com/multiformats/go-multiaddr"
 )
 
 func testOptions(t *testing.T) {
@@ -29,39 +28,6 @@ func testOptionsInvalid(t *testing.T) {
 	}
 }
 
-type testOptionsPkg struct {
-	unrelatedField1 bool
-	testRootSettings
-	A               uint
-	B               int64
-	C               uint64
-	D               float64
-	E               string
-	F               multiaddr.Multiaddr
-	G               []string
-	unrelatedField2 bool
-}
-
-func (self *testOptionsPkg) Parameters() parameters.Parameters {
-	return combineParameters(
-		(*testRootSettings)(nil).Parameters(),
-		parameterMaker(self),
-	)
-}
-
-type testOptionSubpkg struct {
-	NotEmbedded string `parameters:"settings"`
-	testSubPkgSettings
-	unrelated bool
-}
-
-func (self *testOptionSubpkg) Parameters() parameters.Parameters {
-	return combineParameters(
-		parameterMaker(self),
-		(*testSubPkgSettings)(nil).Parameters(),
-	)
-}
-
 func testOptionsValid(t *testing.T) {
 	t.Parallel()
 	t.Run("regular", testOptionsRegular)
@@ -81,19 +47,17 @@ func testOptionsRegular(t *testing.T) {
 		{
 			new(testRootSettings),
 			"root",
-			len((*testRootSettings)(nil).Parameters()),
+			len(parameterMaker[testRootSettings]()),
 		},
 		{
-			new(testOptionsPkg),
+			new(testPkgSettings),
 			"pkg",
-			len((*testOptionsPkg)(nil).Parameters()) -
-				len((*testRootSettings)(nil).Parameters()),
+			len(parameterMaker[testPkgSettings]()),
 		},
 		{
-			new(testOptionSubpkg),
+			new(testSubPkgSettings),
 			"subpkg",
-			len((*testOptionSubpkg)(nil).Parameters()) -
-				len((*testSubPkgSettings)(nil).Parameters()),
+			len(parameterMaker[testSubPkgSettings]()),
 		},
 	} {
 		var (
@@ -109,9 +73,10 @@ func testOptionsRegular(t *testing.T) {
 				for i, opt := range opts {
 					optStrings[i] = opt.Name()
 				}
+				t.Log("👀 test-dbg, params:", settings.Parameters())
 				t.Errorf("settings options do not match expected count"+
 					"\n\tgot: {%d}[%s]"+
-					"\n\twant: {%d}[...]",
+					"\n\twant: {%d}[$filteredOpts]",
 					optLen, strings.Join(optStrings, ", "),
 					expectedCount,
 				)

@@ -92,7 +92,7 @@ func testArgumentsVector(t *testing.T) {
 		parsers        []parameters.TypeParser
 	}{
 		{
-			name:     "builtin",
+			name:     "builtin handlers",
 			emptySet: new(testVectorSettings),
 			want: &testVectorSettings{
 				Slice: []bool{true, false, true, false},
@@ -100,9 +100,9 @@ func testArgumentsVector(t *testing.T) {
 			},
 		},
 		{
-			name:     "external",
-			emptySet: new(testVectorExternalSettings),
-			want: &testVectorExternalSettings{
+			name:     "external handlers",
+			emptySet: new(testVectorExternalHandlerSettings),
+			want: &testVectorExternalHandlerSettings{
 				Slice: []multiaddr.Multiaddr{
 					multiaddr.StringCast("/tcp/1"),
 					multiaddr.StringCast("/udp/2"),
@@ -172,7 +172,7 @@ func testArgumentsCompound(t *testing.T) {
 	t.Parallel()
 	var (
 		ctx           = context.Background()
-		compoundValue = compoundValue{
+		compoundValue = testStructType{
 			A: 1,
 			B: 2,
 		}
@@ -205,15 +205,17 @@ func testArgumentsCompound(t *testing.T) {
 func testArgumentsEmbedded(t *testing.T) {
 	t.Parallel()
 	var (
-		ctx           = context.Background()
-		compoundValue = compoundValue{
-			A: 1,
-			B: 2,
-		}
+		ctx = context.Background()
+		/*
+			compoundValue = testStructType{
+				A: 1,
+				B: 2,
+			}
+		*/
 		wantSettings = &testSubPkgSettings{
-			testCompoundSettings: testCompoundSettings{
-				CompoundValue: compoundValue,
-			},
+			//testCompoundSettings: testCompoundSettings{
+			//	CompoundValue: compoundValue,
+			//},
 			testVectorSettings: testVectorSettings{
 				Slice: []bool{true, false, true, false},
 				Array: [8]bool{false, true, false, true},
@@ -221,16 +223,16 @@ func testArgumentsEmbedded(t *testing.T) {
 			C: 3,
 			D: 4,
 		}
-		options        = nonzeroOptionSetter(&wantSettings.testFlatSettings)
-		compoundParams = wantSettings.testCompoundSettings.Parameters()
-		vectorParams   = wantSettings.testVectorSettings.Parameters()
-		toStrings      = func(vector []bool) []string {
+		options = nonzeroOptionSetter(&wantSettings.testFlatSettings)
+		// compoundParams = wantSettings.testCompoundSettings.Parameters()
+		vectorParams = wantSettings.testVectorSettings.Parameters()
+		toStrings    = func(vector []bool) []string {
 			return strings.Fields(strings.Trim(fmt.Sprint(vector), "[]"))
 		}
 		extraOptions = cmds.OptMap{
-			compoundParams[0].Name(parameters.CommandLine): compoundValue,
-			vectorParams[0].Name(parameters.CommandLine):   toStrings(wantSettings.Slice),
-			vectorParams[1].Name(parameters.CommandLine):   toStrings(wantSettings.Array[:]),
+			// compoundParams[0].Name(parameters.CommandLine): compoundValue,
+			vectorParams[0].Name(parameters.CommandLine): toStrings(wantSettings.Slice),
+			vectorParams[1].Name(parameters.CommandLine): toStrings(wantSettings.Array[:]),
 			"c": fmt.Sprint(wantSettings.C),
 			"d": fmt.Sprint(wantSettings.D),
 		}

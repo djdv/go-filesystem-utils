@@ -13,13 +13,12 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
-	"github.com/multiformats/go-multiaddr"
 )
 
 func testEnvironment(t *testing.T) {
 	var (
 		ctx      = context.Background()
-		settings = new(testOptionsPkg)
+		settings = new(testPkgSettings)
 		params   = settings.Parameters()
 		clearEnv = func() {
 			for _, param := range params {
@@ -31,45 +30,55 @@ func testEnvironment(t *testing.T) {
 			}
 		}
 
-		validSettings = &testOptionsPkg{
-			testRootSettings: testRootSettings{
-				TestField:  true,
-				TestField2: 1,
-			},
-			A: 2,
-			B: 3,
-			C: 4,
-			D: 5,
-			E: "six",
-			F: multiaddr.StringCast("/ip4/0.0.0.7"),
-			G: []string{"8", "9"},
-		}
+		wantSettings = new(testPkgSettings)
 	)
+	nonzeroValueSetter(wantSettings)
 
 	// Make sure env is clear before and after the test.
 	clearEnv()
 	defer clearEnv()
 
 	// Populate the env with our expected data.
-	testSettingsToEnv(t, validSettings)
+	testSettingsToEnv(t, wantSettings)
 
 	// TODO: these should be 2 separate tests "passthrough" and "solo/standalone/whatever"
 	// We don't use the request for anything other than testing pass though.
 	// Options not set by it should be picked up from the environment instead.
+
 	var (
 		request, _ = cmds.NewRequest(ctx, nil, nil, nil, nil, &cmds.Command{})
-		sources    = requestAndEnvSources(request)
 		types      = typeParsers()
 	)
-	if err := parameters.Parse(ctx, settings, sources, types...); err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(validSettings, settings) {
-		t.Fatalf("settings field values do not match input values"+
-			"\n\tgot: %#v"+
-			"\n\twant: %#v",
-			settings, validSettings)
+	for _, test := range []struct {
+		name    string
+		sources []parameters.SetFunc
+	}{
+		{
+			name: "solo source",
+			sources: []parameters.SetFunc{
+				parameters.SettingsFromEnvironment(),
+			},
+		},
+		{
+			name: "source passthrough",
+			sources: []parameters.SetFunc{
+				parameters.SettingsFromCmds(request),
+				parameters.SettingsFromEnvironment(),
+			},
+		},
+	} {
+		sources := test.sources
+		t.Run(test.name, func(t *testing.T) {
+			if err := parameters.Parse(ctx, settings, sources, types...); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(wantSettings, settings) {
+				t.Fatalf("settings field values do not match input values"+
+					"\n\tgot: %#v"+
+					"\n\twant: %#v",
+					settings, wantSettings)
+			}
+		})
 	}
 
 	t.Run("cancel context", func(t *testing.T) {
@@ -107,10 +116,14 @@ func testSettingsToEnv(t *testing.T, set parameters.Settings) {
 	}
 
 	for i, param := range params {
+		field := publicFields[i]
+		if field.Type.Kind() == reflect.Struct {
+			continue
+		}
 		var (
-			valueIndex = publicFields[i].Index
+			fieldIndex = field.Index
 			key        = param.Name(parameters.Environment)
-			value      = settingsValue.FieldByIndex(valueIndex).Interface()
+			value      = settingsValue.FieldByIndex(fieldIndex).Interface()
 		)
 		if strs, ok := value.([]string); ok {
 			value = testStringsToCSV(t, strs)

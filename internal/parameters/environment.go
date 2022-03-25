@@ -59,8 +59,8 @@ func assertEnvValue(goValueRef interface{}, envValue string) (interface{}, error
 	leftType := reflect.TypeOf(goValueRef).Elem()
 	reflectValue, err := parseString(leftType, envValue)
 	if err != nil {
-		err = fmt.Errorf("could not assert value: %w (for reference %T)",
-			err, goValueRef,
+		err = fmt.Errorf("could not assert value (for reference %T): %w ",
+			goValueRef, err,
 		)
 		return nil, err
 	}

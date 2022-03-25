@@ -65,7 +65,7 @@ func CtxRange[in any](ctx context.Context, input <-chan in) <-chan in {
 }
 
 func CtxTakeAndCancel[in any](ctx context.Context, cancel context.CancelFunc,
-	count int, inputs <-chan in,
+	inputs <-chan in, count int,
 ) <-chan in {
 	relay := make(chan in, count)
 	go func() {

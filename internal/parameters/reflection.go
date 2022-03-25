@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/djdv/go-filesystem-utils/internal/generic"
 	. "github.com/djdv/go-filesystem-utils/internal/generic"
 )
 
@@ -18,6 +17,13 @@ const (
 
 type (
 	structFields <-chan reflect.StructField
+
+	paramField struct {
+		Parameter
+		reflect.StructField
+	}
+	paramFields = <-chan paramField
+	paramBridge = <-chan paramFields
 
 	// structTagPair exists mainly for String formatting,
 	// but also for reducing/clarifying function arity/parameters.
@@ -194,7 +200,7 @@ func fieldsAfterTag(ctx context.Context, tag structTagPair,
 						return reflect.StructField{}, err
 					}
 					if !sawTag {
-						return reflect.StructField{}, generic.ErrSkip
+						return reflect.StructField{}, ErrSkip
 					}
 				}
 				return field, nil
@@ -210,6 +216,57 @@ func fieldsAfterTag(ctx context.Context, tag structTagPair,
 		}
 	}()
 	return out, errs
+}
+
+func bindParameterFields(ctx context.Context,
+	typ reflect.Type, parameters Parameters,
+) (paramFields, errCh) {
+	var (
+		subCtx, cancel = context.WithCancel(ctx)
+		baseFields     = generateFields(subCtx, typ)
+		allFields      = expandFields(subCtx, baseFields)
+
+		tag                   = newStructTagPair(settingsTagKey, settingsTagValue)
+		taggedFields, tagErrs = fieldsAfterTag(subCtx, tag, allFields)
+
+		paramCount    = len(parameters)
+		reducedFields = CtxTakeAndCancel(subCtx, cancel, taggedFields, paramCount)
+
+		paramFields = make(chan paramField, paramCount)
+		bindErrs    = make(chan error)
+
+		errs = CtxMerge(ctx, tagErrs, bindErrs)
+	)
+	go func() {
+		defer close(paramFields)
+		defer close(bindErrs)
+		var (
+			paramIndex int
+			bindParams = func(field reflect.StructField) (paramField, error) {
+				var (
+					parameter = parameters[paramIndex]
+					binding   = paramField{
+						Parameter:   parameter,
+						StructField: field,
+					}
+				)
+				paramIndex++
+				return binding, nil
+			}
+		)
+		ProcessResults(ctx, reducedFields, paramFields, nil, bindParams)
+		if ctx.Err() != nil {
+			return // Don't validate if we're canceled.
+		}
+		if err := checkParameterCount(paramIndex, paramCount, typ, parameters); err != nil {
+			select {
+			case bindErrs <- err:
+			case <-ctx.Done():
+			}
+		}
+	}()
+
+	return paramFields, errs
 }
 
 func referenceFromField(field reflect.StructField, fieldValue reflect.Value) (interface{}, error) {

@@ -56,15 +56,27 @@ func typeParsers() []parameters.TypeParser {
 
 func optionMakers() []parameters.CmdsOptionOption {
 	var (
-		maddrType    = reflect.TypeOf((*multiaddr.Multiaddr)(nil)).Elem()
-		durationType = reflect.TypeOf((*time.Duration)(nil)).Elem()
-		makers       = []parameters.OptionMaker{
+		makers = []parameters.OptionMaker{
 			{
-				Type:           maddrType,
+				Type:           reflect.TypeOf((*multiaddr.Multiaddr)(nil)).Elem(),
 				MakeOptionFunc: cmds.StringOption,
 			},
 			{
-				Type:           durationType,
+				Type:           reflect.TypeOf((*time.Duration)(nil)).Elem(),
+				MakeOptionFunc: cmds.StringOption,
+			},
+			// TODO: These stubs should probably not be here.
+			// (we need them to re-use the same types in tests between args and opts)
+			// The test-options structs and test-argument structs
+			// should probably be more independent.
+			{
+				Type: reflect.TypeOf((*testStructType)(nil)).Elem(),
+				// MakeOptionFunc: func(...string) cmds.Option { return nil },
+				MakeOptionFunc: cmds.StringOption,
+			},
+			{
+				Type: reflect.TypeOf((*testEmbeddedStructType)(nil)).Elem(),
+				// MakeOptionFunc: func(...string) cmds.Option { return nil },
 				MakeOptionFunc: cmds.StringOption,
 			},
 		}
@@ -76,11 +88,12 @@ func optionMakers() []parameters.CmdsOptionOption {
 	return opts
 }
 
-// parameterMaker generates dynamic parameters for the passed in Settings struct.
-// It only creates parameters for exported, non-embedded fields.
-func parameterMaker(set parameters.Settings) parameters.Parameters {
+// TODO: Refine this and move it to the main pkg, then export it.
+// parameterMaker takes in a struct type,
+// and generates parameters for its root fields.
+func parameterMaker[in any]() parameters.Parameters {
 	var (
-		typ        = reflect.TypeOf(set).Elem()
+		typ        = reflect.TypeOf((*in)(nil)).Elem()
 		fieldCount = typ.NumField()
 		params     = make([]parameters.Parameter, 0, fieldCount)
 	)
@@ -89,6 +102,10 @@ func parameterMaker(set parameters.Settings) parameters.Parameters {
 			continue
 		}
 		if len(field.Index) > 1 {
+			continue
+		}
+		// TODO: filter exported, embedded, structs
+		if field.Anonymous && field.Type.Kind() == reflect.Struct {
 			continue
 		}
 		var (
@@ -169,8 +186,8 @@ func nonzeroValueSetter(set parameters.Settings) {
 		setValue = reflect.ValueOf(set).Elem()
 		typ      = setValue.Type()
 	)
-	for i, field := range reflect.VisibleFields(typ) {
-		fieldRef := setValue.FieldByIndex([]int{i})
+	for _, field := range reflect.VisibleFields(typ) {
+		fieldRef := setValue.FieldByIndex(field.Index)
 		switch field.Type.Kind() {
 		case reflect.String:
 			goValue := "a"
@@ -228,15 +245,11 @@ func testCompareSettingsStructs(t *testing.T, gotSettings, wantSettings paramete
 }
 
 func combineParameters(sets ...parameters.Parameters) parameters.Parameters {
-	var count int
+	var current, count int
 	for _, set := range sets {
 		count += len(set)
 	}
-
-	var (
-		current int
-		all     = make([]parameters.Parameter, count)
-	)
+	all := make([]parameters.Parameter, count)
 	for _, set := range sets {
 		current += copy(all[current:], set)
 	}

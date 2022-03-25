@@ -84,7 +84,7 @@ func argsFromSettings(ctx context.Context, settings Settings) (Arguments, errCh,
 
 	var (
 		parameters         = settings.Parameters()
-		fields, fieldsErrs = generateSettingsFields(ctx, typ, parameters)
+		fields, fieldsErrs = bindParameterFields(ctx, typ, parameters)
 
 		arguments = make(chan Argument, cap(fields))
 		errs      = make(chan error)
@@ -93,61 +93,32 @@ func argsFromSettings(ctx context.Context, settings Settings) (Arguments, errCh,
 		defer close(arguments)
 		defer close(errs)
 		var (
-			paramIndex int
 			firstErr   error
 			setVal     = reflect.ValueOf(settings).Elem()
-			fieldToArg = func(field reflect.StructField) (argument Argument, _ error) {
+			fieldToArg = func(param paramField) (argument Argument, _ error) {
 				if firstErr != nil {
 					return argument, firstErr
 				}
 				var (
-					ref      interface{}
-					fieldVal = setVal.FieldByIndex(field.Index)
+					ref       interface{}
+					fieldVal  = setVal.FieldByIndex(param.Index)
+					field     = param.StructField
+					parameter = param.Parameter
 				)
 				if ref, firstErr = referenceFromField(field, fieldVal); firstErr != nil {
 					return argument, firstErr
 				}
 				argument = Argument{
-					Parameter:      parameters[paramIndex],
+					Parameter:      parameter,
 					ValueReference: ref,
 				}
-				paramIndex++
 				return argument, nil
 			}
 		)
-
 		ProcessResults(ctx, fields, arguments, errs, fieldToArg)
-
-		if ctx.Err() == nil { // Don't validate if we're canceled.
-			expected := len(parameters)
-			if err := checkParameterCount(paramIndex, expected, typ, parameters); err != nil {
-				select {
-				case errs <- err:
-				case <-ctx.Done():
-				}
-			}
-		}
 	}()
 
 	return arguments, CtxMerge(ctx, fieldsErrs, errs), nil
-}
-
-func generateSettingsFields(ctx context.Context,
-	typ reflect.Type, parameters Parameters,
-) (structFields, errCh) {
-	subCtx, cancel := context.WithCancel(ctx)
-	var (
-		baseFields = generateFields(subCtx, typ)
-		allFields  = expandFields(subCtx, baseFields)
-
-		tag                   = newStructTagPair(settingsTagKey, settingsTagValue)
-		taggedFields, tagErrs = fieldsAfterTag(subCtx, tag, allFields)
-
-		paramCount    = len(parameters)
-		reducedFields = CtxTakeAndCancel(subCtx, cancel, paramCount, taggedFields)
-	)
-
-	return reducedFields, tagErrs
 }
 
 func assignToArgument(arg Argument, value interface{}, parsers ...TypeParser) error {
@@ -200,8 +171,30 @@ func canAssignDirectly(leftType, rightType reflect.Type) bool {
 func maybeConvert(leftType, rightType reflect.Type, rightValue reflect.Value,
 	parsers typeParsers,
 ) (*reflect.Value, error) {
-	if leftKind := leftType.Kind(); leftKind == reflect.Slice ||
+	specialValue, err := handlePtrArgTypes(leftType, rightType, rightValue, parsers)
+	if err != nil {
+		return nil, err
+	}
+	if specialValue != nil {
+		return specialValue, nil
+	}
+	return maybeConvertBuiltin(leftType, rightType, rightValue)
+}
+
+func handlePtrArgTypes(leftType, rightType reflect.Type, rightValue reflect.Value,
+	parsers typeParsers,
+) (*reflect.Value, error) {
+	leftKind := leftType.Kind()
+	if leftKind == reflect.Slice ||
 		leftKind == reflect.Array {
+		vectorValues, err := handleVectorArgs(leftType, rightValue, parsers)
+		if err != nil {
+			return nil, err
+		}
+		if vectorValues != nil {
+			return vectorValues, nil
+		}
+
 		// Reduce the set to only the one we need.
 		if parser := parsers.Index(leftType.Elem()); parser != nil {
 			parsers = []TypeParser{*parser}
@@ -209,18 +202,22 @@ func maybeConvert(leftType, rightType reflect.Type, rightValue reflect.Value,
 		return parseVector(leftType, rightValue, parsers)
 	}
 
-	if rightType.Kind() == reflect.String {
-		goString := rightValue.Interface().(string)
-		reflectValue, err := parseString(leftType, goString)
+	goString, argIsString := rightValue.Interface().(string)
+	if argIsString {
+		convertedValue, err := parseString(leftType, goString)
 		if err != nil {
 			return nil, err
 		}
-		if reflectValue != nil {
-			rightValue = *reflectValue
-			rightType = rightValue.Type()
+		if convertedValue != nil {
+			var (
+				rVal          = *convertedValue
+				convertedType = rVal.Type()
+			)
+			return maybeConvertBuiltin(leftType, convertedType, rVal)
 		}
 	}
-	return maybeConvertBuiltin(leftType, rightType, rightValue)
+
+	return nil, nil
 }
 
 func maybeConvertBuiltin(leftType, rightType reflect.Type, rightValue reflect.Value) (*reflect.Value, error) {
@@ -304,6 +301,16 @@ func parseString(typ reflect.Type, value string) (*reflect.Value, error) {
 	}
 	reflectValue := reflect.ValueOf(typedValue)
 	return &reflectValue, nil
+}
+
+func handleVectorArgs(leftType reflect.Type, rightValue reflect.Value,
+	parsers typeParsers,
+) (*reflect.Value, error) {
+	// Reduce the set to only the one we need.
+	if parser := parsers.Index(leftType.Elem()); parser != nil {
+		parsers = []TypeParser{*parser}
+	}
+	return parseVector(leftType, rightValue, parsers)
 }
 
 func parseVector(typ reflect.Type, value reflect.Value, parsers typeParsers) (*reflect.Value, error) {
