@@ -154,7 +154,7 @@ func expandFields(ctx context.Context, fields structFields) structFields {
 				prefixedFields = prefixIndex(subCtx, field.Index, embeddedFields)
 				recursedFields = expandFields(subCtx, prefixedFields)
 			)
-			for field := range CtxRange(ctx, recursedFields) {
+			for field := range recursedFields {
 				select {
 				case out <- field:
 				case <-ctx.Done():
