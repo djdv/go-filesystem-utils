@@ -210,7 +210,7 @@ func signalFromReader(ctx context.Context, signal stdioSignal, reader io.Reader)
 	go func() {
 		defer close(errs)
 		expected := []byte{signal}
-		for signal := range CtxRange(ctx, bytesChan) {
+		for signal := range bytesChan {
 			if !bytes.Equal(expected, signal) {
 				err := fmt.Errorf(
 					"unexpected response on stdin"+

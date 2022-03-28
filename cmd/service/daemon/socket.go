@@ -59,7 +59,7 @@ func listenersFromMaddrs(ctx context.Context, maddrs maddrs) (listeners, errCh) 
 	go func() {
 		defer close(listeners)
 		defer close(errs)
-		for maddr := range CtxRange(ctx, maddrs) {
+		for maddr := range maddrs {
 			listener, err := manet.Listen(maddr)
 			if err != nil {
 				select {
