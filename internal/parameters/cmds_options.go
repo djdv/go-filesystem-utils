@@ -210,17 +210,17 @@ func skipEmbeddedOptions(ctx context.Context,
 	go func() {
 		defer close(out)
 		defer close(errs)
-		for params := range segmentedParams {
-			maybeFields, tErrs := skipEmbeddedOptionFields(ctx, optionTagToSkip, params)
-			fn := func(param paramField) error {
-				select {
-				case out <- param:
-					return nil
-				case <-ctx.Done():
-					return ctx.Err()
-				}
+		relayField := func(param paramField) error {
+			select {
+			case out <- param:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
 			}
-			if err := ForEachOrError(ctx, maybeFields, tErrs, fn); err != nil {
+		}
+		for params := range segmentedParams {
+			untaggedParams, tagErrs := skipEmbeddedOptionFields(ctx, optionTagToSkip, params)
+			if err := ForEachOrError(ctx, untaggedParams, tagErrs, relayField); err != nil {
 				select {
 				case errs <- err:
 				case <-ctx.Done():
