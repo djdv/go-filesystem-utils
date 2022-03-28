@@ -232,21 +232,22 @@ func skipEmbeddedOptions(ctx context.Context,
 }
 
 func skipEmbeddedOptionFields(ctx context.Context,
-	optionTagToSkip structTagPair,
-	fields paramFields,
+	tagToSkip structTagPair,
+	params paramFields,
 ) (paramFields, errCh) {
 	var (
-		out  = make(chan paramField, cap(fields))
+		out  = make(chan paramField, cap(params))
 		errs = make(chan error)
 	)
 	go func() {
 		defer close(out)
 		defer close(errs)
 		var (
-			fieldBuffer = make([]paramField, 0, cap(fields))
-			sawTag      bool
+			// If we ever see a tag, keep draining the input channel.
+			// But stop processing/buffering inputs.
+			paramBuffer = make([]paramField, 0, cap(params))
 			checkTags   = func(param paramField) error {
-				if sawTag {
+				if paramBuffer == nil {
 					return nil
 				}
 				var (
@@ -255,28 +256,27 @@ func skipEmbeddedOptionFields(ctx context.Context,
 					fieldIsEmbedded  = fieldStructDepth > 1
 				)
 				if fieldIsEmbedded {
-					var err error
-					if sawTag, err = hasTagValue(field, optionTagToSkip); err != nil {
+					sawTag, err := hasTagValue(field, tagToSkip)
+					if err != nil {
 						return err
 					}
 					if sawTag {
+						paramBuffer = nil
 						return nil
 					}
 				}
-				fieldBuffer = append(fieldBuffer, param)
+				paramBuffer = append(paramBuffer, param)
 				return nil
 			}
 		)
-		if err := ForEachOrError(ctx, fields, nil, checkTags); err != nil {
+		if err := ForEachOrError(ctx, params, nil, checkTags); err != nil {
 			select {
 			case errs <- err:
 			case <-ctx.Done():
 			}
-		}
-		if sawTag {
 			return
 		}
-		for _, field := range fieldBuffer {
+		for _, field := range paramBuffer {
 			if ctx.Err() != nil {
 				return
 			}
