@@ -187,19 +187,7 @@ func handlePtrArgTypes(leftType, rightType reflect.Type, rightValue reflect.Valu
 	leftKind := leftType.Kind()
 	if leftKind == reflect.Slice ||
 		leftKind == reflect.Array {
-		vectorValues, err := handleVectorArgs(leftType, rightValue, parsers)
-		if err != nil {
-			return nil, err
-		}
-		if vectorValues != nil {
-			return vectorValues, nil
-		}
-
-		// Reduce the set to only the one we need.
-		if parser := parsers.Index(leftType.Elem()); parser != nil {
-			parsers = []TypeParser{*parser}
-		}
-		return parseVector(leftType, rightValue, parsers)
+		return handleVectorArgs(leftType, rightValue, parsers)
 	}
 
 	goString, argIsString := rightValue.Interface().(string)
