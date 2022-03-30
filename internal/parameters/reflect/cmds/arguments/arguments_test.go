@@ -1,7 +1,8 @@
-package parameters_test
+package arguments_test
 
 import (
 	"context"
+	"encoding/csv"
 	"errors"
 	"fmt"
 	"reflect"
@@ -52,7 +53,7 @@ func testArgumentsNoop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := parameters.Parse(ctx, new(testFlatSettings), sources); err != nil {
+	if err := parameters.Parse(ctx, new(flatSettings), sources); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -61,7 +62,7 @@ func testArgumentsFlat(t *testing.T) {
 	t.Parallel()
 	var (
 		ctx          = context.Background()
-		wantSettings = new(testFlatSettings)
+		wantSettings = new(flatSettings)
 		options      = nonzeroOptionSetter(wantSettings)
 		request, _   = cmds.NewRequest(ctx, nil, options,
 			nil, nil, &cmds.Command{},
@@ -70,7 +71,7 @@ func testArgumentsFlat(t *testing.T) {
 	nonzeroValueSetter(wantSettings)
 
 	var (
-		gotSettings = new(testFlatSettings)
+		gotSettings = new(flatSettings)
 		sources     = []parameters.SetFunc{
 			parameters.SettingsFromCmds(request),
 		}
@@ -85,7 +86,6 @@ func testArgumentsFlat(t *testing.T) {
 
 func testArgumentsVector(t *testing.T) {
 	t.Parallel()
-
 	for _, test := range []struct {
 		name           string
 		emptySet, want parameters.Settings
@@ -93,16 +93,16 @@ func testArgumentsVector(t *testing.T) {
 	}{
 		{
 			name:     "builtin handlers",
-			emptySet: new(testVectorSettings),
-			want: &testVectorSettings{
+			emptySet: new(vectorSettings),
+			want: &vectorSettings{
 				Slice: []bool{true, false, true, false},
 				Array: [8]bool{false, true, false, true},
 			},
 		},
 		{
 			name:     "external handlers",
-			emptySet: new(testVectorExternalHandlerSettings),
-			want: &testVectorExternalHandlerSettings{
+			emptySet: new(vectorExternalHandlerSettings),
+			want: &vectorExternalHandlerSettings{
 				Slice: []multiaddr.Multiaddr{
 					multiaddr.StringCast("/tcp/1"),
 					multiaddr.StringCast("/udp/2"),
@@ -118,65 +118,167 @@ func testArgumentsVector(t *testing.T) {
 		var (
 			got     = test.emptySet
 			want    = test.want
-			options = optionFromSettings(want)
 			parsers = test.parsers
 		)
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			ctx := context.Background()
 			t.Run("values", func(t *testing.T) {
 				t.Parallel()
-				var (
-					request, _ = cmds.NewRequest(ctx, nil, options,
-						nil, nil, &cmds.Command{},
-					)
-					sources = []parameters.SetFunc{
-						parameters.SettingsFromCmds(request),
-					}
-					err = parameters.Parse(ctx, got, sources, parsers...)
-				)
-				if err != nil {
-					t.Error(err)
-				}
-				testCompareSettingsStructs(t, got, want)
+				testVectorValues(t, got, want, parsers)
 			})
 			t.Run("strings", func(t *testing.T) {
 				t.Parallel()
-				var (
-					stringOptions = func() cmds.OptMap {
-						stringOptions := make(cmds.OptMap, len(options))
-						for k, v := range options {
-							stringOptions[k] = strings.Fields(
-								strings.Trim(fmt.Sprint(v), "[]"))
-						}
-						return stringOptions
-					}()
-					request, _ = cmds.NewRequest(ctx, nil, stringOptions,
-						nil, nil, &cmds.Command{},
-					)
-					sources = []parameters.SetFunc{
-						parameters.SettingsFromCmds(request),
-					}
-					err = parameters.Parse(ctx, got, sources, parsers...)
-				)
-				if err != nil {
-					t.Error(err)
-				}
-				testCompareSettingsStructs(t, got, want)
+				testVectorStrings(t, got, want, parsers)
 			})
 		})
 	}
+}
+
+func testVectorValues(t *testing.T,
+	got, want parameters.Settings, parsers []parameters.TypeParser,
+) {
+	var (
+		ctx        = context.Background()
+		options    = optionsFromSettings(want)
+		request, _ = cmds.NewRequest(ctx, nil, options,
+			nil, nil, &cmds.Command{},
+		)
+		sources = []parameters.SetFunc{
+			parameters.SettingsFromCmds(request),
+		}
+		err = parameters.Parse(ctx, got, sources, parsers...)
+	)
+	if err != nil {
+		t.Error(err)
+	}
+	testCompareSettingsStructs(t, got, want)
+}
+
+func testVectorStrings(t *testing.T,
+	empty, want parameters.Settings, parsers []parameters.TypeParser,
+) {
+	var (
+		ctx           = context.Background()
+		options       = optionsFromSettings(want)
+		stringOptions = func() cmds.OptMap {
+			stringOptions := make(cmds.OptMap, len(options))
+			for k, v := range options {
+				// t.Log("dbg 4:", strings.Fields(
+				//	strings.Trim(fmt.Sprint(v), "[]")))
+
+				// stringOptions[k] = strings.Fields(
+				//	strings.Trim(fmt.Sprint(v), "[]"))
+				var (
+					goString         = fmt.Sprint(v)
+					syntaxlessString = strings.Trim(goString, "[]")
+					argumentStrings  = strings.Fields(syntaxlessString)
+
+					builder   strings.Builder
+					csvWriter = csv.NewWriter(&builder)
+				)
+				if err := csvWriter.Write(argumentStrings); err != nil {
+					t.Fatal(err)
+				}
+				csvWriter.Flush()
+				if err := csvWriter.Error(); err != nil {
+					t.Fatal(err)
+				}
+				stringOptions[k] = builder.String()
+			}
+			return stringOptions
+		}()
+		// FIXME: NewRequest will not parse csv strings
+		// since the Command is nil
+		// (it gets the typedef from the cmd.Options[name] map defined on it)
+		// i.e. we need to call cmds.makeStringOpts or whatever first
+
+		root = &cmds.Command{
+			Options: parameters.MustMakeCmdsOptions(empty),
+		}
+		request, _ = cmds.NewRequest(ctx, nil, stringOptions,
+			nil, nil, root,
+		)
+		sources = []parameters.SetFunc{
+			parameters.SettingsFromCmds(request),
+		}
+		err = parameters.Parse(ctx, empty, sources, parsers...)
+	)
+	if err != nil {
+		t.Error(err)
+	}
+	got := empty // (Formerly empty)
+
+	{ // DBG
+		opts := stringOptions
+		optDefs, err := root.GetOptions(nil)
+		options := make(cmds.OptMap)
+
+		if err != nil {
+			t.Fatal(err)
+		}
+		for k, v := range opts {
+			options[k] = v
+		}
+
+		for k, v := range opts {
+			opt, ok := optDefs[k]
+			if !ok {
+				continue
+			}
+
+			kind := reflect.TypeOf(v).Kind()
+			if kind != opt.Type() {
+				t.Log("internal b1")
+				if opt.Type() == cmds.Strings {
+					t.Log("internal b2")
+					if _, ok := v.([]string); !ok {
+						t.Log("internal b3")
+						t.Fatal(
+							fmt.Errorf("option %q should be type %q, but got type %q",
+								k, opt.Type().String(), kind.String()))
+					}
+				} else {
+					t.Log("internal b4")
+					str, ok := v.(string)
+					if !ok {
+						t.Fatal(fmt.Errorf("option %q should be type %q, but got type %q",
+							k, opt.Type().String(), kind.String()))
+					}
+
+					val, err := opt.Parse(str)
+					if err != nil {
+						value := fmt.Sprintf("value %q", v)
+						if len(str) == 0 {
+							value = "empty value"
+						}
+						t.Fatal(fmt.Errorf("could not convert %s to type %q (for option %q)",
+							value, opt.Type().String(), "-"+k))
+					}
+					options[k] = val
+				}
+			}
+
+			for _, name := range opt.Names() {
+				if _, ok := options[name]; name != k && ok {
+					t.Fatal(fmt.Errorf("duplicate command options were provided (%q and %q)",
+						k, name))
+				}
+			}
+		}
+	}
+
+	testCompareSettingsStructs(t, got, want)
 }
 
 func testArgumentsCompound(t *testing.T) {
 	t.Parallel()
 	var (
 		ctx           = context.Background()
-		compoundValue = testStructType{
+		compoundValue = structType{
 			A: 1,
 			B: 2,
 		}
-		wantSettings = &testCompoundSettings{
+		wantSettings = &compoundSettings{
 			CompoundValue: compoundValue,
 		}
 		params  = wantSettings.Parameters()
@@ -189,7 +291,7 @@ func testArgumentsCompound(t *testing.T) {
 	)
 
 	var (
-		gotSettings = new(testCompoundSettings)
+		gotSettings = new(compoundSettings)
 		sources     = []parameters.SetFunc{
 			parameters.SettingsFromCmds(request),
 		}
@@ -212,20 +314,20 @@ func testArgumentsEmbedded(t *testing.T) {
 				B: 2,
 			}
 		*/
-		wantSettings = &testSubPkgSettings{
+		wantSettings = &subPkgSettings{
 			//testCompoundSettings: testCompoundSettings{
 			//	CompoundValue: compoundValue,
 			//},
-			testVectorSettings: testVectorSettings{
+			vectorSettings: vectorSettings{
 				Slice: []bool{true, false, true, false},
 				Array: [8]bool{false, true, false, true},
 			},
 			C: 3,
 			D: 4,
 		}
-		options = nonzeroOptionSetter(&wantSettings.testFlatSettings)
+		options = nonzeroOptionSetter(&wantSettings.flatSettings)
 		// compoundParams = wantSettings.testCompoundSettings.Parameters()
-		vectorParams = wantSettings.testVectorSettings.Parameters()
+		vectorParams = wantSettings.vectorSettings.Parameters()
 		toStrings    = func(vector []bool) []string {
 			return strings.Fields(strings.Trim(fmt.Sprint(vector), "[]"))
 		}
@@ -244,10 +346,10 @@ func testArgumentsEmbedded(t *testing.T) {
 	request, _ := cmds.NewRequest(ctx, nil, options,
 		nil, nil, &cmds.Command{},
 	)
-	nonzeroValueSetter(&wantSettings.testFlatSettings)
+	nonzeroValueSetter(&wantSettings.flatSettings)
 
 	var (
-		gotSettings = new(testSubPkgSettings)
+		gotSettings = new(subPkgSettings)
 		sources     = []parameters.SetFunc{
 			parameters.SettingsFromCmds(request),
 		}
@@ -274,7 +376,7 @@ func testArgumentsCancel(t *testing.T) {
 	}
 
 	expectedErr := context.Canceled
-	err = parameters.Parse(ctx, new(testFlatSettings), sources)
+	err = parameters.Parse(ctx, new(flatSettings), sources)
 	if !errors.Is(err, expectedErr) {
 		t.Errorf("error value does not match"+
 			"\n\twanted: %v"+
@@ -319,12 +421,12 @@ func testArgumentsInvalidTypes(t *testing.T) {
 func testArgumentsParserFail(t *testing.T) {
 	t.Parallel()
 	var (
-		ctx         = context.Background()
-		expectedErr = errors.New("refusing to parse")
-		badParser   = func(argument string) (value interface{}, _ error) {
-			return nil, expectedErr
+		ctx       = context.Background()
+		wantErr   = errors.New("refusing to parse")
+		badParser = func(argument string) (value interface{}, _ error) {
+			return nil, wantErr
 		}
-		settings   = new(testPkgSettings)
+		settings   = new(externalSettings)
 		params     = settings.Parameters()
 		request, _ = cmds.NewRequest(ctx, nil,
 			cmds.OptMap{
@@ -332,14 +434,15 @@ func testArgumentsParserFail(t *testing.T) {
 			},
 			nil, nil, &cmds.Command{})
 
-		sources     = requestAndEnvSources(request)
-		typeHandler = parameters.TypeParser{
-			Type:      reflect.TypeOf((*multiaddr.Multiaddr)(nil)).Elem(),
+		sources      = requestAndEnvSources(request)
+		externalType = reflect.TypeOf((*externalType)(nil)).Elem()
+		typeHandler  = parameters.TypeParser{
+			Type:      externalType,
 			ParseFunc: badParser,
 		}
-		err = parameters.Parse(ctx, settings, sources, typeHandler)
+		gotErr = parameters.Parse(ctx, settings, sources, typeHandler)
 	)
-	if err == nil {
+	if !errors.Is(gotErr, wantErr) {
 		t.Error("expected error but got none (non-parseable special values)")
 	}
 }
@@ -348,7 +451,7 @@ func testArgumentsBadTypes(t *testing.T) {
 	t.Parallel()
 	var (
 		ctx        = context.Background()
-		settings   = new(testPkgSettings)
+		settings   = new(pkgSettings)
 		params     = settings.Parameters()
 		badValue   = true
 		request, _ = cmds.NewRequest(ctx, nil,

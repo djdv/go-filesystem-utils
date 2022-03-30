@@ -1,4 +1,4 @@
-package parameters_test
+package reflect_test
 
 import (
 	"fmt"
@@ -33,8 +33,8 @@ func requestAndEnvSources(request *cmds.Request) []parameters.SetFunc {
 
 func typeParsers() []parameters.TypeParser {
 	var (
-		maddrType   = reflect.TypeOf((*multiaddr.Multiaddr)(nil)).Elem()
-		maddrParser = func(argument string) (interface{}, error) {
+		externalType = reflect.TypeOf((*multiaddr.Multiaddr)(nil)).Elem()
+		maddrParser  = func(argument string) (interface{}, error) {
 			return multiaddr.NewMultiaddr(argument)
 		}
 		durationType   = reflect.TypeOf((*time.Duration)(nil)).Elem()
@@ -44,7 +44,7 @@ func typeParsers() []parameters.TypeParser {
 	)
 	return []parameters.TypeParser{
 		{
-			Type:      maddrType,
+			Type:      externalType,
 			ParseFunc: maddrParser,
 		},
 		{
@@ -70,12 +70,12 @@ func optionMakers() []parameters.CmdsOptionOption {
 			// The test-options structs and test-argument structs
 			// should probably be more independent.
 			{
-				Type: reflect.TypeOf((*testStructType)(nil)).Elem(),
+				Type: reflect.TypeOf((*structType)(nil)).Elem(),
 				// MakeOptionFunc: func(...string) cmds.Option { return nil },
 				MakeOptionFunc: cmds.StringOption,
 			},
 			{
-				Type: reflect.TypeOf((*testEmbeddedStructType)(nil)).Elem(),
+				Type: reflect.TypeOf((*embeddedStructType)(nil)).Elem(),
 				// MakeOptionFunc: func(...string) cmds.Option { return nil },
 				MakeOptionFunc: cmds.StringOption,
 			},
@@ -88,44 +88,7 @@ func optionMakers() []parameters.CmdsOptionOption {
 	return opts
 }
 
-// TODO: Refine this and move it to the main pkg, then export it.
-// parameterMaker takes in a struct type,
-// and generates parameters for its root fields.
-func parameterMaker[in any]() parameters.Parameters {
-	var (
-		typ        = reflect.TypeOf((*in)(nil)).Elem()
-		fieldCount = typ.NumField()
-		params     = make([]parameters.Parameter, 0, fieldCount)
-	)
-	for _, field := range reflect.VisibleFields(typ) {
-		if !field.IsExported() {
-			continue
-		}
-		if len(field.Index) > 1 {
-			continue
-		}
-		// TODO: filter exported, embedded, structs
-		if field.Anonymous && field.Type.Kind() == reflect.Struct {
-			continue
-		}
-		var (
-			name        = field.Name
-			description = fmt.Sprintf(
-				"Dynamic parameter for %s",
-				name,
-			)
-		)
-		params = append(params,
-			parameters.NewParameter(
-				description,
-				parameters.WithName(name),
-			),
-		)
-	}
-	return params
-}
-
-func optionFromSettings(set parameters.Settings) cmds.OptMap {
+func optionsFromSettings(set parameters.Settings) cmds.OptMap {
 	var (
 		currentParam int
 		setVal       = reflect.ValueOf(set).Elem()

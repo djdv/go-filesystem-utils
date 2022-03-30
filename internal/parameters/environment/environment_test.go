@@ -1,4 +1,4 @@
-package parameters_test
+package environment_test
 
 import (
 	"context"
@@ -18,7 +18,7 @@ import (
 func testEnvironment(t *testing.T) {
 	var (
 		ctx      = context.Background()
-		settings = new(testPkgSettings)
+		settings = new(pkgSettings)
 		params   = settings.Parameters()
 		clearEnv = func() {
 			for _, param := range params {
@@ -30,7 +30,7 @@ func testEnvironment(t *testing.T) {
 			}
 		}
 
-		wantSettings = new(testPkgSettings)
+		wantSettings = new(pkgSettings)
 	)
 	nonzeroValueSetter(wantSettings)
 

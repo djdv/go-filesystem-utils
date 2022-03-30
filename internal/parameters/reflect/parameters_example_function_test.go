@@ -1,4 +1,4 @@
-package parameters_test
+package reflect_test
 
 import (
 	"fmt"

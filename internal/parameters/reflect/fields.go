@@ -1,13 +1,15 @@
-package parameters
+package reflect
 
 import (
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 
 	. "github.com/djdv/go-filesystem-utils/internal/generic"
+	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
 const (
@@ -15,11 +17,16 @@ const (
 	settingsTagValue = "settings"
 )
 
+var (
+	errNoTag        = errors.New("no fields contained tag")
+	errTooFewFields = errors.New("not enough fields")
+)
+
 type (
 	structFields <-chan reflect.StructField
 
 	paramField struct {
-		Parameter
+		parameters.Parameter
 		reflect.StructField
 	}
 	paramFields = <-chan paramField
@@ -28,92 +35,17 @@ type (
 	// structTagPair exists mainly for String formatting,
 	// but also for reducing/clarifying function arity/parameters.
 	structTagPair struct{ key, value string }
-
-	// providedFunc helps simplify implementations of `Source.SetEach`.
-	// (See also: the `setEach` function.)
-	providedFunc func(arg Argument) (provided bool, err error)
 )
+
+func (tag structTagPair) String() string {
+	return fmt.Sprintf("`%s:\"%s\"`", tag.key, tag.value)
+}
 
 func newStructTagPair(key, value string) structTagPair {
 	return structTagPair{
 		key:   key,
 		value: value,
 	}
-}
-
-func (tag structTagPair) String() string {
-	return fmt.Sprintf("`%s:\"%s\"`", tag.key, tag.value)
-}
-
-func hasTagValue(field reflect.StructField, tag structTagPair) (bool, error) {
-	if tagStr, ok := field.Tag.Lookup(tag.key); ok {
-		fieldTags, err := csv.NewReader(strings.NewReader(tagStr)).Read()
-		if err != nil {
-			return false, fmt.Errorf("could not parse tag value `%s` as CSV: %w",
-				tagStr, err)
-		}
-		for _, fieldTag := range fieldTags {
-			if fieldTag == tag.value {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
-}
-
-func checkType(structPtr Settings) (reflect.Type, error) {
-	var (
-		pointerType = reflect.TypeOf(structPtr)
-		makeErr     = func() error {
-			return fmt.Errorf("%w:"+
-				" got: %T"+
-				" want: pointer to struct",
-				errUnexpectedType,
-				structPtr,
-			)
-		}
-	)
-	if pointerType.Kind() != reflect.Ptr {
-		return nil, makeErr()
-	}
-	if structType := pointerType.Elem(); structType.Kind() == reflect.Struct {
-		return structType, nil
-	}
-	return nil, makeErr()
-}
-
-// setEach can be used by `Source.SetEach` implementations
-// so that only the `providedFunc` needs to be implemented per `Source`.
-func setEach(ctx context.Context,
-	providedFn providedFunc, argsToSet Arguments,
-) (Arguments, errCh) {
-	var (
-		unsetArgs = make(chan Argument, cap(argsToSet))
-		errs      = make(chan error)
-	)
-	go func() {
-		defer close(unsetArgs)
-		defer close(errs)
-		for arg := range argsToSet {
-			provided, err := providedFn(arg)
-			if err != nil {
-				select {
-				case errs <- err:
-				case <-ctx.Done():
-				}
-				return
-			}
-			if provided {
-				continue
-			}
-			select {
-			case unsetArgs <- arg:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return unsetArgs, errs
 }
 
 func generateFields(ctx context.Context, setTyp reflect.Type) structFields {
@@ -218,8 +150,24 @@ func fieldsAfterTag(ctx context.Context, tag structTagPair,
 	return out, errs
 }
 
+func hasTagValue(field reflect.StructField, tag structTagPair) (bool, error) {
+	if tagStr, ok := field.Tag.Lookup(tag.key); ok {
+		fieldTags, err := csv.NewReader(strings.NewReader(tagStr)).Read()
+		if err != nil {
+			return false, fmt.Errorf("could not parse tag value `%s` as CSV: %w",
+				tagStr, err)
+		}
+		for _, fieldTag := range fieldTags {
+			if fieldTag == tag.value {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 func bindParameterFields(ctx context.Context,
-	typ reflect.Type, parameters Parameters,
+	typ reflect.Type, parameters parameters.Parameters,
 ) (paramFields, errCh) {
 	var (
 		subCtx, cancel = context.WithCancel(ctx)
@@ -269,24 +217,8 @@ func bindParameterFields(ctx context.Context,
 	return paramFields, errs
 }
 
-func referenceFromField(field reflect.StructField, fieldValue reflect.Value) (interface{}, error) {
-	if !fieldValue.CanSet() {
-		err := fmt.Errorf("%w"+
-			" field %s in type `%s` is not settable",
-			errUnassignable,
-			field.Name, field.Type.Name(),
-		)
-		if !field.IsExported() {
-			err = fmt.Errorf("%w (the field is not exported)",
-				err)
-		}
-		return nil, err
-	}
-	return fieldValue.Addr().Interface(), nil
-}
-
 func checkParameterCount(count, expected int, typ reflect.Type,
-	parameters Parameters,
+	parameters parameters.Parameters,
 ) (err error) {
 	if count != expected {
 		remainder := parameters[count:]

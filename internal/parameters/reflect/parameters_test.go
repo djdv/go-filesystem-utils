@@ -1,4 +1,4 @@
-package parameters_test
+package reflect_test
 
 import (
 	"testing"
@@ -72,7 +72,7 @@ func testParemeterInvalidArgs(t *testing.T) {
 	const failMsg = "invalid source ID value"
 	var (
 		invalidSource parameters.SourceID
-		parameter     = (*testRootSettings)(nil).Parameters()[0]
+		parameter     = (*rootSettings)(nil).Parameters()[0]
 	)
 	t.Run("name", func(t *testing.T) {
 		t.Parallel()

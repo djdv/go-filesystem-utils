@@ -1,4 +1,4 @@
-package parameters_test
+package reflect_test
 
 import (
 	"strings"
@@ -45,19 +45,19 @@ func testOptionsRegular(t *testing.T) {
 		count        int
 	}{
 		{
-			new(testRootSettings),
+			new(rootSettings),
 			"root",
-			len(parameterMaker[testRootSettings]()),
+			len(parameterMaker[rootSettings]()),
 		},
 		{
-			new(testPkgSettings),
+			new(pkgSettings),
 			"pkg",
-			len(parameterMaker[testPkgSettings]()),
+			len(parameterMaker[pkgSettings]()),
 		},
 		{
-			new(testSubPkgSettings),
+			new(subPkgSettings),
 			"subpkg",
-			len(parameterMaker[testSubPkgSettings]()),
+			len(parameterMaker[subPkgSettings]()),
 		},
 	} {
 		var (
@@ -88,8 +88,8 @@ func testOptionsRegular(t *testing.T) {
 func testOptionsEmbedded(t *testing.T) {
 	t.Parallel()
 	var (
-		settings      = new(testEmbeddedStructSettings)
-		expectedCount = len((*testEmbeddedStructSettings)(nil).Parameters())
+		settings      = new(embeddedStructSettings)
+		expectedCount = len((*embeddedStructSettings)(nil).Parameters())
 	)
 	opts := parameters.MustMakeCmdsOptions(settings)
 	if optLen := len(opts); expectedCount != optLen {
@@ -109,7 +109,7 @@ func testOptionsEmbedded(t *testing.T) {
 func testOptionsOptions(t *testing.T) {
 	t.Parallel()
 	var (
-		settings   = new(testRootSettings)
+		settings   = new(rootSettings)
 		paramCount = len(settings.Parameters())
 		opts       = parameters.MustMakeCmdsOptions(settings,
 			parameters.WithBuiltin(true),

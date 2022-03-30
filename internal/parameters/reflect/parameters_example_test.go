@@ -1,4 +1,4 @@
-package parameters_test
+package reflect_test
 
 import (
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
