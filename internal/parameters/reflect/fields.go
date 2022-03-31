@@ -2,51 +2,25 @@ package reflect
 
 import (
 	"context"
-	"encoding/csv"
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 
 	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
-const (
-	settingsTagKey   = "parameters"
-	settingsTagValue = "settings"
-)
-
-var (
-	errNoTag        = errors.New("no fields contained tag")
-	errTooFewFields = errors.New("not enough fields")
-)
+var errTooFewFields = errors.New("not enough fields")
 
 type (
 	structFields <-chan reflect.StructField
 
-	paramField struct {
+	ParamField struct {
 		parameters.Parameter
 		reflect.StructField
 	}
-	paramFields = <-chan paramField
-	paramBridge = <-chan paramFields
-
-	// structTagPair exists mainly for String formatting,
-	// but also for reducing/clarifying function arity/parameters.
-	structTagPair struct{ key, value string }
+	ParamFields = <-chan ParamField
 )
-
-func (tag structTagPair) String() string {
-	return fmt.Sprintf("`%s:\"%s\"`", tag.key, tag.value)
-}
-
-func newStructTagPair(key, value string) structTagPair {
-	return structTagPair{
-		key:   key,
-		value: value,
-	}
-}
 
 func generateFields(ctx context.Context, setTyp reflect.Type) structFields {
 	var (
@@ -113,87 +87,38 @@ func prefixIndex(ctx context.Context, prefix []int, fields structFields) structF
 	return prefixed
 }
 
-func fieldsAfterTag(ctx context.Context, tag structTagPair,
-	fields structFields,
-) (structFields, errCh) {
+func BindParameterFields(ctx context.Context, set parameters.Settings) (ParamFields, errCh) {
 	var (
-		out  = make(chan reflect.StructField, cap(fields))
-		errs = make(chan error)
+		parameters  = set.Parameters()
+		paramCount  = len(parameters)
+		paramFields = make(chan ParamField, paramCount)
+		errs        = make(chan error)
 	)
 	go func() {
-		defer close(out)
+		defer close(paramFields)
 		defer close(errs)
-		var (
-			sawTag          bool
-			filterBeforeTag = func(field reflect.StructField) (reflect.StructField, error) {
-				if !sawTag {
-					var err error
-					if sawTag, err = hasTagValue(field, tag); err != nil {
-						return reflect.StructField{}, err
-					}
-					if !sawTag {
-						return reflect.StructField{}, ErrSkip
-					}
-				}
-				return field, nil
-			}
-		)
-		ProcessResults(ctx, fields, out, errs, filterBeforeTag)
-		if !sawTag {
-			err := fmt.Errorf("%w: %s", errNoTag, tag)
+
+		typ, err := checkType(set)
+		if err != nil {
 			select {
 			case errs <- err:
 			case <-ctx.Done():
 			}
+			return
 		}
-	}()
-	return out, errs
-}
-
-func hasTagValue(field reflect.StructField, tag structTagPair) (bool, error) {
-	if tagStr, ok := field.Tag.Lookup(tag.key); ok {
-		fieldTags, err := csv.NewReader(strings.NewReader(tagStr)).Read()
-		if err != nil {
-			return false, fmt.Errorf("could not parse tag value `%s` as CSV: %w",
-				tagStr, err)
-		}
-		for _, fieldTag := range fieldTags {
-			if fieldTag == tag.value {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
-}
-
-func bindParameterFields(ctx context.Context,
-	typ reflect.Type, parameters parameters.Parameters,
-) (paramFields, errCh) {
-	var (
-		subCtx, cancel = context.WithCancel(ctx)
-		baseFields     = generateFields(subCtx, typ)
-		allFields      = expandFields(subCtx, baseFields)
-
-		tag                   = newStructTagPair(settingsTagKey, settingsTagValue)
-		taggedFields, tagErrs = fieldsAfterTag(subCtx, tag, allFields)
-
-		paramCount    = len(parameters)
-		reducedFields = CtxTakeAndCancel(subCtx, cancel, taggedFields, paramCount)
-
-		paramFields = make(chan paramField, paramCount)
-		bindErrs    = make(chan error)
-
-		errs = CtxMerge(ctx, tagErrs, bindErrs)
-	)
-	go func() {
-		defer close(paramFields)
-		defer close(bindErrs)
 		var (
+			baseFields = generateFields(ctx, typ)
+			allFields  = expandFields(ctx, baseFields)
+
 			paramIndex int
-			bindParams = func(field reflect.StructField) (paramField, error) {
+			bindParams = func(field reflect.StructField) (ParamField, error) {
+				if paramIndex >= paramCount {
+					// TODO: export error
+					return ParamField{}, errors.New("settings struct has too many fields")
+				}
 				var (
 					parameter = parameters[paramIndex]
-					binding   = paramField{
+					binding   = ParamField{
 						Parameter:   parameter,
 						StructField: field,
 					}
@@ -202,13 +127,13 @@ func bindParameterFields(ctx context.Context,
 				return binding, nil
 			}
 		)
-		ProcessResults(ctx, reducedFields, paramFields, nil, bindParams)
+		ProcessResults(ctx, allFields, paramFields, errs, bindParams)
 		if ctx.Err() != nil {
 			return // Don't validate if we're canceled.
 		}
 		if err := checkParameterCount(paramIndex, paramCount, typ, parameters); err != nil {
 			select {
-			case bindErrs <- err:
+			case errs <- err:
 			case <-ctx.Done():
 			}
 		}

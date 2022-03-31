@@ -53,9 +53,7 @@ const (
 	Environment
 )
 
-var (
-	ErrUnexpectedSourceID = errors.New("unexpected source ID")
-)
+var ErrUnexpectedSourceID = errors.New("unexpected source ID")
 
 func (params Parameters) String() string {
 	parameterNames := make([]string, len(params))

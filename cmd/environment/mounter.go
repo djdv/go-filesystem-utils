@@ -15,7 +15,6 @@ import (
 	ipfs "github.com/djdv/go-filesystem-utils/filesystem/ipfscore"
 	"github.com/djdv/go-filesystem-utils/filesystem/keyfs"
 	"github.com/djdv/go-filesystem-utils/filesystem/pinfs"
-	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	ipfsconfig "github.com/ipfs/go-ipfs-config"
 	ipfsconfigfile "github.com/ipfs/go-ipfs-config/serialize"
@@ -62,11 +61,9 @@ type (
 )
 
 func (env *mounter) Mount(request *cmds.Request) ([]filesystem.MountPoint, error) {
-	var (
-		ctx           = env.Context
-		mountSettings = new(settings.MountSettings)
-	)
-	if err := settings.ParseAll(ctx, mountSettings, request); err != nil {
+	ctx := env.Context
+	mountSettings, err := settings.ParseAll[settings.MountSettings](ctx, request)
+	if err != nil {
 		return nil, err
 	}
 
@@ -338,11 +335,9 @@ func (m *instanceMap) Close(maddr multiaddr.Multiaddr) error {
 
 // TODO: channel outputs
 func (env *mounter) Unmount(request *cmds.Request) ([]multiaddr.Multiaddr, error) {
-	var (
-		ctx             = request.Context
-		unmountSettings = new(settings.UnmountSettings)
-	)
-	if err := settings.ParseAll(ctx, unmountSettings, request); err != nil {
+	ctx := request.Context
+	unmountSettings, err := settings.ParseAll[settings.UnmountSettings](ctx, request)
+	if err != nil {
 		return nil, err
 	}
 
@@ -358,19 +353,8 @@ func (env *mounter) Unmount(request *cmds.Request) ([]multiaddr.Multiaddr, error
 		targetMaddrs[i] = maddr
 	}
 
-	// TODO: parse these properly (use parameters lib)
-	// quick hacks for now
-	var all bool
-	allVal, ok := request.Options[settings.All().Name(parameters.CommandLine)]
-	if ok {
-		all, ok = allVal.(bool)
-	}
-
-	var (
-		closed = make([]multiaddr.Multiaddr, 0, len(targetMaddrs))
-		err    error
-	)
-	if all {
+	closed := make([]multiaddr.Multiaddr, 0, len(targetMaddrs))
+	if unmountSettings.All {
 		// TODO: alloc once
 		closed = make([]multiaddr.Multiaddr, 0, len(env.hostInstances))
 		// TODO: [port] make sure to prevent calling --all with args too

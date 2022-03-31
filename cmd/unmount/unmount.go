@@ -8,6 +8,7 @@ import (
 	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
 	"github.com/djdv/go-filesystem-utils/cmd/mount"
 	"github.com/djdv/go-filesystem-utils/filesystem"
+	"github.com/djdv/go-filesystem-utils/internal/parameters/reflect/cmds/options"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -30,7 +31,7 @@ var Command = &cmds.Command{
 	Type:     Response{},
 	PreRun:   unmountPreRun,
 	Run:      unmountRun,
-	Options:  settings.MakeOptions((*Settings)(nil)),
+	Options:  options.MustMakeCmdsOptions[Settings](),
 	PostRun: cmds.PostRunMap{
 		cmds.CLI: formatUnmount,
 	},

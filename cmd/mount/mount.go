@@ -8,8 +8,8 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
-	fscmds "github.com/djdv/go-filesystem-utils/cmd/fs/settings"
 	"github.com/djdv/go-filesystem-utils/filesystem"
+	"github.com/djdv/go-filesystem-utils/internal/parameters/reflect/cmds/options"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -36,7 +36,7 @@ func Command() *cmds.Command {
 		Type:     Response{},
 		PreRun:   mountPreRun,
 		Run:      mountRun,
-		Options:  settings.MakeOptions((*Settings)(nil)),
+		Options:  options.MustMakeCmdsOptions[Settings](),
 		PostRun: cmds.PostRunMap{
 			cmds.CLI: formatMount,
 		},
@@ -45,7 +45,7 @@ func Command() *cmds.Command {
 	return Command
 }
 
-type Response struct{ fscmds.Multiaddr }
+type Response struct{ settings.Multiaddr }
 
 func mountPreRun(request *cmds.Request, _ cmds.Environment) error {
 	if err := checkSubCmd(2, request.Path); err != nil {
@@ -68,7 +68,7 @@ func mountRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Envi
 
 	for _, mountPoint := range mountPoints {
 		if err := emitter.Emit(&Response{
-			Multiaddr: fscmds.Multiaddr{Interface: mountPoint.Target()},
+			Multiaddr: settings.Multiaddr{Interface: mountPoint.Target()},
 		}); err != nil {
 			return err
 		}

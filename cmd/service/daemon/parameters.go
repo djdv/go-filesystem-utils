@@ -28,10 +28,7 @@ func (*Settings) Parameters() parameters.Parameters {
 
 func parseCmds(ctx context.Context, request *cmds.Request,
 	env cmds.Environment) (*Settings, environment.Environment, error) {
-	var (
-		daemonSettings = new(Settings)
-		err            = settings.ParseAll(ctx, daemonSettings, request)
-	)
+	daemonSettings, err := settings.ParseAll[Settings](ctx, request)
 	if err != nil {
 		return nil, nil, err
 	}

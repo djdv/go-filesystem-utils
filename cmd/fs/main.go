@@ -14,7 +14,7 @@ import (
 	"github.com/djdv/go-filesystem-utils/cmd/mount"
 	"github.com/djdv/go-filesystem-utils/cmd/service"
 	"github.com/djdv/go-filesystem-utils/cmd/unmount"
-	"github.com/djdv/go-filesystem-utils/internal/parameters"
+	"github.com/djdv/go-filesystem-utils/internal/parameters/reflect/cmds/options"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
 )
@@ -23,9 +23,7 @@ func main() {
 	var (
 		ctx  = context.Background()
 		root = &cmds.Command{
-			Options: settings.MakeOptions((*settings.Settings)(nil),
-				parameters.WithBuiltin(true),
-			),
+			Options: options.MustMakeCmdsOptions[settings.Settings](options.WithBuiltin(true)),
 			Helptext: cmds.HelpText{
 				Tagline: "File system service utility.",
 			},

@@ -10,7 +10,7 @@ import (
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/service/host"
 	"github.com/djdv/go-filesystem-utils/cmd/service/status"
-	"github.com/djdv/go-filesystem-utils/internal/parameters"
+	"github.com/djdv/go-filesystem-utils/internal/parameters/reflect/cmds/options"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
 	manet "github.com/multiformats/go-multiaddr/net"
@@ -24,7 +24,7 @@ var Command = &cmds.Command{
 	},
 	NoRemote: true,
 	Run:      serviceRun,
-	Options:  parameters.MustMakeCmdsOptions((*Settings)(nil)),
+	Options:  options.MustMakeCmdsOptions[Settings](),
 	Encoders: settings.CmdsEncoders,
 	Type:     daemon.Response{},
 	Subcommands: func() (subCmds map[string]*cmds.Command) {
@@ -54,11 +54,9 @@ func serviceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.En
 		return err
 	}
 
-	var (
-		ctx             = request.Context
-		serviceSettings = new(Settings)
-	)
-	if err := settings.ParseAll(ctx, serviceSettings, request); err != nil {
+	ctx := request.Context
+	serviceSettings, err := settings.ParseAll[Settings](ctx, request)
+	if err != nil {
 		return err
 	}
 

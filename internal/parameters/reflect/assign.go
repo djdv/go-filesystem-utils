@@ -37,7 +37,7 @@ func AssignToArgument(arg Argument, value interface{}, parsers ...TypeParser) er
 
 	if !leftType.AssignableTo(rightType) {
 		err := fmt.Errorf("%w: `%#v` to %v",
-			errUnassignable, rightValue.Interface(), leftType,
+			ErrUnassignable, rightValue.Interface(), leftType,
 		)
 		return err
 	}
@@ -69,7 +69,7 @@ func assignCustomType(parse ParseFunc, leftValue reflect.Value, rightValue inter
 	valueStr, isString := rightValue.(string)
 	if !isString {
 		return fmt.Errorf("%w for parser argument - got: %T want: %T",
-			errUnexpectedType, valueStr, rightValue,
+			ErrUnexpectedType, valueStr, rightValue,
 		)
 	}
 	customValue, err := parse(valueStr)

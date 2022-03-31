@@ -3,6 +3,7 @@ package settings
 import (
 	"github.com/djdv/go-filesystem-utils/filesystem"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
+	goparams "github.com/djdv/go-filesystem-utils/internal/parameters/reflect"
 	"github.com/multiformats/go-multiaddr"
 )
 
@@ -21,21 +22,21 @@ func (*MountSettings) Parameters() parameters.Parameters {
 }
 
 func SystemAPI() parameters.Parameter {
-	return parameters.NewParameter(
+	return goparams.NewParameter(
 		"Host system API to use.",
-		parameters.WithName("system"),
+		goparams.WithName("system"),
 	)
 }
 
 func SystemID() parameters.Parameter {
-	return parameters.NewParameter(
+	return goparams.NewParameter(
 		"Target FS to use.",
-		parameters.WithName("fs"),
+		goparams.WithName("fs"),
 	)
 }
 
 func IPFS() parameters.Parameter {
-	return parameters.NewParameter(
+	return goparams.NewParameter(
 		"IPFS multiaddr to use.",
 	)
 }
@@ -52,8 +53,8 @@ func (*UnmountSettings) Parameters() parameters.Parameters {
 }
 
 func All() parameters.Parameter {
-	return parameters.NewParameter(
+	return goparams.NewParameter(
 		"Unmount all mountpoints.",
-		parameters.WithAlias("a"),
+		goparams.WithAlias("a"),
 	)
 }

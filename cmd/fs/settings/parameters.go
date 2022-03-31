@@ -7,6 +7,10 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/filesystem"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
+	"github.com/djdv/go-filesystem-utils/internal/parameters/environment"
+	goparams "github.com/djdv/go-filesystem-utils/internal/parameters/reflect"
+	"github.com/djdv/go-filesystem-utils/internal/parameters/reflect/cmds/arguments"
+	"github.com/djdv/go-filesystem-utils/internal/parameters/reflect/cmds/options"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -18,7 +22,7 @@ type Settings struct {
 	// Commands are free to use this value for any purpose as a context hint.
 	// E.g. It may be used to connect to existing servers,
 	// spawn new ones, check the status of them, etc.
-	ServiceMaddrs []multiaddr.Multiaddr `parameters:"settings"`
+	ServiceMaddrs []multiaddr.Multiaddr
 	// AutoExitInterval will cause processes spawned by this command
 	// to exit (if not busy) after some interval.
 	// If the process remains busy, it will remain running
@@ -34,25 +38,22 @@ func (*Settings) Parameters() parameters.Parameters {
 	}
 }
 
-type SetConstraint[structPtr any] interface {
-	parameters.Settings
-}
-
-func ParseAll[setPtr SetConstraint[setPtr]](ctx context.Context,
-	empty setPtr, request *cmds.Request) error {
+//func ParseAll[settings any](ctx context.Context,
+func ParseAll[settings any, setIntf goparams.SettingsConstraint[settings]](ctx context.Context,
+	request *cmds.Request) (*settings, error) {
 	var (
 		typeHandlers = handlers()
-		sources      = []parameters.SetFunc{
-			parameters.SettingsFromCmds(request),
-			parameters.SettingsFromEnvironment(),
+		sources      = []arguments.SetFunc{
+			arguments.SettingsFromCmds(request),
+			environment.SettingsFromEnvironment(),
 		}
 	)
-	return parameters.Parse(ctx, empty, sources, typeHandlers...)
+	return arguments.Parse[settings, setIntf](ctx, sources, typeHandlers...)
 }
 
 // TODO: Name.
-func handlers() []parameters.TypeParser {
-	return []parameters.TypeParser{
+func handlers() []goparams.TypeParser {
+	return []goparams.TypeParser{
 		{
 			Type: reflect.TypeOf((*multiaddr.Multiaddr)(nil)).Elem(),
 			ParseFunc: func(argument string) (interface{}, error) {
@@ -80,14 +81,14 @@ func handlers() []parameters.TypeParser {
 	}
 }
 
-func MakeOptions[setPtr SetConstraint[setPtr]](empty setPtr,
-	options ...parameters.CmdsOptionOption) []cmds.Option {
-	return parameters.MustMakeCmdsOptions(empty, append(optionMakers(), options...)...)
+func MakeOptions[settings any](opts ...options.CmdsOptionOption) []cmds.Option {
+	return options.MustMakeCmdsOptions[Settings](append(optionMakers(), opts...)...)
+	//return options.MustMakeCmdsOptions(empty, append(optionMakers(), options...)...)
 }
 
-func optionMakers() []parameters.CmdsOptionOption {
+func optionMakers() []options.CmdsOptionOption {
 	var (
-		makers = []parameters.OptionMaker{
+		makers = []options.OptionMaker{
 			{
 				Type:           reflect.TypeOf((*multiaddr.Multiaddr)(nil)).Elem(),
 				MakeOptionFunc: cmds.StringOption,
@@ -105,26 +106,26 @@ func optionMakers() []parameters.CmdsOptionOption {
 				MakeOptionFunc: cmds.StringOption,
 			},
 		}
-		opts = make([]parameters.CmdsOptionOption, len(makers))
+		opts = make([]options.CmdsOptionOption, len(makers))
 	)
 	for i, maker := range makers {
-		opts[i] = parameters.WithMaker(maker)
+		opts[i] = options.WithMaker(maker)
 	}
 	return opts
 }
 
 func ServiceMaddrs() parameters.Parameter {
-	return parameters.NewParameter(
+	return goparams.NewParameter(
 		"File system service multiaddr to use.",
-		parameters.WithRootNamespace(),
-		parameters.WithName("api"),
+		goparams.WithRootNamespace(),
+		goparams.WithName("api"),
 	)
 }
 
 func AutoExitInterval() parameters.Parameter {
-	return parameters.NewParameter(
+	return goparams.NewParameter(
 		`Time interval (e.g. "30s") to check if the service is active and exit if not.`,
-		parameters.WithRootNamespace(),
+		goparams.WithRootNamespace(),
 	)
 }
 
@@ -144,7 +145,7 @@ func (*HostService) Parameters() parameters.Parameters {
 }
 
 func Username() parameters.Parameter {
-	return parameters.NewParameter(
+	return goparams.NewParameter(
 		"Username to use when interfacing with the system service manager.",
 	)
 }

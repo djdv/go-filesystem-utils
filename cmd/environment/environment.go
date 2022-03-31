@@ -14,12 +14,12 @@ type (
 	Environment interface {
 		Daemon() Daemon
 	}
-	environment struct {
+	cmdsEnvironment struct {
 		*daemon
 	}
 )
 
-func (env *environment) Daemon() Daemon {
+func (env *cmdsEnvironment) Daemon() Daemon {
 	service := env.daemon
 	if service == nil {
 		service = new(daemon)
@@ -30,7 +30,7 @@ func (env *environment) Daemon() Daemon {
 }
 
 func MakeEnvironment(_ context.Context, request *cmds.Request) (cmds.Environment, error) {
-	return new(environment), nil
+	return new(cmdsEnvironment), nil
 }
 
 func Assert(environment cmds.Environment) (Environment, error) {

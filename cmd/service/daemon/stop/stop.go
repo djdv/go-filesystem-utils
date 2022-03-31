@@ -16,13 +16,13 @@ var Command = &cmds.Command{
 	NoLocal:  true,
 	Encoders: settings.CmdsEncoders,
 	Run: func(request *cmds.Request, _ cmds.ResponseEmitter, env cmds.Environment) error {
-		var (
-			ctx          = request.Context
-			stopSettings = new(settings.Settings)
-		)
-		if err := settings.ParseAll(ctx, stopSettings, request); err != nil {
-			return err
-		}
+		/*
+			ctx := request.Context
+				stopSettings, err := settings.ParseAll[settings.Settings](ctx, request)
+				if err != nil {
+					return err
+				}
+		*/
 
 		serviceEnv, err := environment.Assert(env)
 		if err != nil {

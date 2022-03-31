@@ -10,13 +10,20 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
-type Parameter struct {
-	namespace,
-	name,
-	description,
-	envPrefix string
-	aliases []string
-}
+type (
+	SettingsConstraint[settingsPtr any] interface {
+		parameters.Settings
+		*settingsPtr
+	}
+
+	Parameter struct {
+		namespace,
+		name,
+		description,
+		envPrefix string
+		aliases []string
+	}
+)
 
 func (parameter Parameter) Description() string { return parameter.description }
 func (parameter Parameter) Name(source parameters.SourceID) string {

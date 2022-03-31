@@ -24,11 +24,9 @@ func registerControllerCommands(subcommands map[string]*cmds.Command,
 			},
 			Run: func(request *cmds.Request,
 				_ cmds.ResponseEmitter, _ cmds.Environment) (err error) {
-				var (
-					ctx                = request.Context
-					controllerSettings = new(Settings)
-				)
-				if err := settings.ParseAll(ctx, controllerSettings, request); err != nil {
+				ctx := request.Context
+				controllerSettings, err := settings.ParseAll[Settings](ctx, request)
+				if err != nil {
 					return err
 				}
 				serviceConfig := host.ServiceConfig(&controllerSettings.Host)

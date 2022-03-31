@@ -81,11 +81,9 @@ var Command = &cmds.Command{
 	Encoders: cmds.Encoders,
 	Type:     Response{},
 	Run: func(request *cmds.Request, emitter cmds.ResponseEmitter, _ cmds.Environment) error {
-		var (
-			ctx            = request.Context
-			statusSettings = new(Settings)
-		)
-		if err := settings.ParseAll(ctx, statusSettings, request); err != nil {
+		ctx := request.Context
+		statusSettings, err := settings.ParseAll[Settings](ctx, request)
+		if err != nil {
 			return err
 		}
 		serviceConfig := host.ServiceConfig(&statusSettings.Host)

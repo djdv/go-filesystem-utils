@@ -1,4 +1,4 @@
-package reflect
+package options
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"reflect"
 
 	. "github.com/djdv/go-filesystem-utils/internal/generic"
+	"github.com/djdv/go-filesystem-utils/internal/parameters"
+	goparams "github.com/djdv/go-filesystem-utils/internal/parameters/reflect"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -33,6 +35,8 @@ type (
 
 	cmdsOptionMakerOpt struct{ OptionMaker }
 	cmdsBuiltinOpt     bool
+
+	errCh = <-chan error
 )
 
 func (optionMakers optionMakers) Index(typ reflect.Type) *OptionMaker {
@@ -74,10 +78,17 @@ func parseCmdsOptionOptions(options ...CmdsOptionOption) cmdsOptionSettings {
 // In order to support subcommands/subsettings, this function
 // skips any embedded (assumed super-)settings structs.
 // (The expectation is that a parent command has already registered them.)
-func MustMakeCmdsOptions(set Settings, options ...CmdsOptionOption) []cmds.Option {
+func MustMakeCmdsOptions[settings any,
+	setIntf goparams.SettingsConstraint[settings]](options ...CmdsOptionOption,
+) []cmds.Option {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	var set setIntf = (*settings)(nil)
+	// settingsType := reflect.TypeOf((*settings)(nil))
+	// settingsType := reflect.TypeOf((*settings)(nil))
+
+	// optionFields, generatorErrs, err := cmdsOptionsFromSettings[settings](ctx)
 	optionFields, generatorErrs, err := cmdsOptionsFromSettings(ctx, set)
 	if err != nil {
 		panic(err)
@@ -99,7 +110,7 @@ func MustMakeCmdsOptions(set Settings, options ...CmdsOptionOption) []cmds.Optio
 		constructorSettings = parseCmdsOptionOptions(options...)
 
 		makers  = constructorSettings.customMakers
-		makeOpt = func(field paramField) error {
+		makeOpt = func(field goparams.ParamField) error {
 			opt := makeCmdsOption(field.StructField, field.Parameter, makers)
 			cmdsOptions = append(cmdsOptions, opt)
 			return nil
@@ -128,170 +139,41 @@ func builtinOptions() []cmds.Option {
 	}
 }
 
-func cmdsOptionsFromSettings(ctx context.Context, set Settings) (paramFields, errCh, error) {
-	typ, err := checkType(set)
-	if err != nil {
-		return nil, nil, err
-	}
+func cmdsOptionsFromSettings(ctx context.Context,
+	set parameters.Settings,
+) (goparams.ParamFields, errCh, error) {
 	var (
-		parameters              = set.Parameters()
-		optionFields, paramErrs = bindParameterFields(ctx, typ, parameters)
-
-		partitions = partitionOptionFields(ctx, optionFields)
-
-		tag                       = newStructTagPair(settingsTagKey, settingsTagValue)
-		reducedFields, reduceErrs = skipEmbeddedOptions(ctx, tag, partitions)
-		errs                      = CtxMerge(ctx, paramErrs, reduceErrs)
+		optionFields, errs = goparams.BindParameterFields(ctx, set)
+		reducedFields      = onlyRootOptions(ctx, optionFields)
 	)
 	return reducedFields, errs, nil
 }
 
-func partitionOptionFields(ctx context.Context, fields paramFields) paramBridge {
-	fieldPartitions := make(chan paramFields)
+func onlyRootOptions(ctx context.Context, params goparams.ParamFields) goparams.ParamFields {
+	relay := make(chan goparams.ParamField, cap(params))
 	go func() {
-		defer close(fieldPartitions)
-		var (
-			lastIndex      int
-			isStructBranch = func(field paramField) bool {
-				var (
-					currentIndex  = field.Index[0]
-					structChanged = currentIndex != lastIndex
-				)
-				lastIndex = currentIndex
-				return structChanged
-			}
-		)
-		segmentInput(ctx, fields, fieldPartitions, isStructBranch)
-	}()
-
-	return fieldPartitions
-}
-
-func segmentInput[in any](ctx context.Context,
-	input <-chan in,
-	bridge chan (<-chan in),
-	isNewSegment func(in) bool,
-) {
-	var relay chan in
-	for element := range input {
-		if isNewSegment(element) {
-			if relay != nil {
-				close(relay)
-				relay = nil
-			}
-		}
-		if relay == nil {
-			relay = make(chan in)
-			select {
-			case bridge <- relay:
-			case <-ctx.Done():
-				break
-			}
-		}
-		select {
-		case relay <- element:
-		case <-ctx.Done():
-			break
-		}
-	}
-	if relay != nil {
-		close(relay)
-	}
-}
-
-func skipEmbeddedOptions(ctx context.Context,
-	optionTagToSkip structTagPair,
-	segmentedParams paramBridge,
-) (paramFields, errCh) {
-	var (
-		out  = make(chan paramField, cap(segmentedParams))
-		errs = make(chan error)
-	)
-	go func() {
-		defer close(out)
-		defer close(errs)
-		relayField := func(param paramField) error {
-			select {
-			case out <- param:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-		for params := range segmentedParams {
-			untaggedParams, tagErrs := skipEmbeddedOptionFields(ctx, optionTagToSkip, params)
-			if err := ForEachOrError(ctx, untaggedParams, tagErrs, relayField); err != nil {
-				select {
-				case errs <- err:
-				case <-ctx.Done():
-				}
-			}
-		}
-	}()
-	return out, errs
-}
-
-func skipEmbeddedOptionFields(ctx context.Context,
-	tagToSkip structTagPair,
-	params paramFields,
-) (paramFields, errCh) {
-	var (
-		out  = make(chan paramField, cap(params))
-		errs = make(chan error)
-	)
-	go func() {
-		defer close(out)
-		defer close(errs)
-		var (
-			// If we ever see a tag, keep draining the input channel.
-			// But stop processing/buffering inputs.
-			paramBuffer = make([]paramField, 0, cap(params))
-			checkTags   = func(param paramField) error {
-				if paramBuffer == nil {
-					return nil
-				}
-				var (
-					field            = param.StructField
-					fieldStructDepth = len(field.Index)
-					fieldIsEmbedded  = fieldStructDepth > 1
-				)
-				if fieldIsEmbedded {
-					sawTag, err := hasTagValue(field, tagToSkip)
-					if err != nil {
-						return err
-					}
-					if sawTag {
-						paramBuffer = nil
-						return nil
-					}
-				}
-				paramBuffer = append(paramBuffer, param)
+		defer close(relay)
+		relayRootFields := func(param goparams.ParamField) error {
+			if len(param.StructField.Index) > 1 {
 				return nil
 			}
-		)
-		if err := ForEachOrError(ctx, params, nil, checkTags); err != nil {
 			select {
-			case errs <- err:
+			case relay <- param:
 			case <-ctx.Done():
 			}
-			return
+			return ctx.Err()
 		}
-		for _, field := range paramBuffer {
-			if ctx.Err() != nil {
-				return
-			}
-			out <- field
-		}
+		ForEachOrError(ctx, params, nil, relayRootFields)
 	}()
-	return out, errs
+	return relay
 }
 
-func makeCmdsOption(field reflect.StructField, parameter Parameter, makers optionMakers) cmds.Option {
+func makeCmdsOption(field reflect.StructField, parameter parameters.Parameter, makers optionMakers) cmds.Option {
 	if !field.IsExported() {
 		err := fmt.Errorf("%w:"+
 			" refusing to create option for unassignable field"+
 			" - `%s` is not exported",
-			errUnassignable,
+			goparams.ErrUnassignable,
 			field.Name,
 		)
 		panic(err)
@@ -313,21 +195,21 @@ func makeCmdsOption(field reflect.StructField, parameter Parameter, makers optio
 	err := fmt.Errorf("%w:"+
 		" can't determine which option constructor to use for `%s`"+
 		" (type %v with no custom handler)",
-		errUnexpectedType,
+		goparams.ErrUnexpectedType,
 		field.Name,
 		typ,
 	)
 	panic(err)
 }
 
-func parameterToCmdsOptionArgs(parameter Parameter) []string {
+func parameterToCmdsOptionArgs(parameter parameters.Parameter) []string {
 	const nameAndDescription = 2
 	var (
-		name        = parameter.Name(CommandLine)
-		aliases     = parameter.Aliases(CommandLine)
+		name        = parameter.Name(parameters.CommandLine)
+		aliases     = parameter.Aliases(parameters.CommandLine)
 		description = fmt.Sprintf("%s (Env: %s)",
 			parameter.Description(),
-			parameter.Name(Environment),
+			parameter.Name(parameters.Environment),
 		)
 
 		optionCount = len(aliases) + nameAndDescription

@@ -1,6 +1,9 @@
 package settings
 
-import "github.com/djdv/go-filesystem-utils/internal/parameters"
+import (
+	"github.com/djdv/go-filesystem-utils/internal/parameters"
+	goparams "github.com/djdv/go-filesystem-utils/internal/parameters/reflect"
+)
 
 type PlatformSettings struct {
 	ServicePassword  string
@@ -15,13 +18,13 @@ func (*PlatformSettings) Parameters() parameters.Parameters {
 }
 
 func ServicePassword() parameters.Parameter {
-	return parameters.NewParameter(
+	return goparams.NewParameter(
 		"Password to use when interfacing with the system service manager.",
 	)
 }
 
 func DelayedAutoStart() parameters.Parameter {
-	return parameters.NewParameter(
+	return goparams.NewParameter(
 		"Prevent the service from starting immediately after booting.",
 	)
 }

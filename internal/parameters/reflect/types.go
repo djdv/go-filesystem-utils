@@ -16,19 +16,14 @@ import (
 type errCh = <-chan error
 
 var (
-	errUnexpectedType = errors.New("unexpected type")
-	errUnassignable   = errors.New("cannot assign")
+	ErrUnassignable   = errors.New("cannot assign")
+	ErrUnexpectedType = errors.New("unexpected type")
 	errMultiPointer   = errors.New("multiple layers of indirection (not supported)")
 )
 
-func ArgsFromSettings[settings any](ctx context.Context, set settings) (Arguments, errCh, error) {
-	typ, err := checkType(set)
-	if err != nil {
-		return nil, nil, err
-	}
+func ArgsFromSettings(ctx context.Context, set parameters.Settings) (Arguments, errCh, error) {
 	var (
-		parameters         = parameterMaker[settings]()
-		fields, fieldsErrs = bindParameterFields(ctx, typ, parameters)
+		fields, fieldsErrs = BindParameterFields(ctx, set)
 
 		arguments = make(chan Argument, cap(fields))
 		errs      = make(chan error)
@@ -40,7 +35,7 @@ func ArgsFromSettings[settings any](ctx context.Context, set settings) (Argument
 		var (
 			firstErr   error
 			setVal     = reflect.ValueOf(set).Elem()
-			fieldToArg = func(param paramField) (argument Argument, _ error) {
+			fieldToArg = func(param ParamField) (argument Argument, _ error) {
 				if firstErr != nil {
 					return argument, firstErr
 				}
@@ -66,7 +61,8 @@ func ArgsFromSettings[settings any](ctx context.Context, set settings) (Argument
 	return arguments, CtxMerge(ctx, fieldsErrs, errs), nil
 }
 
-func parameterMaker[in any]() parameters.Parameters {
+// TODO: review/finish + name
+func ParameterMaker[in any]() parameters.Parameters {
 	var (
 		typ        = reflect.TypeOf((*in)(nil)).Elem()
 		fieldCount = typ.NumField()
@@ -107,7 +103,7 @@ func checkType[in any](structPtr in) (reflect.Type, error) {
 			return fmt.Errorf("%w:"+
 				" got: %T"+
 				" want: pointer to struct",
-				errUnexpectedType,
+				ErrUnexpectedType,
 				structPtr,
 			)
 		}
@@ -125,7 +121,7 @@ func referenceFromField(field reflect.StructField, fieldValue reflect.Value) (in
 	if !fieldValue.CanSet() {
 		err := fmt.Errorf("%w"+
 			" field %s in type `%s` is not settable",
-			errUnassignable,
+			ErrUnassignable,
 			field.Name, field.Type.Name(),
 		)
 		if !field.IsExported() {
@@ -195,7 +191,7 @@ func parseVector(typ reflect.Type, value reflect.Value, parsers typeParsers) (*r
 			"%w:"+
 				" got: `%v`"+
 				" want: `%v` or `%v`",
-			errUnexpectedType,
+			ErrUnexpectedType,
 			kind,
 			reflect.Slice, reflect.Array,
 		)
@@ -211,7 +207,7 @@ func parseVector(typ reflect.Type, value reflect.Value, parsers typeParsers) (*r
 			"%w:"+
 				" got: %T for type %v"+
 				" want: %T",
-			errUnexpectedType,
+			ErrUnexpectedType,
 			goValue, typ,
 			valueStrings,
 		)
@@ -312,7 +308,7 @@ func ParseString(typ reflect.Type, value string) (*reflect.Value, error) {
 		typedValue, err = csv.NewReader(strings.NewReader(value)).Read()
 	default:
 		err = fmt.Errorf("%w: no parser for value kind %v",
-			errUnexpectedType, kind,
+			ErrUnexpectedType, kind,
 		)
 	}
 	if err != nil {
