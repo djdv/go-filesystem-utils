@@ -90,7 +90,8 @@ func (m *mounter) Mount(ctx context.Context, target multiaddr.Multiaddr) (filesy
 // errChan should be buffered. A single error will be sent only if mount fails,
 // otherwise no value is sent.
 func safeMount(hostInterface *fuselib.FileSystemHost, fsid filesystem.ID,
-	target string, errChan chan<- error) {
+	target string, errChan chan<- error,
+) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -145,7 +146,7 @@ func safeMount(hostInterface *fuselib.FileSystemHost, fsid filesystem.ID,
 		// TODO: Consider ways to deal with concurrent operations.
 		// Ideally, avoiding broad locks where possible.
 		// For now, tell Fuse to serialize its operations.
-		//fuseArgs = append([]string{"-s"}, fuseArgs...)
+		// fuseArgs = append([]string{"-s"}, fuseArgs...)
 
 		if !hostInterface.Mount(target, fuseArgs) {
 			errChan <- fmt.Errorf("%s: mount failed for an unknown reason", target)

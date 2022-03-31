@@ -1,9 +1,9 @@
 package daemon
 
 import (
-	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
-	"github.com/djdv/go-filesystem-utils/internal/parameters/reflect/cmds/options"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/options"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 

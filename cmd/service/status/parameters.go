@@ -1,8 +1,8 @@
 package status
 
 import (
-	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
 	"github.com/djdv/go-filesystem-utils/cmd/service/host"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 

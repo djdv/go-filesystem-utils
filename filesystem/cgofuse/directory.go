@@ -83,7 +83,8 @@ func (fs *hostBinding) Releasedir(path string, fh uint64) int {
 func (fuse *hostBinding) Readdir(path string,
 	fill func(name string, stat *fuselib.Stat_t, ofst int64) bool,
 	ofst int64,
-	fh uint64) int {
+	fh uint64,
+) int {
 	defer fuse.systemLock.Access(path)()
 	fuse.log.Debugf("Readdir - {%X|%d}%q", fh, ofst, path)
 

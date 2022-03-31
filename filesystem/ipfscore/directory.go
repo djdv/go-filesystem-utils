@@ -51,7 +51,8 @@ type coreDirectory struct {
 
 func openIPFSDir(ctx context.Context,
 	core coreiface.CoreAPI, ipldNode ipld.Node,
-	statFn statFunc, crtime time.Time) (fs.ReadDirFile, error) {
+	statFn statFunc, crtime time.Time,
+) (fs.ReadDirFile, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	return &coreDirectory{
 		ctx: ctx, cancel: cancel,

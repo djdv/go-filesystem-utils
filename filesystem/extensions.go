@@ -60,7 +60,8 @@ type (
 
 // TODO: review; hasty
 func StreamDir(ctx context.Context,
-	directory fs.ReadDirFile, entries chan<- fs.DirEntry) <-chan error {
+	directory fs.ReadDirFile, entries chan<- fs.DirEntry,
+) <-chan error {
 	stream, ok := directory.(StreamDirFile)
 	if ok {
 		return stream.StreamDir(ctx, entries)

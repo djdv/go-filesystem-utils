@@ -22,7 +22,8 @@ func goToIPFSCore(fsid filesystem.ID, goPath string) corepath.Path {
 }
 
 func resolveNode(ctx context.Context,
-	core coreiface.CoreAPI, path corepath.Path) (ipld.Node, error) {
+	core coreiface.CoreAPI, path corepath.Path,
+) (ipld.Node, error) {
 	ipldNode, err := core.ResolveNode(ctx, path)
 	if err != nil {
 		return nil, err

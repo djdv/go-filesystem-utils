@@ -45,7 +45,7 @@ func (fuse *hostBinding) Open(path string, flags int) (int, uint64) {
 	}
 
 	// TODO: port flags and use OpenFile
-	//file, err := fs.goFs.Open(path, ioFlagsFromFuse(flags))
+	// file, err := fs.goFs.Open(path, ioFlagsFromFuse(flags))
 	file, err := fuse.goFs.Open(goPath)
 	if err != nil {
 		fuse.log.Error(err)

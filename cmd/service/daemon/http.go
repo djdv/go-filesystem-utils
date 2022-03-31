@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/djdv/go-filesystem-utils/cmd/environment"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
 	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	cmdshttp "github.com/ipfs/go-ipfs-cmds/http"
@@ -21,7 +21,7 @@ type (
 	serverListener struct {
 		*http.Server
 		manet.Listener
-		//multiaddr.Multiaddr
+		// multiaddr.Multiaddr
 	}
 	serverInstance struct {
 		//*http.Server
@@ -89,7 +89,8 @@ func cmdsHTTPServer(serverRoot *cmds.Command, serverEnv cmds.Environment) *http.
 }
 
 func generateServers(ctx context.Context, request *cmds.Request,
-	serviceEnv environment.Environment, listeners listeners) (<-chan serverListener, errCh) {
+	serviceEnv cmdsenv.Environment, listeners listeners,
+) (<-chan serverListener, errCh) {
 	var (
 		serverInstances = make(chan serverListener, cap(listeners))
 		errs            = make(chan error)
@@ -113,7 +114,8 @@ func generateServers(ctx context.Context, request *cmds.Request,
 }
 
 func startServers(ctx context.Context,
-	listeners <-chan serverListener) <-chan serverInstance {
+	listeners <-chan serverListener,
+) <-chan serverInstance {
 	servers := make(chan serverInstance, cap(listeners))
 	go func() {
 		defer close(servers)
@@ -132,9 +134,9 @@ func startServers(ctx context.Context,
 // TODO needs emitter? "shutting down: $maddr"
 // ^ caller should do it, emit it when they receive the result
 func shutdownServers(ctx context.Context, timeout time.Duration,
-	servers <-chan serverInstance) (maddrs, errCh) {
-
-	//combine Server and Shutdown error
+	servers <-chan serverInstance,
+) (maddrs, errCh) {
+	// combine Server and Shutdown error
 	// filter out expected http.Error (shutting down or whatever)
 	// return either the maddr or error on the channel
 
@@ -166,7 +168,8 @@ func shutdownServers(ctx context.Context, timeout time.Duration,
 }
 
 func serveHTTP(ctx context.Context,
-	serverListener serverListener) <-chan error {
+	serverListener serverListener,
+) <-chan error {
 	var (
 		listener = serverListener.Listener
 		server   = serverListener.Server

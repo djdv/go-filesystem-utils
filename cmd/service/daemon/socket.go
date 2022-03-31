@@ -48,7 +48,6 @@ func generate[in any](ctx context.Context, inputs ...in) <-chan in {
 		}
 	}()
 	return out
-
 }
 
 func listenersFromMaddrs(ctx context.Context, maddrs maddrs) (listeners, errCh) {
@@ -79,7 +78,7 @@ func listenersFromMaddrs(ctx context.Context, maddrs maddrs) (listeners, errCh) 
 }
 
 func initializeAndListen(ctx context.Context, maddrs maddrs) (listeners, errCh) {
-	//subCtx, cancel := context.WithCancel(ctx)
+	// subCtx, cancel := context.WithCancel(ctx)
 	var (
 		netMaddrs           = make(chan multiaddr.Multiaddr)
 		netSockets, netErrs = listenersFromMaddrs(ctx, netMaddrs)
@@ -92,7 +91,7 @@ func initializeAndListen(ctx context.Context, maddrs maddrs) (listeners, errCh) 
 	go func() {
 		defer close(netMaddrs)
 		defer close(udsMaddrs)
-		//defer cancel()
+		// defer cancel()
 		route := func(maddr multiaddr.Multiaddr) error {
 			relay := netMaddrs
 			for _, protocol := range maddr.Protocols() {
@@ -189,7 +188,8 @@ func (listener listenerWithCleanup) Close() error {
 }
 
 func listenersFromCloserMaddrs(ctx context.Context,
-	closers <-chan maddrWithCloser) (listeners, errCh) {
+	closers <-chan maddrWithCloser,
+) (listeners, errCh) {
 	var (
 		listeners = make(chan manet.Listener, cap(closers))
 		errs      = make(chan error)

@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
 	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
@@ -27,12 +27,13 @@ func (*Settings) Parameters() parameters.Parameters {
 }
 
 func parseCmds(ctx context.Context, request *cmds.Request,
-	env cmds.Environment) (*Settings, environment.Environment, error) {
+	env cmds.Environment,
+) (*Settings, cmdsenv.Environment, error) {
 	daemonSettings, err := settings.ParseAll[Settings](ctx, request)
 	if err != nil {
 		return nil, nil, err
 	}
-	serviceEnv, err := environment.Assert(env)
+	serviceEnv, err := cmdsenv.Assert(env)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -40,7 +41,8 @@ func parseCmds(ctx context.Context, request *cmds.Request,
 }
 
 func settingsToListeners(ctx context.Context,
-	request *cmds.Request, settings *Settings) (listeners, errCh, error) {
+	request *cmds.Request, settings *Settings,
+) (listeners, errCh, error) {
 	var (
 		listeners = make([]listeners, 0, 3)
 		errChans  = make([]errCh, 0, 1)
@@ -119,6 +121,7 @@ func filterDefaultPaths(paths ...string) ([]string, error) {
 	// we need to split up and restructure.
 	return filtered[:1], nil
 }
+
 func splitSocketPath(path string) (root, dir string) {
 	dir = filepath.Dir(path)
 	return filepath.Dir(dir), dir

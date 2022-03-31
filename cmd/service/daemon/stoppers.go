@@ -6,14 +6,15 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/djdv/go-filesystem-utils/cmd/environment"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
 // setupStopperAPI primes the stopper interface
 // and emits it's name to the client.
 func setupStopperAPI(ctx context.Context, apiPath []string,
-	daemon environment.Daemon) (<-chan *Response, <-chan environment.Reason, error) {
+	daemon cmdsenv.Daemon,
+) (<-chan *Response, <-chan cmdsenv.Reason, error) {
 	var (
 		stopper          = daemon.Stopper()
 		stopReasons, err = stopper.Initialize(ctx)
@@ -25,7 +26,8 @@ func setupStopperAPI(ctx context.Context, apiPath []string,
 }
 
 func stopOnSignal(ctx context.Context,
-	stopper environment.Stopper, notifySignal os.Signal) (responses, errCh) {
+	stopper cmdsenv.Stopper, notifySignal os.Signal,
+) (responses, errCh) {
 	var (
 		stop      = stopper.Stop
 		errs      = make(chan error, 1)
@@ -41,7 +43,7 @@ func stopOnSignal(ctx context.Context,
 		defer signal.Reset(notifySignal)
 		select {
 		case <-sigChan:
-			const reason = environment.Canceled
+			const reason = cmdsenv.Canceled
 			if sErr := stop(reason); sErr != nil {
 				errs <- sErr
 			}
@@ -51,7 +53,7 @@ func stopOnSignal(ctx context.Context,
 	return responses, errs
 }
 
-func stopOnRequestCancel(ctx context.Context, stopper environment.Stopper, request *cmds.Request) (responses, errCh) {
+func stopOnRequestCancel(ctx context.Context, stopper cmdsenv.Stopper, request *cmds.Request) (responses, errCh) {
 	var (
 		triggerCtx = request.Context
 		stop       = stopper.Stop
@@ -64,7 +66,7 @@ func stopOnRequestCancel(ctx context.Context, stopper environment.Stopper, reque
 		defer close(errs)
 		select {
 		case <-triggerCtx.Done():
-			const reason = environment.Canceled
+			const reason = cmdsenv.Canceled
 			if sErr := stop(reason); sErr != nil {
 				select {
 				case errs <- sErr:
@@ -78,7 +80,8 @@ func stopOnRequestCancel(ctx context.Context, stopper environment.Stopper, reque
 }
 
 func stopOnIdleEvent(ctx context.Context,
-	serviceEnv environment.Environment, interval time.Duration) (responses, errCh) {
+	serviceEnv cmdsenv.Environment, interval time.Duration,
+) (responses, errCh) {
 	var (
 		// NOTE [placeholder]: This build is never busy.
 		// The ipc env should be used to query activity when implemented.
@@ -106,8 +109,9 @@ func stopOnIdleEvent(ctx context.Context,
 
 type isBusyFunc func() (bool, error)
 
-func stopOnIdle(ctx context.Context, stopper environment.Stopper,
-	checkInterval time.Duration, checkIfBusy isBusyFunc) <-chan error {
+func stopOnIdle(ctx context.Context, stopper cmdsenv.Stopper,
+	checkInterval time.Duration, checkIfBusy isBusyFunc,
+) <-chan error {
 	errs := make(chan error)
 	go func() {
 		idleCheckTicker := time.NewTicker(checkInterval)
@@ -127,7 +131,7 @@ func stopOnIdle(ctx context.Context, stopper environment.Stopper,
 				if busy {
 					continue
 				}
-				if err := stopper.Stop(environment.Idle); err != nil {
+				if err := stopper.Stop(cmdsenv.Idle); err != nil {
 					select {
 					case errs <- err:
 					case <-ctx.Done():

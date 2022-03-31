@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/service/host"
 	"github.com/djdv/go-filesystem-utils/cmd/service/status"
-	"github.com/djdv/go-filesystem-utils/internal/parameters/reflect/cmds/options"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/options"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
 	manet "github.com/multiformats/go-multiaddr/net"
@@ -49,7 +49,7 @@ func serviceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.En
 
 	// NOTE: We don't have the system logger yet.
 	// Early errors will only show up in tests or a debugger.
-	serviceEnv, err := environment.Assert(env)
+	serviceEnv, err := cmdsenv.Assert(env)
 	if err != nil {
 		return err
 	}
@@ -97,7 +97,7 @@ type (
 	daemonCmdWrapper struct {
 		serviceRequest *cmds.Request
 		emitter        cmds.ResponseEmitter
-		environment    environment.Environment
+		environment    cmdsenv.Environment
 		hostListeners  []manet.Listener
 
 		sysLog  service.Logger
@@ -206,7 +206,7 @@ func (svc *daemonCmdWrapper) Stop(svcIntf service.Service) (err error) {
 		}
 		err = daemonErr
 	default:
-		if stopErr := stopper.Stop(environment.Requested); stopErr != nil {
+		if stopErr := stopper.Stop(cmdsenv.Requested); stopErr != nil {
 			err = stopErr
 			return
 		}

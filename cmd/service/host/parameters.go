@@ -1,8 +1,8 @@
 package host
 
 import (
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
-	"github.com/djdv/go-filesystem-utils/internal/parameters/reflect"
 )
 
 type Settings struct {
@@ -26,25 +26,25 @@ func (*Settings) Parameters() parameters.Parameters {
 }
 
 func Username() parameters.Parameter {
-	return reflect.NewParameter(
+	return cmdslib.NewParameter(
 		"Username to use when interfacing with the system service manager.",
 	)
 }
 
 func ServiceName() parameters.Parameter {
-	return reflect.NewParameter(
+	return cmdslib.NewParameter(
 		"Service name (usually as a command argument) to associate with the service (when installing)",
 	)
 }
 
 func ServiceDisplayName() parameters.Parameter {
-	return reflect.NewParameter(
+	return cmdslib.NewParameter(
 		"Service display name (usually seen in UI labels) to associate with the service (when installing)",
 	)
 }
 
 func ServiceDescription() parameters.Parameter {
-	return reflect.NewParameter(
+	return cmdslib.NewParameter(
 		"Description (usually seen in UI labels) to associate with the service (when installing)",
 	)
 }

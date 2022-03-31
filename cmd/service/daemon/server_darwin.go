@@ -7,7 +7,7 @@ import (
 )
 
 func systemServiceMaddrs() ([]multiaddr.Multiaddr, error) {
-	for i, path := range []string,{
+	for i, path := range []string{
 		"/Library/Application Support", // NeXT
 		"/var/run",                     // BSD UNIX
 	} {

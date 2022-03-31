@@ -66,7 +66,7 @@ func TestAll(t *testing.T) {
 func testIPFS(ctx context.Context, t *testing.T, testEnv envData, core coreiface.CoreAPI, filesRoot *gomfs.Root) {
 	for _, system := range []struct {
 		filesystem.ID
-		//filesystem.Interface
+		// filesystem.Interface
 		readonly bool
 	}{
 		{ID: filesystem.IPFS, readonly: true},
@@ -75,7 +75,7 @@ func testIPFS(ctx context.Context, t *testing.T, testEnv envData, core coreiface
 		// {ID: filesystem.PinFS},
 		// {ID: filesystem.KeyFS},
 	} {
-		//nodeFS, err := manager.NewFileSystem(ctx, system.ID, core, filesRoot)
+		// nodeFS, err := manager.NewFileSystem(ctx, system.ID, core, filesRoot)
 		nodeFS := ipfs.NewInterface(ctx, core, system.ID)
 		hostFS, err := cgofuse.NewFuseInterface(nodeFS)
 		if err != nil {

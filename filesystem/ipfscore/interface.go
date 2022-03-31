@@ -107,7 +107,7 @@ func (ci *coreInterface) OpenDir(name string) (fs.ReadDirFile, error) {
 		)
 	}
 
-	//TODO: de-dupe between Open
+	// TODO: de-dupe between Open
 	const timeout = 10 * time.Second // TODO: we should have a single callTimeout const pkg-wide
 	var (
 		corePath            = goToIPFSCore(ci.systemID, name)
@@ -149,6 +149,6 @@ func (*coreInterface) Rename(_, _ string) error {
 	const op errors.Op = "ipfscore.Rename"
 	// TODO: use abstract, consistent, error values
 	// (^ this means reimplementing pkg `iferrors` with new Go conventions)
-	//return errReadOnly
+	// return errReadOnly
 	return errors.New(op, errors.InvalidOperation)
 }

@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	fscmds "github.com/djdv/go-filesystem-utils/cmd/fs/settings"
 	"github.com/djdv/go-filesystem-utils/cmd/service"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/environment"
+	fscmds "github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -225,7 +225,8 @@ func testDaemonRemote(t *testing.T, root *cmds.Command) {
 
 func daemonRemoteHelper(t *testing.T, root *cmds.Command,
 	cmdPath []string, errorReason string,
-	client cmds.Executor, env cmds.Environment) {
+	client cmds.Executor, env cmds.Environment,
+) {
 	t.Helper()
 	var (
 		shouldError               = errorReason != ""

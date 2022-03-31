@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/environment"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -18,7 +18,8 @@ import (
 // spawnDaemon sets up the daemon environment and starts the server daemon.
 // The returned context is done when the daemon returns.
 func spawnDaemon(ctx context.Context, t *testing.T,
-	root *cmds.Command, optMap cmds.OptMap) (context.Context, environment.Environment, cmds.Response) {
+	root *cmds.Command, optMap cmds.OptMap,
+) (context.Context, environment.Environment, cmds.Response) {
 	t.Helper()
 	request, err := cmds.NewRequest(ctx, daemon.CmdsPath(),
 		optMap, nil, nil, root)
@@ -88,7 +89,8 @@ func waitForDaemon(t *testing.T, serverCtx context.Context) {
 }
 
 func stopDaemonAndWait(t *testing.T,
-	daemonEnv environment.Daemon, runtime func() error, serverCtx context.Context) {
+	daemonEnv environment.Daemon, runtime func() error, serverCtx context.Context,
+) {
 	t.Helper()
 	stopDaemon(t, daemonEnv)
 	if err := runtime(); err != nil {

@@ -4,9 +4,9 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/service/host"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
 	"github.com/multiformats/go-multiaddr"

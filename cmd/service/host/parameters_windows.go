@@ -1,8 +1,8 @@
 package host
 
 import (
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
-	"github.com/djdv/go-filesystem-utils/internal/parameters/reflect"
 )
 
 type PlatformSettings struct {
@@ -18,13 +18,13 @@ func (*PlatformSettings) Parameters() parameters.Parameters {
 }
 
 func ServicePassword() parameters.Parameter {
-	return reflect.NewParameter(
+	return cmdslib.NewParameter(
 		"Password to use when interfacing with the system service manager.",
 	)
 }
 
 func DelayedAutoStart() parameters.Parameter {
-	return reflect.NewParameter(
+	return cmdslib.NewParameter(
 		"Prevent the service from starting immediately after booting.",
 	)
 }

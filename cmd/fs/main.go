@@ -7,14 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/executor"
-	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
 	"github.com/djdv/go-filesystem-utils/cmd/list"
 	"github.com/djdv/go-filesystem-utils/cmd/mount"
 	"github.com/djdv/go-filesystem-utils/cmd/service"
 	"github.com/djdv/go-filesystem-utils/cmd/unmount"
-	"github.com/djdv/go-filesystem-utils/internal/parameters/reflect/cmds/options"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/executor"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/options"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
 )
@@ -43,7 +43,7 @@ func main() {
 		)
 		err = cli.Run(ctx, root, cmdline,
 			os.Stdin, os.Stdout, os.Stderr,
-			environment.MakeEnvironment, executor.MakeExecutor,
+			cmdsenv.MakeEnvironment, executor.MakeExecutor,
 		)
 	)
 	if err != nil {

@@ -24,9 +24,9 @@ type coreFile struct {
 	cancel context.CancelFunc
 }
 
-//TODO: [port]
-//func (cio *coreFile) Write(_ []byte) (int, error)   { return 0, errReadOnly }
-//func (cio *coreFile) Truncate(_ uint64) error       { return errReadOnly }
+// TODO: [port]
+// func (cio *coreFile) Write(_ []byte) (int, error)   { return 0, errReadOnly }
+// func (cio *coreFile) Truncate(_ uint64) error       { return errReadOnly }
 
 func (cio *coreFile) Close() error                  { defer cio.cancel(); return cio.f.Close() }
 func (cio *coreFile) Stat() (fs.FileInfo, error)    { return cio.statFn() }
@@ -42,9 +42,9 @@ type cborFile struct {
 	reader io.ReadSeeker
 }
 
-//TODO: [port]
-//func (cio *cborFile) Write(_ []byte) (int, error)   { return 0, errReadOnly }
-//func (cio *cborFile) Truncate(_ uint64) error       { return errReadOnly }
+// TODO: [port]
+// func (cio *cborFile) Write(_ []byte) (int, error)   { return 0, errReadOnly }
+// func (cio *cborFile) Truncate(_ uint64) error       { return errReadOnly }
 
 func (cio *cborFile) Close() error                  { return nil }
 func (cio *cborFile) Stat() (fs.FileInfo, error)    { return cio.stat() }
@@ -53,12 +53,14 @@ func (cio *cborFile) Size() (int64, error) {
 	size, err := cio.node.Size()
 	return int64(size), err
 }
+
 func (cio *cborFile) Seek(offset int64, whence int) (int64, error) {
 	return cio.reader.Seek(offset, whence)
 }
 
 func openIPFSFile(ctx context.Context,
-	core coreiface.CoreAPI, ipldNode ipld.Node, statFn statFunc) (fs.File, error) {
+	core coreiface.CoreAPI, ipldNode ipld.Node, statFn statFunc,
+) (fs.File, error) {
 	// TODO: cborNodes should have context rules
 	if cborNode, ok := ipldNode.(*cbor.Node); ok {
 		// TODO: we need to pipe through the formatting bool, or use a global const
@@ -72,7 +74,8 @@ func openIPFSFile(ctx context.Context,
 }
 
 func openUFSNode(ctx context.Context,
-	core coreiface.CoreAPI, path corepath.Resolved, stat statFunc) (fs.File, error) {
+	core coreiface.CoreAPI, path corepath.Resolved, stat statFunc,
+) (fs.File, error) {
 	// TODO: double check context
 	// we might want to associate cancelFuncs with handles
 	// guaranteeing this exits when the file is closed (not only when the FS is destroyed)
@@ -103,7 +106,8 @@ func openUFSNode(ctx context.Context,
 }
 
 func openCborNode(cborNode *cbor.Node, stat statFunc,
-	formatData bool) (fs.File, error) {
+	formatData bool,
+) (fs.File, error) {
 	var br *bytes.Reader
 	if formatData {
 		forHumans, err := cborNode.MarshalJSON()

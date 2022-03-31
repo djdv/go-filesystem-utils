@@ -6,10 +6,10 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
 	"github.com/djdv/go-filesystem-utils/filesystem"
-	"github.com/djdv/go-filesystem-utils/internal/parameters/reflect/cmds/options"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/options"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -21,7 +21,7 @@ const (
 )
 
 func Command() *cmds.Command {
-	var Command = &cmds.Command{
+	Command := &cmds.Command{
 		Arguments: []cmds.Argument{
 			cmds.StringArg(ArgumentName, false, true,
 				ArgumentDescription+" "+descriptionString(true, examplePaths()),
@@ -45,7 +45,7 @@ func Command() *cmds.Command {
 	return Command
 }
 
-type Response struct{ settings.Multiaddr }
+type Response struct{ cmdslib.Multiaddr }
 
 func mountPreRun(request *cmds.Request, _ cmds.Environment) error {
 	if err := checkSubCmd(2, request.Path); err != nil {
@@ -55,7 +55,7 @@ func mountPreRun(request *cmds.Request, _ cmds.Environment) error {
 }
 
 func mountRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
-	fsEnv, err := environment.Assert(env)
+	fsEnv, err := cmdsenv.Assert(env)
 	if err != nil {
 		return err
 	}
@@ -68,7 +68,7 @@ func mountRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Envi
 
 	for _, mountPoint := range mountPoints {
 		if err := emitter.Emit(&Response{
-			Multiaddr: settings.Multiaddr{Interface: mountPoint.Target()},
+			Multiaddr: cmdslib.Multiaddr{Interface: mountPoint.Target()},
 		}); err != nil {
 			return err
 		}

@@ -1,7 +1,7 @@
 package unmount
 
 import (
-	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 

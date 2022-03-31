@@ -24,7 +24,7 @@ const (
 )
 
 type hostBinding struct {
-	//fuselib.FileSystemBase // TODO: remove this
+	// fuselib.FileSystemBase // TODO: remove this
 	fileTable
 	systemLock operationsLock
 	goFs       fs.FS
@@ -41,7 +41,7 @@ func NewFuseInterface(fs fs.FS) (fuselib.FileSystemInterface, error) {
 	}
 
 	// TODO: [port] we need to mimic `ipfs log` elswhere
-	//logging.SetAllLoggers(logging.LevelDebug)
+	// logging.SetAllLoggers(logging.LevelDebug)
 	logging.SetAllLoggers(logging.LevelError)
 
 	return &hostBinding{
@@ -134,8 +134,7 @@ func (fuse *hostBinding) Getattr(path string, stat *fuselib.Stat_t, fh uint64) i
 	stat.Atim, // XXX: This shouldn't even be legal syntax.
 		stat.Mtim,
 		stat.Ctim,
-		stat.Birthtim =
-		mTime,
+		stat.Birthtim = mTime,
 		mTime,
 		mTime,
 		mTime

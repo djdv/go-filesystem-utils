@@ -4,11 +4,11 @@ import (
 	"errors"
 	"io"
 
-	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
 	"github.com/djdv/go-filesystem-utils/cmd/mount"
 	"github.com/djdv/go-filesystem-utils/filesystem"
-	"github.com/djdv/go-filesystem-utils/internal/parameters/reflect/cmds/options"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/options"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -37,7 +37,7 @@ var Command = &cmds.Command{
 	},
 }
 
-type Response struct{ settings.Multiaddr }
+type Response struct{ cmdslib.Multiaddr }
 
 func unmountPreRun(*cmds.Request, cmds.Environment) error {
 	return filesystem.RegisterPathMultiaddr()
@@ -58,7 +58,7 @@ func unmountRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.En
 	// and it's real-time rather than atomic.
 	// (results come back ASAP, as opposed to returning only after each one has been processed in bulk)
 
-	fsEnv, err := environment.Assert(env)
+	fsEnv, err := cmdsenv.Assert(env)
 	if err != nil {
 		return err
 	}
@@ -71,7 +71,7 @@ func unmountRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.En
 
 	for _, target := range formerTargets {
 		if err := emitter.Emit(&Response{
-			Multiaddr: settings.Multiaddr{Interface: target},
+			Multiaddr: cmdslib.Multiaddr{Interface: target},
 		}); err != nil {
 			return err
 		}

@@ -124,12 +124,13 @@ func (me *mutexEmitter) Emit(value interface{}) error {
 	return me.ResponseEmitter.Emit(value)
 }
 
-//TODO: rename? synchronizeWithEmitter
+// TODO: rename? synchronizeWithEmitter
 // TODO: document our protocol; uses ASCIIEOT as signal to close all stdio streams.
 // E.g. emulated process "detach" signal.
 func synchronizeWithStdio(ctx context.Context, emitter cmds.ResponseEmitter,
-	//stdin, stdout, stderr *os.File) (chan<- *Response, errCh, error) {
-	stdin, stdout, stderr *os.File) (cmds.ResponseEmitter, errCh, error) {
+	// stdin, stdout, stderr *os.File) (chan<- *Response, errCh, error) {
+	stdin, stdout, stderr *os.File,
+) (cmds.ResponseEmitter, errCh, error) {
 	if !isPipe(stdin) {
 		errs := make(chan error)
 		close(errs)
@@ -190,7 +191,7 @@ func synchronizeWithStdio(ctx context.Context, emitter cmds.ResponseEmitter,
 		// if/when it encounters an error.
 	}()
 
-	//emitterChan, emitErrs := emitterChan(ctx, muEmitter)
+	// emitterChan, emitErrs := emitterChan(ctx, muEmitter)
 	return muEmitter, errs, nil
 }
 

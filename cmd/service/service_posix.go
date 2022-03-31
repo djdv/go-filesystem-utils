@@ -17,7 +17,8 @@ import (
 )
 
 func systemListeners(maddrsProvided bool, sysLog service.Logger) (serviceListeners []manet.Listener,
-	cleanup func() error, err error) {
+	cleanup func() error, err error,
+) {
 	defer func() { // NOTE: Overwrites named return value.
 		if err != nil {
 			err = logErr(sysLog, err)

@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	"github.com/kardianos/service"
 )

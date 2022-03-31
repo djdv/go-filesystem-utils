@@ -1,8 +1,8 @@
 package stop
 
 import (
-	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -24,12 +24,12 @@ var Command = &cmds.Command{
 				}
 		*/
 
-		serviceEnv, err := environment.Assert(env)
+		serviceEnv, err := cmdsenv.Assert(env)
 		if err != nil {
 			return err
 		}
 
-		if err := serviceEnv.Daemon().Stopper().Stop(environment.Requested); err != nil {
+		if err := serviceEnv.Daemon().Stopper().Stop(cmdsenv.Requested); err != nil {
 			return err
 		}
 

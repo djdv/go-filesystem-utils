@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
 	"github.com/djdv/go-filesystem-utils/cmd/service/host"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
 )
@@ -13,7 +13,8 @@ import (
 // registerControllerCommands inserts Command wrappers
 // for each service control-action provided.
 func registerControllerCommands(subcommands map[string]*cmds.Command,
-	actions ...string) {
+	actions ...string,
+) {
 	for _, action := range actions {
 		action := action
 		subcommands[action] = &cmds.Command{
@@ -23,7 +24,8 @@ func registerControllerCommands(subcommands map[string]*cmds.Command,
 				Tagline: fmt.Sprintf("%s the service.", strings.Title(action)),
 			},
 			Run: func(request *cmds.Request,
-				_ cmds.ResponseEmitter, _ cmds.Environment) (err error) {
+				_ cmds.ResponseEmitter, _ cmds.Environment,
+			) (err error) {
 				ctx := request.Context
 				controllerSettings, err := settings.ParseAll[Settings](ctx, request)
 				if err != nil {

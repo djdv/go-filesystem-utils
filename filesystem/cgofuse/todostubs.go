@@ -8,7 +8,7 @@ func (fs *hostBinding) Create(path string, flags int, mode uint32) (int, uint64)
 	// TODO: why is fuselib passing us flags and what are they?
 	// both FUSE and SUS predefine what they should be (to Open)
 
-	//return hostBinding.open(path, fuselib.O_WRONLY|fuselib.O_CREAT|fuselib.O_TRUNC)
+	// return hostBinding.open(path, fuselib.O_WRONLY|fuselib.O_CREAT|fuselib.O_TRUNC)
 
 	// disabled until we parse relevant flags in open
 	// fuse will do shenanigans to make this work

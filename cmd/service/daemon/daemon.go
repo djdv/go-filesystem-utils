@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djdv/go-filesystem-utils/cmd/environment"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
 	"github.com/djdv/go-filesystem-utils/filesystem"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
 	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
@@ -91,11 +91,11 @@ func daemonRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Env
 			return ForEachOrError(ctx, responses, nil, respond)
 		}
 
-		stopReason environment.Reason
+		stopReason cmdsenv.Reason
 		wait       = func() error {
 			var (
 				finalErrs        = CtxMerge(ctx, errs...)
-				cancelAndRespond = func(reason environment.Reason) error {
+				cancelAndRespond = func(reason cmdsenv.Reason) error {
 					daemonCancel()
 					stopReason = reason
 					response := stoppingResponse(reason)
@@ -114,7 +114,7 @@ func daemonRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Env
 	}
 
 	if err := wait(); err != nil {
-		stopReason = environment.Error
+		stopReason = cmdsenv.Error
 		// TODO: wrap err?
 		respond(stoppingResponse(stopReason))
 		return err
@@ -133,7 +133,7 @@ func daemonRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Env
 	return handleStderr(shutdown(ctx, serverCache))
 }
 
-func setupGoStoppers(ctx context.Context, request *cmds.Request, stopper environment.Stopper) (responses, errCh) {
+func setupGoStoppers(ctx context.Context, request *cmds.Request, stopper cmdsenv.Stopper) (responses, errCh) {
 	var (
 		signalResponses, signalErrs   = stopOnSignal(ctx, stopper, os.Interrupt)
 		requestResponses, requestErrs = stopOnRequestCancel(ctx, stopper, request)
@@ -143,7 +143,8 @@ func setupGoStoppers(ctx context.Context, request *cmds.Request, stopper environ
 }
 
 func respondAndCache(ctx context.Context,
-	instances <-chan serverInstance) (responses, <-chan serverInstance) {
+	instances <-chan serverInstance,
+) (responses, <-chan serverInstance) {
 	const readyResponseCount = 1
 	var (
 		cacheWg sync.WaitGroup
@@ -190,7 +191,7 @@ func respondAndCache(ctx context.Context,
 	return responses, relay
 }
 
-func waitForStopOrError(reasons <-chan environment.Reason, errs <-chan error) (responses, errCh) {
+func waitForStopOrError(reasons <-chan cmdsenv.Reason, errs <-chan error) (responses, errCh) {
 	var (
 		responses = make(chan *Response, 1)
 		outErrs   = make(chan error)
@@ -202,7 +203,7 @@ func waitForStopOrError(reasons <-chan environment.Reason, errs <-chan error) (r
 		case reason := <-reasons:
 			responses <- stoppingResponse(reason)
 		case err := <-errs:
-			responses <- stoppingResponse(environment.Error)
+			responses <- stoppingResponse(cmdsenv.Error)
 			outErrs <- err
 			for err := range errs {
 				outErrs <- err

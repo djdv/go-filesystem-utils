@@ -8,8 +8,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/djdv/go-filesystem-utils/cmd/fs/settings"
 	"github.com/djdv/go-filesystem-utils/filesystem"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
@@ -38,7 +38,7 @@ func registerMountSubcommands(parent *cmds.Command) {
 		}
 		hosts = []filesystem.API{
 			filesystem.Fuse,
-			//filesystem.Plan9Protocol,
+			// filesystem.Plan9Protocol,
 		}
 		fsids = []filesystem.ID{
 			filesystem.IPFS,
@@ -52,7 +52,8 @@ func registerMountSubcommands(parent *cmds.Command) {
 }
 
 func registerHostAPICmds(template *cmds.Command,
-	hosts []filesystem.API, fsIDs []filesystem.ID) subcmdsMap {
+	hosts []filesystem.API, fsIDs []filesystem.ID,
+) subcmdsMap {
 	var (
 		subcommands   = make(subcmdsMap, len(hosts))
 		hostParameter = settings.SystemAPI()

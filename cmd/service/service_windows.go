@@ -16,7 +16,8 @@ import (
 )
 
 func systemListeners(maddrsProvided bool, sysLog service.Logger) (serviceListeners []manet.Listener,
-	cleanup func() error, err error) {
+	cleanup func() error, err error,
+) {
 	if maddrsProvided {
 		return // Supply nothing; let the daemon instantiate from the arguments.
 	}
@@ -136,7 +137,8 @@ func makeServiceACL(ownerSid, clientSid *windows.SID) (*windows.ACL, error) {
 }
 
 func makeServiceSecurityAttributes(ownerSid, groupSid *windows.SID,
-	dacl *windows.ACL) (*windows.SecurityAttributes, error) {
+	dacl *windows.ACL,
+) (*windows.SecurityAttributes, error) {
 	securityDesc, err := windows.NewSecurityDescriptor()
 	if err != nil {
 		return nil, err

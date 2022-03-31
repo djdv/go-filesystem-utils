@@ -9,18 +9,18 @@ import (
 	"io"
 	"strings"
 
-	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	fscmds "github.com/djdv/go-filesystem-utils/cmd/fs/settings"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
 type (
 	Status   uint
 	Response struct {
-		ListenerMaddr *fscmds.Multiaddr  `json:"listenerMaddr,omitempty"`
+		ListenerMaddr *cmdslib.Multiaddr `json:"listenerMaddr,omitempty"`
 		Info          string             `json:"info,omitempty"`
 		Status        Status             `json:"status,omitempty"`
-		StopReason    environment.Reason `json:"stopReason,omitempty"`
+		StopReason    cmdsenv.Reason     `json:"stopReason,omitempty"`
 	}
 	responses = <-chan *Response
 
@@ -126,7 +126,8 @@ I.e.
 // The returned runtime function will block until the daemon stops running.
 // TODO: deprecate / remove
 func SplitResponse(response cmds.Response,
-	startupCb, runtimeCb ResponseCallback) (startupFn, runtimeFn func() error) {
+	startupCb, runtimeCb ResponseCallback,
+) (startupFn, runtimeFn func() error) {
 	results := responsesFromCmds(response)
 	startupFn = func() error {
 		if err := UntilStarting(results, nil); err != nil {
@@ -264,7 +265,8 @@ func spliceResultsAndErrs(responses <-chan ResponseResult, errs <-chan error) <-
 }
 
 func responsesFromReader(ctx context.Context,
-	stdout io.Reader) <-chan ResponseResult {
+	stdout io.Reader,
+) <-chan ResponseResult {
 	results := make(chan ResponseResult)
 	go func() {
 		defer close(results)
@@ -304,7 +306,7 @@ func validateResponses(responses <-chan ResponseResult) <-chan ResponseResult {
 				results <- ResponseResult{error: err}
 				continue
 			}
-			//firstResponse = false
+			// firstResponse = false
 			results <- result
 		}
 	}()

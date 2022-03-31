@@ -4,9 +4,10 @@ import (
 	"errors"
 	"io"
 
-	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	fscmds "github.com/djdv/go-filesystem-utils/cmd/fs/settings"
 	"github.com/djdv/go-filesystem-utils/filesystem"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -17,7 +18,7 @@ var Command = &cmds.Command{
 		Tagline: "List file systems bound to the host.",
 	},
 	NoLocal:  true, // Always communicate with the file system service (as a client).
-	Encoders: fscmds.CmdsEncoders,
+	Encoders: settings.CmdsEncoders,
 	Type:     Response{},
 	PreRun:   listPreRun,
 	Run:      listRun,
@@ -26,14 +27,14 @@ var Command = &cmds.Command{
 	},
 }
 
-type Response struct{ fscmds.Multiaddr }
+type Response struct{ cmdslib.Multiaddr }
 
 func listPreRun(*cmds.Request, cmds.Environment) error {
 	return filesystem.RegisterPathMultiaddr()
 }
 
 func listRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
-	serviceEnv, err := environment.Assert(env)
+	serviceEnv, err := cmdsenv.Assert(env)
 	if err != nil {
 		return err
 	}
@@ -48,7 +49,7 @@ func listRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Envir
 
 	for mountPoint := range mountPoints {
 		if err := emitter.Emit(&Response{
-			Multiaddr: fscmds.Multiaddr{Interface: mountPoint},
+			Multiaddr: cmdslib.Multiaddr{Interface: mountPoint},
 		}); err != nil {
 			return err
 		}

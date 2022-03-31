@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djdv/go-filesystem-utils/cmd/environment"
-	"github.com/djdv/go-filesystem-utils/cmd/executor"
-	fscmds "github.com/djdv/go-filesystem-utils/cmd/fs/settings"
 	servicecmd "github.com/djdv/go-filesystem-utils/cmd/service"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/environment"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/executor"
+	fscmds "github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
 	"github.com/kardianos/service"
