@@ -15,11 +15,51 @@ const ErrSkip = skipError("skip")
 
 func (e skipError) Error() string { return string(e) }
 
+func ctxRange[in any](ctx context.Context, input <-chan in) <-chan in {
+	relay := make(chan in, cap(input))
+	go func() {
+		defer close(relay)
+		for {
+			select {
+			case element, ok := <-input:
+				if !ok {
+					return
+				}
+				select {
+				case relay <- element:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return relay
+}
+
 func totalBuff[in any](inputs []<-chan in) (total int) {
 	for _, ch := range inputs {
 		total += cap(ch)
 	}
 	return
+}
+
+func CtxJoin[in any](ctx context.Context, inputs ...<-chan in) <-chan in {
+	out := make(chan in, totalBuff(inputs))
+	go func() {
+		defer close(out)
+		for _, source := range inputs {
+			for element := range ctxRange(ctx, source) {
+				select {
+				case out <- element:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return out
 }
 
 func CtxMerge[in any](ctx context.Context, sources ...<-chan in) <-chan in {
@@ -46,46 +86,6 @@ func CtxMerge[in any](ctx context.Context, sources ...<-chan in) <-chan in {
 	go func() { mergedWg.Wait(); close(mergedCh) }()
 
 	return mergedCh
-}
-
-func ctxRange[in any](ctx context.Context, input <-chan in) <-chan in {
-	relay := make(chan in, cap(input))
-	go func() {
-		defer close(relay)
-		for {
-			select {
-			case element, ok := <-input:
-				if !ok {
-					return
-				}
-				select {
-				case relay <- element:
-				case <-ctx.Done():
-					return
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return relay
-}
-
-func CtxJoin[in any](ctx context.Context, inputs ...<-chan in) <-chan in {
-	out := make(chan in, totalBuff(inputs))
-	go func() {
-		defer close(out)
-		for _, source := range inputs {
-			for element := range ctxRange(ctx, source) {
-				select {
-				case out <- element:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}
-	}()
-	return out
 }
 
 func CtxTakeAndCancel[in any](ctx context.Context, cancel context.CancelFunc,

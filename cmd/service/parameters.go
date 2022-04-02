@@ -9,17 +9,18 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
+//FIXME: `onlyRootOptions` will skip fields when we try to make options for [Settings]
 type (
 	Host     = host.Settings
 	Settings struct {
-		settings.Settings
 		Host
+		settings.Settings
 	}
 )
 
 func (*Settings) Parameters(ctx context.Context) parameters.Parameters {
 	return CtxJoin(ctx,
-		(*settings.Settings).Parameters(nil, ctx),
 		(*host.Settings).Parameters(nil, ctx),
+		(*settings.Settings).Parameters(nil, ctx),
 	)
 }

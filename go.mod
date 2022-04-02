@@ -24,6 +24,7 @@ require (
 	github.com/kardianos/service v1.2.1
 	github.com/multiformats/go-multiaddr v0.5.0
 	github.com/multiformats/go-multiaddr-dns v0.3.1
+	golang.org/x/net v0.0.0-20210813160813-60bc85c4be6d
 	golang.org/x/sys v0.0.0-20211025201205-69cdffdb9359
 )
 
@@ -212,7 +213,6 @@ require (
 	go4.org v0.0.0-20200411211856-f5505b9728dd // indirect
 	golang.org/x/crypto v0.0.0-20210921155107-089bfa567519 // indirect
 	golang.org/x/mod v0.4.2 // indirect
-	golang.org/x/net v0.0.0-20210813160813-60bc85c4be6d // indirect
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c // indirect
 	golang.org/x/term v0.0.0-20201126162022-7de9c90e9dd1 // indirect
 	golang.org/x/tools v0.1.5 // indirect

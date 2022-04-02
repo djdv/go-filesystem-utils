@@ -132,16 +132,12 @@ func BindParameterFields[settings any,
 			}
 		)
 		ProcessResults(ctx, allFields, paramFields, errs, bindParams)
-		if ctx.Err() != nil {
-			return // Don't validate if we're canceled.
+		if err := checkParameterCount(ctx, params); err != nil {
+			select {
+			case errs <- err:
+			case <-ctx.Done():
+			}
 		}
-
-		err := checkParameterCount(ctx, params)
-		select {
-		case errs <- err:
-		case <-ctx.Done():
-		}
-
 	}()
 
 	return paramFields, errs, nil

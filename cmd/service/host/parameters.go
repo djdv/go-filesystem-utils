@@ -25,7 +25,7 @@ func (*Settings) Parameters(ctx context.Context) parameters.Parameters {
 		{HelpText: "Description (usually seen in UI labels) to associate with the service (when installing)"},
 	}
 	return CtxJoin(ctx,
-		cmdslib.ReflectParameters[Settings](ctx, partialParams),
+		cmdslib.GenerateParameters[Settings](ctx, partialParams),
 		(*PlatformSettings).Parameters(nil, ctx),
 	)
 }

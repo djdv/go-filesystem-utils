@@ -3,13 +3,11 @@ package cmdslib
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 
-	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
@@ -67,47 +65,23 @@ func (parameter CmdsParameter) Aliases(source parameters.SourceID) []string {
 // Either, take in a callback, or return a channel.
 // ^ do the latter, use ForEach within params?
 // TODO: replace ParameterMaker with this.
-//func ReflectParameters[in any](fn func(reflect.StructField) Parameter.Parameters) parameters.Parameters {
-//func ReflectParameters[in any](ctx context.Context) StructFields {
+//func GenerateParameters[in any](fn func(reflect.StructField) Parameter.Parameters) parameters.Parameters {
+//func GenerateParameters[in any](ctx context.Context) StructFields {
 //
 // TODO: needs to take in at least a `descriptions [$len(fields)]string`
 // Either take in things like namespace and return params
 // or return chan of partial params for caller to range over and complete.
-func ReflectParameters[settings any, setPtr SettingsConstraint[settings]](ctx context.Context,
+func GenerateParameters[settings any, setPtr SettingsConstraint[settings]](ctx context.Context,
 	partialParams []CmdsParameter) parameters.Parameters {
-	/* going to need this:
+	/* TODO re-use docs
 	// NewParameter constructs a parameter using either the provided options,
 	// or a set of defaults (derived from the calling function's name, pkg, and binary name).
 	*/
-
-	// descriptions come in
-	// templates come out
-	// provided by us: name, namespace, envprefix
-	// provided by caller: descriptions
-	// caller gets back channel, post-modify however they want,
-	// or can just raw return (if we change interface return type to chan for Parameters).
-	// ^ make and use a shim for now, search and replace later
-	// .Params{ return  prototype(descs...) => chan => slice }
-	// ^ later .Params { return final(descs...) => chan }
-
 	typ, err := checkType[settings, setPtr]()
 	if err != nil {
 		panic(err)
 	}
 
-	funcLocation, _, _, ok := runtime.Caller(1)
-	if !ok {
-		panic("runtime could not get program counter address for function")
-	}
-	namespace, _ := funcNames(funcLocation)
-	if namespace == "main" {
-		namespace = ""
-	}
-
-	procName := filepath.Base(os.Args[0])
-	envPrefix := strings.TrimSuffix(
-		procName, filepath.Ext(procName),
-	)
 	// Meta ^^ extract?
 
 	// FIXME:
@@ -115,37 +89,46 @@ func ReflectParameters[settings any, setPtr SettingsConstraint[settings]](ctx co
 	// caller can combine sub-structs manually with CtxJoin.
 	// Our loop swaps target? range over params, pull from fields?
 	// or just keep the same.
+	// ^ we should invert, there's no reason for us to skip embedded structs
+	// we should just stop processing before we hit it
+	// (if the partials are the right length, if not fail somewhere later in the pipeline)
 	params := make(chan parameters.Parameter, len(partialParams))
 	go func() {
 		defer close(params)
 		var (
-			fieldIndex int
-			baseFields = generateFields(ctx, typ)
-			allFields  = expandFields(ctx, baseFields)
+			fields               = generateFields(ctx, typ)
+			namespace, envPrefix = programMetadata()
 		)
-		log.Println("params:", partialParams)
-		for field := range allFields {
-			log.Println("field:", field.Name)
-			param := partialParams[fieldIndex]
-			log.Println("param:", param.Description())
-			fieldIndex++
-			fieldName := field.Name
-			if param.OptionName == "" {
-				param.OptionName = fieldName
-			}
-			if param.HelpText == "" {
-				param.HelpText = fmt.Sprintf( // TODO: from descs
-					"Dynamic parameter for %s",
-					fieldName,
-				)
-			}
-			if param.Namespace == "" &&
-				namespace != "" {
-				param.Namespace = namespace
-			}
-			param.envPrefix = envPrefix
+		for _, param := range partialParams {
 			select {
-			case params <- param:
+			case field, ok := <-fields:
+				if !ok {
+					//log.Println("fields closed")
+					return
+				}
+				fieldName := field.Name
+				//log.Println("got field:", fieldName)
+				if param.OptionName == "" {
+					param.OptionName = fieldName
+				}
+				if param.HelpText == "" {
+					param.HelpText = fmt.Sprintf( // TODO: from descs
+						"Dynamic parameter for %s",
+						fieldName,
+					)
+				}
+				if param.Namespace == "" &&
+					namespace != "" {
+					param.Namespace = namespace
+				}
+				param.envPrefix = envPrefix
+				select {
+				case params <- param:
+					//log.Println("sent param from field:", fieldName)
+				case <-ctx.Done():
+					return
+				}
+
 			case <-ctx.Done():
 				return
 			}
@@ -155,6 +138,20 @@ func ReflectParameters[settings any, setPtr SettingsConstraint[settings]](ctx co
 	return params
 }
 
+func programMetadata() (namespace, envPrefix string) {
+	funcLocation, _, _, ok := runtime.Caller(2)
+	if !ok {
+		panic("runtime could not get program counter address for function")
+	}
+	if namespace, _ = funcNames(funcLocation); namespace == "main" {
+		namespace = ""
+	}
+	progName := filepath.Base(os.Args[0])
+	envPrefix = strings.TrimSuffix(progName, filepath.Ext(progName))
+	return
+}
+
+/*
 func PrependParameters(ctx context.Context,
 	header []CmdsParameter, tails ...parameters.Parameters) parameters.Parameters {
 	relay := make(chan parameters.Parameter, func() (total int) {
@@ -185,3 +182,4 @@ func PrependParameters(ctx context.Context,
 	}()
 	return relay
 }
+*/

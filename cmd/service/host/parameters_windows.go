@@ -16,5 +16,5 @@ func (*PlatformSettings) Parameters(ctx context.Context) parameters.Parameters {
 		{HelpText: "Password to use when interfacing with the system service manager."},
 		{HelpText: "Prevent the service from starting immediately after booting."},
 	}
-	return cmdslib.ReflectParameters[PlatformSettings](ctx, partialParams)
+	return cmdslib.GenerateParameters[PlatformSettings](ctx, partialParams)
 }

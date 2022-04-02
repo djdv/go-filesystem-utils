@@ -37,7 +37,7 @@ func (*MountSettings) Parameters(ctx context.Context) parameters.Parameters {
 			HelpText:   "IPFS multiaddr to use.",
 		},
 	}
-	return cmdslib.ReflectParameters[MountSettings](ctx, partialParams)
+	return cmdslib.GenerateParameters[MountSettings](ctx, partialParams)
 }
 
 type UnmountSettings struct {
@@ -53,7 +53,7 @@ func (*UnmountSettings) Parameters(ctx context.Context) parameters.Parameters {
 		},
 	}
 	return CtxJoin(ctx,
-		cmdslib.ReflectParameters[UnmountSettings](ctx, partialParams),
+		cmdslib.GenerateParameters[UnmountSettings](ctx, partialParams),
 		(*MountSettings).Parameters(nil, ctx),
 	)
 }

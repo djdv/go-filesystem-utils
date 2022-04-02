@@ -3,6 +3,7 @@ package options
 import (
 	"context"
 	"fmt"
+	"log"
 	"reflect"
 
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
@@ -84,6 +85,9 @@ func MustMakeCmdsOptions[settings any,
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// TODO: Change this to avoid `expandFields` in the first place.
+	// Rather than filtering it out.
+	// We need to do the bidning ourselves too / refactor into function both ops can use
 	optionFields, generatorErrs, err := cmdslib.BindParameterFields[settings, setPtr](ctx)
 	if err != nil {
 		panic(err)
@@ -107,6 +111,7 @@ func MustMakeCmdsOptions[settings any,
 
 		makers  = constructorSettings.customMakers
 		makeOpt = func(field cmdslib.ParamField) error {
+			//log.Println("reduced:", field.StructField.Name)
 			opt := makeCmdsOption(field.StructField, field.Parameter, makers)
 			cmdsOptions = append(cmdsOptions, opt)
 			return nil
@@ -141,10 +146,12 @@ func onlyRootOptions(ctx context.Context, params cmdslib.ParamFields) cmdslib.Pa
 		defer close(relay)
 		relayRootFields := func(param cmdslib.ParamField) error {
 			if len(param.StructField.Index) > 1 {
+				log.Println("filtering non-root:", param.StructField.Name)
 				return nil
 			}
 			select {
 			case relay <- param:
+				log.Println("root field:", param.StructField.Name)
 			case <-ctx.Done():
 			}
 			return ctx.Err()

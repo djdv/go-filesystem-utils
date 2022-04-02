@@ -43,11 +43,11 @@ func (*Settings) Parameters(ctx context.Context) parameters.Parameters {
 			HelpText:   `Time interval (e.g. "30s") to check if the service is active and exit if not.`,
 		},
 	}
-	return cmdslib.ReflectParameters[Settings](ctx, partialParams)
+	return cmdslib.GenerateParameters[Settings](ctx, partialParams)
 }
 
 type HostService struct {
-	Username string `settings:"arguments"`
+	Username string
 	PlatformSettings
 }
 
@@ -81,5 +81,8 @@ func (*HostService) Parameters(ctx context.Context) parameters.Parameters {
 		Join with sub.params if any
 		make sure Reflect() is surface level only, we'll expect sub.Params to be correct.
 	*/
-
+	return CtxJoin(ctx,
+		cmdslib.GenerateParameters[HostService](ctx, partialParams),
+		(*PlatformSettings).Parameters(nil, ctx),
+	)
 }

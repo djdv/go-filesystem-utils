@@ -12,8 +12,8 @@ import (
 type (
 	Host     = host.Settings
 	Settings struct {
-		settings.Settings
 		Host
+		settings.Settings
 	}
 )
 
