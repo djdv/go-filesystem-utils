@@ -15,8 +15,8 @@ import (
 	"github.com/djdv/go-filesystem-utils/cmd/service"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/environment"
 	fscmds "github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/environment"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -123,7 +123,7 @@ func testDaemonRemote(t *testing.T, root *cmds.Command) {
 		{
 			name: "tcp servers",
 			serverOptions: cmds.OptMap{
-				fscmds.ServiceMaddrs().CommandLine(): []string{
+				fscmds.APIParam().CommandLine(): []string{
 					"/ip4/127.0.0.1/tcp/0",
 					"/dns4/localhost/tcp/0",
 				},
@@ -132,7 +132,7 @@ func testDaemonRemote(t *testing.T, root *cmds.Command) {
 		{
 			name: "unix domain socket servers",
 			serverOptions: cmds.OptMap{
-				fscmds.ServiceMaddrs().CommandLine(): []string{
+				fscmds.APIParam().CommandLine(): []string{
 					path.Join("/unix/", filepath.Join(os.TempDir(), "test-socket")),
 				},
 			},
@@ -271,7 +271,7 @@ func testDaemonAutoExit(t *testing.T, root *cmds.Command) {
 	t.Run("Spawn server", func(t *testing.T) {
 		serverCtx, _, serverResponse = spawnDaemon(runCtx, t, root,
 			cmds.OptMap{
-				fscmds.AutoExitInterval().CommandLine(): stopAfter.String(),
+				fscmds.AutoExitParam().CommandLine(): stopAfter.String(),
 			})
 	})
 

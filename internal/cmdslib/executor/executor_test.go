@@ -11,9 +11,9 @@ import (
 	"github.com/djdv/go-filesystem-utils/cmd/service"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/environment"
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib/executor"
 	fscmds "github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/environment"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
 	"github.com/multiformats/go-multiaddr"
@@ -166,7 +166,7 @@ func TestExecutor(t *testing.T) {
 			optMap       = cmds.OptMap{
 				// NOTE: We provide an address just to prevent the executor-constructor
 				// from trying to spawn a server instance (which happens by default)
-				fscmds.ServiceMaddrs().CommandLine(): []multiaddr.Multiaddr{
+				fscmds.APIParam().CommandLine(): []multiaddr.Multiaddr{
 					serviceMaddr,
 				},
 			}

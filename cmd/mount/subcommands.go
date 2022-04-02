@@ -10,7 +10,6 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/filesystem"
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
-	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -55,10 +54,9 @@ func registerHostAPICmds(template *cmds.Command,
 	hosts []filesystem.API, fsIDs []filesystem.ID,
 ) subcmdsMap {
 	var (
-		subcommands   = make(subcmdsMap, len(hosts))
-		hostParameter = settings.SystemAPI()
-		hostAPIName   = hostParameter.Name(parameters.CommandLine)
-		apiCommand    = new(cmds.Command)
+		subcommands  = make(subcmdsMap, len(hosts))
+		hostAPIParam = settings.HostAPIParam
+		apiCommand   = new(cmds.Command)
 	)
 	*apiCommand = *template
 	apiCommand.PreRun = func(request *cmds.Request, env cmds.Environment) error {
@@ -73,8 +71,8 @@ func registerHostAPICmds(template *cmds.Command,
 			return err
 		}
 
-		subCmd := cmdPath[len(cmdPath)-2]
-		request.SetOption(hostAPIName, strings.ToLower(subCmd))
+		subCmdName := cmdPath[len(cmdPath)-2]
+		request.SetOption(hostAPIParam, strings.ToLower(subCmdName))
 		return nil
 	}
 	for _, api := range hosts {
@@ -88,8 +86,7 @@ func registerHostAPICmds(template *cmds.Command,
 func registerSystemIDCmds(template *cmds.Command, fsIDs []filesystem.ID) subcmdsMap {
 	var (
 		subsystems  = make(subcmdsMap, len(fsIDs))
-		idParameter = settings.SystemID()
-		idName      = idParameter.Name(parameters.CommandLine)
+		fsIDParam   = settings.FileSystemIDParam
 		fsIDCommand = new(cmds.Command)
 	)
 	*fsIDCommand = *template
@@ -105,10 +102,10 @@ func registerSystemIDCmds(template *cmds.Command, fsIDs []filesystem.ID) subcmds
 		}
 
 		var (
-			cmdPath = request.Path
-			subCmd  = cmdPath[len(cmdPath)-1]
+			cmdPath    = request.Path
+			subCmdName = cmdPath[len(cmdPath)-1]
 		)
-		request.SetOption(idName, strings.ToLower(subCmd))
+		request.SetOption(fsIDParam, strings.ToLower(subCmdName))
 
 		for i, arg := range request.Arguments {
 			// HACK: we need a better interface here for platform specifics

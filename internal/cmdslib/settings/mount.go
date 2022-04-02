@@ -1,8 +1,11 @@
 package settings
 
 import (
+	"context"
+
 	"github.com/djdv/go-filesystem-utils/filesystem"
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
+	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -13,32 +16,28 @@ type MountSettings struct {
 	IPFSMaddr multiaddr.Multiaddr
 }
 
-func (*MountSettings) Parameters() parameters.Parameters {
-	return []parameters.Parameter{
-		SystemAPI(),
-		SystemID(),
-		IPFS(),
+const (
+	// TODO: better names
+	HostAPIParam      = "system"
+	FileSystemIDParam = "fs"
+)
+
+func (*MountSettings) Parameters(ctx context.Context) parameters.Parameters {
+	partialParams := []cmdslib.CmdsParameter{
+		{
+			OptionName: HostAPIParam,
+			HelpText:   "Host system API to use.",
+		},
+		{
+			OptionName: FileSystemIDParam,
+			HelpText:   "Target FS to use.",
+		},
+		{
+			OptionName: "ipfs",
+			HelpText:   "IPFS multiaddr to use.",
+		},
 	}
-}
-
-func SystemAPI() parameters.Parameter {
-	return cmdslib.NewParameter(
-		"Host system API to use.",
-		cmdslib.WithName("system"),
-	)
-}
-
-func SystemID() parameters.Parameter {
-	return cmdslib.NewParameter(
-		"Target FS to use.",
-		cmdslib.WithName("fs"),
-	)
-}
-
-func IPFS() parameters.Parameter {
-	return cmdslib.NewParameter(
-		"IPFS multiaddr to use.",
-	)
+	return cmdslib.ReflectParameters[MountSettings](ctx, partialParams)
 }
 
 type UnmountSettings struct {
@@ -46,15 +45,15 @@ type UnmountSettings struct {
 	All bool
 }
 
-func (*UnmountSettings) Parameters() parameters.Parameters {
-	return append((*MountSettings)(nil).Parameters(),
-		All(),
-	)
-}
-
-func All() parameters.Parameter {
-	return cmdslib.NewParameter(
-		"Unmount all mountpoints.",
-		cmdslib.WithAlias("a"),
+func (*UnmountSettings) Parameters(ctx context.Context) parameters.Parameters {
+	partialParams := []cmdslib.CmdsParameter{
+		{
+			OptionAliases: []string{"a"},
+			HelpText:      "Unmount all mountpoints.",
+		},
+	}
+	return CtxJoin(ctx,
+		cmdslib.ReflectParameters[UnmountSettings](ctx, partialParams),
+		(*MountSettings).Parameters(nil, ctx),
 	)
 }

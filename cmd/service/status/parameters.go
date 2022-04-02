@@ -1,8 +1,11 @@
 package status
 
 import (
+	"context"
+
 	"github.com/djdv/go-filesystem-utils/cmd/service/host"
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
+	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
@@ -14,10 +17,8 @@ type (
 	}
 )
 
-func (*Settings) Parameters() parameters.Parameters {
-	var (
-		root   = (*settings.Settings)(nil).Parameters()
-		system = (*host.Settings)(nil).Parameters()
+func (*Settings) Parameters(ctx context.Context) parameters.Parameters {
+	return CtxJoin(ctx, (*settings.Settings).Parameters(nil, ctx),
+		(*host.Settings).Parameters(nil, ctx),
 	)
-	return append(root, system...)
 }

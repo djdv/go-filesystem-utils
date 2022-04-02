@@ -22,8 +22,8 @@ type (
 	}
 )
 
-func (*Settings) Parameters() parameters.Parameters {
-	return (*settings.Settings)(nil).Parameters()
+func (*Settings) Parameters(ctx context.Context) parameters.Parameters {
+	return (*settings.Settings)(nil).Parameters(ctx)
 }
 
 func parseCmds(ctx context.Context, request *cmds.Request,

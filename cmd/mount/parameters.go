@@ -1,7 +1,10 @@
 package mount
 
 import (
+	"context"
+
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
+	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
@@ -10,10 +13,9 @@ type Settings struct {
 	settings.MountSettings
 }
 
-func (self *Settings) Parameters() parameters.Parameters {
-	var (
-		root = (*settings.Settings)(nil).Parameters()
-		pkg  = (*settings.MountSettings)(nil).Parameters()
+func (self *Settings) Parameters(ctx context.Context) parameters.Parameters {
+	return CtxJoin(ctx,
+		(*settings.Settings).Parameters(nil, ctx),
+		(*settings.MountSettings).Parameters(nil, ctx),
 	)
-	return append(root, pkg...)
 }

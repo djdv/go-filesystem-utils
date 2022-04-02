@@ -1,6 +1,8 @@
 package settings
 
 import (
+	"context"
+
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
@@ -10,21 +12,10 @@ type PlatformSettings struct {
 	DelayedAutoStart bool
 }
 
-func (*PlatformSettings) Parameters() parameters.Parameters {
-	return parameters.Parameters{
-		ServicePassword(),
-		DelayedAutoStart(),
+func (*PlatformSettings) Parameters(ctx context.Context) parameters.Parameters {
+	partialParams := []cmdslib.CmdsParameter{
+		{HelpText: "Password to use when interfacing with the system service manager."},
+		{HelpText: "Prevent the service from starting immediately after booting."},
 	}
-}
-
-func ServicePassword() parameters.Parameter {
-	return cmdslib.NewParameter(
-		"Password to use when interfacing with the system service manager.",
-	)
-}
-
-func DelayedAutoStart() parameters.Parameter {
-	return cmdslib.NewParameter(
-		"Prevent the service from starting immediately after booting.",
-	)
+	return cmdslib.ReflectParameters[Settings](ctx, partialParams)
 }

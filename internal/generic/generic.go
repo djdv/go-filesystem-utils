@@ -15,10 +15,17 @@ const ErrSkip = skipError("skip")
 
 func (e skipError) Error() string { return string(e) }
 
+func totalBuff[in any](inputs []<-chan in) (total int) {
+	for _, ch := range inputs {
+		total += cap(ch)
+	}
+	return
+}
+
 func CtxMerge[in any](ctx context.Context, sources ...<-chan in) <-chan in {
 	var (
 		mergedWg  sync.WaitGroup
-		mergedCh  = make(chan in)
+		mergedCh  = make(chan in, totalBuff(sources))
 		mergeFrom = func(ch <-chan in) {
 			defer mergedWg.Done()
 			for value := range ctxRange(ctx, ch) {
@@ -62,6 +69,23 @@ func ctxRange[in any](ctx context.Context, input <-chan in) <-chan in {
 		}
 	}()
 	return relay
+}
+
+func CtxJoin[in any](ctx context.Context, inputs ...<-chan in) <-chan in {
+	out := make(chan in, totalBuff(inputs))
+	go func() {
+		defer close(out)
+		for _, source := range inputs {
+			for element := range ctxRange(ctx, source) {
+				select {
+				case out <- element:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return out
 }
 
 func CtxTakeAndCancel[in any](ctx context.Context, cancel context.CancelFunc,

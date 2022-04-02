@@ -79,20 +79,16 @@ func parseCmdsOptionOptions(options ...CmdsOptionOption) cmdsOptionSettings {
 // skips any embedded (assumed super-)settings structs.
 // (The expectation is that a parent command has already registered them.)
 func MustMakeCmdsOptions[settings any,
-	setIntf cmdslib.SettingsConstraint[settings]](options ...CmdsOptionOption,
+	setPtr cmdslib.SettingsConstraint[settings]](options ...CmdsOptionOption,
 ) []cmds.Option {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var set setIntf = (*settings)(nil)
-	// settingsType := reflect.TypeOf((*settings)(nil))
-	// settingsType := reflect.TypeOf((*settings)(nil))
-
-	// optionFields, generatorErrs, err := cmdsOptionsFromSettings[settings](ctx)
-	optionFields, generatorErrs, err := cmdsOptionsFromSettings(ctx, set)
+	optionFields, generatorErrs, err := cmdslib.BindParameterFields[settings, setPtr](ctx)
 	if err != nil {
 		panic(err)
 	}
+	reducedFields := onlyRootOptions(ctx, optionFields)
 
 	// TODO: The generator should produce a 3 value struct
 	// field, param, paramindex
@@ -105,7 +101,7 @@ func MustMakeCmdsOptions[settings any,
 	var (
 		cmdsOptions,
 		maybeBuiltin []cmds.Option
-		optionBufferHint = cap(optionFields)
+		optionBufferHint = cap(reducedFields)
 
 		constructorSettings = parseCmdsOptionOptions(options...)
 
@@ -121,7 +117,7 @@ func MustMakeCmdsOptions[settings any,
 		optionBufferHint += len(maybeBuiltin)
 	}
 	cmdsOptions = make([]cmds.Option, 0, optionBufferHint)
-	if err := ForEachOrError(ctx, optionFields, generatorErrs, makeOpt); err != nil {
+	if err := ForEachOrError(ctx, reducedFields, generatorErrs, makeOpt); err != nil {
 		panic(err)
 	}
 
@@ -137,16 +133,6 @@ func builtinOptions() []cmds.Option {
 		cmds.BoolOption(cmds.OptLongHelp, "Show the full command help text."),
 		cmds.BoolOption(cmds.OptShortHelp, "Show a short version of the command help text."),
 	}
-}
-
-func cmdsOptionsFromSettings(ctx context.Context,
-	set parameters.Settings,
-) (cmdslib.ParamFields, errCh, error) {
-	var (
-		optionFields, errs = cmdslib.BindParameterFields(ctx, set)
-		reducedFields      = onlyRootOptions(ctx, optionFields)
-	)
-	return reducedFields, errs, nil
 }
 
 func onlyRootOptions(ctx context.Context, params cmdslib.ParamFields) cmdslib.ParamFields {

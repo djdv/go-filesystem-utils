@@ -7,7 +7,6 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
-	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	"github.com/kardianos/service"
 )
 
@@ -64,10 +63,7 @@ func serviceKeyValueFrom(platformSettings *PlatformSettings) service.KeyValue {
 func serviceArgs() (serviceArgs []string) {
 	serviceArgs = daemon.CmdsPath()
 	serviceArgs = serviceArgs[:len(serviceArgs)-1]
-	params := []string{
-		settings.ServiceMaddrs().Name(parameters.CommandLine),
-		settings.AutoExitInterval().Name(parameters.CommandLine),
-	}
+	params := []string{settings.APIParam, settings.AutoExitParam}
 	// NOTE: We do not marshal potentially processed values back into their argument form.
 	// We copy the arguments from argv exactly as they were supplied.
 	for i, arg := range os.Args {

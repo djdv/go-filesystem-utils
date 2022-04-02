@@ -1,7 +1,10 @@
 package unmount
 
 import (
+	"context"
+
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
+	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
@@ -10,10 +13,9 @@ type Settings struct {
 	settings.UnmountSettings
 }
 
-func (self *Settings) Parameters() parameters.Parameters {
-	var (
-		root = (*settings.Settings)(nil).Parameters()
-		pkg  = (*settings.UnmountSettings)(nil).Parameters()
+func (self *Settings) Parameters(ctx context.Context) parameters.Parameters {
+	return CtxMerge(ctx,
+		(*settings.Settings)(nil).Parameters(ctx),
+		(*settings.UnmountSettings)(nil).Parameters(ctx),
 	)
-	return append(root, pkg...)
 }

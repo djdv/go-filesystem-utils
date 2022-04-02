@@ -56,12 +56,8 @@ func (parsers typeParsers) Index(typ reflect.Type) *TypeParser {
 func Parse[settings any, setIntf SettingsConstraint[settings]](ctx context.Context,
 	setFuncs []SetFunc, parsers ...TypeParser,
 ) (*settings, error) {
-	var (
-		set          = new(settings)
-		intf setIntf = set
-	)
-
-	unsetArgs, generatorErrs, err := ArgsFromSettings(ctx, intf)
+	set := new(settings)
+	unsetArgs, generatorErrs, err := ArgsFromSettings[settings, setIntf](ctx, set)
 	if err != nil {
 		return nil, err
 	}

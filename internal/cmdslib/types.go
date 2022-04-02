@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	. "github.com/djdv/go-filesystem-utils/internal/generic"
-	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
 type errCh = <-chan error
@@ -21,14 +20,16 @@ var (
 	errMultiPointer   = errors.New("multiple layers of indirection (not supported)")
 )
 
-func ArgsFromSettings(ctx context.Context, set parameters.Settings) (Arguments, errCh, error) {
-	var (
-		fields, fieldsErrs = BindParameterFields(ctx, set)
+func ArgsFromSettings[settings any, setPtr SettingsConstraint[settings]](ctx context.Context, set setPtr) (Arguments, errCh, error) {
+	fields, fieldsErrs, err := BindParameterFields[settings, setPtr](ctx)
+	if err != nil {
+		return nil, nil, err
+	}
 
+	var (
 		arguments = make(chan Argument, cap(fields))
 		errs      = make(chan error)
 	)
-
 	go func() {
 		defer close(arguments)
 		defer close(errs)
@@ -61,50 +62,16 @@ func ArgsFromSettings(ctx context.Context, set parameters.Settings) (Arguments, 
 	return arguments, CtxMerge(ctx, fieldsErrs, errs), nil
 }
 
-// TODO: review/finish + name
-func ParameterMaker[in any]() parameters.Parameters {
+func checkType[settings any, structPtr SettingsConstraint[settings]]() (reflect.Type, error) {
 	var (
-		typ        = reflect.TypeOf((*in)(nil)).Elem()
-		fieldCount = typ.NumField()
-		params     = make([]parameters.Parameter, 0, fieldCount)
-	)
-	for _, field := range reflect.VisibleFields(typ) {
-		if !field.IsExported() {
-			continue
-		}
-		if len(field.Index) > 1 {
-			continue
-		}
-		// TODO: filter exported, embedded, structs
-		if field.Anonymous && field.Type.Kind() == reflect.Struct {
-			continue
-		}
-		var (
-			name        = field.Name
-			description = fmt.Sprintf(
-				"Dynamic parameter for %s",
-				name,
-			)
-		)
-		params = append(params,
-			NewParameter(
-				description,
-				WithName(name),
-			),
-		)
-	}
-	return params
-}
-
-func checkType[in any](structPtr in) (reflect.Type, error) {
-	var (
-		pointerType = reflect.TypeOf(structPtr)
+		pointerType = reflect.TypeOf((*structPtr)(nil)).Elem()
 		makeErr     = func() error {
+			var instance structPtr
 			return fmt.Errorf("%w:"+
 				" got: %T"+
 				" want: pointer to struct",
 				ErrUnexpectedType,
-				structPtr,
+				instance,
 			)
 		}
 	)

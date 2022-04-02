@@ -12,7 +12,6 @@ import (
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
-	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -217,7 +216,7 @@ func selfCommand(exitInterval time.Duration) (*exec.Cmd, error) {
 	if exitInterval != 0 {
 		cmd.Args = append(cmd.Args,
 			fmt.Sprintf("--%s=%s",
-				settings.AutoExitInterval().Name(parameters.CommandLine), exitInterval,
+				settings.AutoExitParam, exitInterval,
 			),
 			fmt.Sprintf("--%s=%s",
 				cmds.EncShort, cmds.JSON,

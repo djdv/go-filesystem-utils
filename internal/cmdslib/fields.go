@@ -5,15 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 
 	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
-var errTooFewFields = errors.New("not enough fields")
+var (
+	errTooFewFields = errors.New("settings struct has more parameters than fields")
+	//errGoldilocks = errors.New("just enough fields")
+	errTooManyFields = errors.New("settings struct has more fields than parameters")
+)
 
 type (
-	structFields <-chan reflect.StructField
+	StructFields <-chan reflect.StructField
 
 	ParamField struct {
 		parameters.Parameter
@@ -22,7 +27,7 @@ type (
 	ParamFields = <-chan ParamField
 )
 
-func generateFields(ctx context.Context, setTyp reflect.Type) structFields {
+func generateFields(ctx context.Context, setTyp reflect.Type) StructFields {
 	var (
 		fieldCount = setTyp.NumField()
 		fields     = make(chan reflect.StructField, fieldCount)
@@ -39,7 +44,7 @@ func generateFields(ctx context.Context, setTyp reflect.Type) structFields {
 	return fields
 }
 
-func expandFields(ctx context.Context, fields structFields) structFields {
+func expandFields(ctx context.Context, fields StructFields) StructFields {
 	out := make(chan reflect.StructField, cap(fields))
 	go func() {
 		subCtx, cancel := context.WithCancel(ctx)
@@ -74,7 +79,7 @@ func expandFields(ctx context.Context, fields structFields) structFields {
 	return out
 }
 
-func prefixIndex(ctx context.Context, prefix []int, fields structFields) structFields {
+func prefixIndex(ctx context.Context, prefix []int, fields StructFields) StructFields {
 	prefixed := make(chan reflect.StructField, cap(fields))
 	go func() {
 		defer close(prefixed)
@@ -87,73 +92,79 @@ func prefixIndex(ctx context.Context, prefix []int, fields structFields) structF
 	return prefixed
 }
 
-func BindParameterFields(ctx context.Context, set parameters.Settings) (ParamFields, errCh) {
+func BindParameterFields[settings any,
+	setPtr SettingsConstraint[settings]](ctx context.Context) (ParamFields, errCh, error) {
+	typ, err := checkType[settings, setPtr]()
+	if err != nil {
+		return nil, nil, err
+	}
+
 	var (
-		parameters  = set.Parameters()
-		paramCount  = len(parameters)
-		paramFields = make(chan ParamField, paramCount)
+		// MAGIC: We know our parameter methods never use data,
+		// so we call them directly with a nil pointer.
+		// This just avoids allocating an unnecessary struct value.
+		// If needed, we could instantiate and call `settings.Parameters` instead.
+		params      = setPtr.Parameters(nil, ctx)
+		paramFields = make(chan ParamField, cap(params))
 		errs        = make(chan error)
 	)
 	go func() {
 		defer close(paramFields)
 		defer close(errs)
-
-		typ, err := checkType(set)
-		if err != nil {
-			select {
-			case errs <- err:
-			case <-ctx.Done():
-			}
-			return
-		}
 		var (
 			baseFields = generateFields(ctx, typ)
 			allFields  = expandFields(ctx, baseFields)
-
-			paramIndex int
 			bindParams = func(field reflect.StructField) (ParamField, error) {
-				if paramIndex >= paramCount {
-					// TODO: export error
-					return ParamField{}, errors.New("settings struct has too many fields")
-				}
-				var (
-					parameter = parameters[paramIndex]
-					binding   = ParamField{
+				select {
+				case parameter, ok := <-params:
+					if !ok {
+						return ParamField{}, errTooManyFields
+					}
+					binding := ParamField{
 						Parameter:   parameter,
 						StructField: field,
 					}
-				)
-				paramIndex++
-				return binding, nil
+					return binding, nil
+
+				case <-ctx.Done():
+					return ParamField{}, ctx.Err()
+				}
 			}
 		)
 		ProcessResults(ctx, allFields, paramFields, errs, bindParams)
 		if ctx.Err() != nil {
 			return // Don't validate if we're canceled.
 		}
-		if err := checkParameterCount(paramIndex, paramCount, typ, parameters); err != nil {
-			select {
-			case errs <- err:
-			case <-ctx.Done():
-			}
+
+		err := checkParameterCount(ctx, params)
+		select {
+		case errs <- err:
+		case <-ctx.Done():
 		}
+
 	}()
 
-	return paramFields, errs
+	return paramFields, errs, nil
 }
 
-func checkParameterCount(count, expected int, typ reflect.Type,
-	parameters parameters.Parameters,
-) (err error) {
-	if count != expected {
-		remainder := parameters[count:]
-		err = fmt.Errorf("%w:"+
-			"\n\tgot: %d for %s"+
-			"\n\twant: %d to fit remaining parameters [%s]",
-			errTooFewFields,
-			count, typ.Name(),
-			expected, remainder,
-		)
+func checkParameterCount(ctx context.Context, params parameters.Parameters) error {
+	var extraParams []string
+out:
+	for {
+		select {
+		case extra, ok := <-params:
+			if !ok {
+				break out
+			}
+			name := extra.Name(parameters.CommandLine)
+			extraParams = append(extraParams, name)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
-	return
+	if extraParams != nil {
+		errStr := strings.Join(extraParams, ", ")
+		return fmt.Errorf("%w: %s", errTooFewFields, errStr)
+	}
+	return nil
 }

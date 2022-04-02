@@ -7,8 +7,8 @@
 package parameters
 
 import (
+	"context"
 	"errors"
-	"strings"
 )
 
 type (
@@ -27,7 +27,7 @@ type (
 		// A string that describes what this parameter influences.
 		Description() string
 	}
-	Parameters []Parameter
+	Parameters <-chan Parameter
 
 	// Settings are expected to be implemented by structs
 	// that follow a specific convention.
@@ -43,7 +43,7 @@ type (
 	// (I.e. The order of fields in the struct, and the order of parameters returned,
 	// must match.)
 	Settings interface {
-		Parameters() Parameters
+		Parameters(context.Context) Parameters
 	}
 )
 
@@ -54,11 +54,3 @@ const (
 )
 
 var ErrUnexpectedSourceID = errors.New("unexpected source ID")
-
-func (params Parameters) String() string {
-	parameterNames := make([]string, len(params))
-	for i, param := range params {
-		parameterNames[i] = param.Name(CommandLine)
-	}
-	return strings.Join(parameterNames, ", ")
-}

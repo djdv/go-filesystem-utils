@@ -1,9 +1,12 @@
 package settings
 
 import (
+	"context"
+	"log"
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
+	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -23,27 +26,24 @@ type Settings struct {
 	AutoExitInterval time.Duration
 }
 
-// Parameters returns the list of parameters associated with this pkg.
-func (*Settings) Parameters() parameters.Parameters {
-	return parameters.Parameters{
-		ServiceMaddrs(),
-		AutoExitInterval(),
+const (
+	// TODO: names
+	APIParam      = "api"
+	AutoExitParam = "auto-exit-interval"
+)
+
+func (*Settings) Parameters(ctx context.Context) parameters.Parameters {
+	partialParams := []cmdslib.CmdsParameter{
+		{
+			OptionName: APIParam,
+			HelpText:   "File system service multiaddr to use.",
+		},
+		{
+			OptionName: AutoExitParam,
+			HelpText:   `Time interval (e.g. "30s") to check if the service is active and exit if not.`,
+		},
 	}
-}
-
-func ServiceMaddrs() parameters.Parameter {
-	return cmdslib.NewParameter(
-		"File system service multiaddr to use.",
-		cmdslib.WithRootNamespace(),
-		cmdslib.WithName("api"),
-	)
-}
-
-func AutoExitInterval() parameters.Parameter {
-	return cmdslib.NewParameter(
-		`Time interval (e.g. "30s") to check if the service is active and exit if not.`,
-		cmdslib.WithRootNamespace(),
-	)
+	return cmdslib.ReflectParameters[Settings](ctx, partialParams)
 }
 
 type HostService struct {
@@ -51,18 +51,35 @@ type HostService struct {
 	PlatformSettings
 }
 
-func (*HostService) Parameters() parameters.Parameters {
-	var (
-		pkg = []parameters.Parameter{
-			Username(),
-		}
-		system = (*PlatformSettings)(nil).Parameters()
-	)
-	return append(pkg, system...)
-}
+func (*HostService) Parameters(ctx context.Context) parameters.Parameters {
+	partialParams := []cmdslib.CmdsParameter{
+		{HelpText: "Username to use when interfacing with the system service manager."},
+	}
+	log.Println("host trace:", partialParams)
+	//FIXME: we need to pass all child-params to Reflect
+	// I.e. .Parameters needs for be aggregated and merged into partialPArams
+	// and our params need to be appended|prepended
 
-func Username() parameters.Parameter {
-	return cmdslib.NewParameter(
-		"Username to use when interfacing with the system service manager.",
-	)
+	/*
+		return cmdslib.PrependParameters(ctx,
+			cmdslib.ReflectParameters[HostService](ctx, partialParams),
+			(*PlatformSettings).Parameters(nil, ctx),
+		)
+	*/
+	/*
+		combined := cmdslib.PrependParameters(ctx,
+			partialParams,
+			(*PlatformSettings).Parameters(nil, ctx),
+		)
+		return cmdslib.ReflectParameters[HostService](ctx, combined)
+	*/
+
+	//ours := cmdslib.ReflectParameters[HostService](ctx, partialParams)
+
+	/*
+		transform []CmdsParameter into <-chan Parameter
+		Join with sub.params if any
+		make sure Reflect() is surface level only, we'll expect sub.Params to be correct.
+	*/
+
 }
