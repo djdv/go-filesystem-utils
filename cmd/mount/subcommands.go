@@ -9,7 +9,6 @@ import (
 	"unicode"
 
 	"github.com/djdv/go-filesystem-utils/filesystem"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -55,7 +54,7 @@ func registerHostAPICmds(template *cmds.Command,
 ) subcmdsMap {
 	var (
 		subcommands  = make(subcmdsMap, len(hosts))
-		hostAPIParam = settings.HostAPIParam
+		hostAPIParam = hostAPIParam
 		apiCommand   = new(cmds.Command)
 	)
 	*apiCommand = *template
@@ -86,7 +85,7 @@ func registerHostAPICmds(template *cmds.Command,
 func registerSystemIDCmds(template *cmds.Command, fsIDs []filesystem.ID) subcmdsMap {
 	var (
 		subsystems  = make(subcmdsMap, len(fsIDs))
-		fsIDParam   = settings.FileSystemIDParam
+		fsIDParam   = fileSystemIDParam
 		fsIDCommand = new(cmds.Command)
 	)
 	*fsIDCommand = *template

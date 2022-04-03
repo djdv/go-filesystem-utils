@@ -1,4 +1,4 @@
-package cmdslib
+package runtime
 
 import (
 	"context"
@@ -8,10 +8,12 @@ import (
 	"runtime"
 	"strings"
 
+	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
 type (
+	// TODO: name
 	SettingsConstraint[settingsPtr any] interface {
 		parameters.Settings
 		*settingsPtr
@@ -62,6 +64,42 @@ func (parameter CmdsParameter) Aliases(source parameters.SourceID) []string {
 	}
 }
 
+// TODO: outdated? check comment
+/// Parse will populate `set` using values returned by each `SetFunc`.
+// Value sources are queried in the same order they're provided.
+// If a setting cannot be set by one source,
+// it's reference is relayed to the next `SetFunc`.
+func Parse[set any, setIntf SettingsConstraint[set]](ctx context.Context,
+	setFuncs []SetFunc, parsers ...TypeParser,
+) (*set, error) {
+	settingsPointer := new(set)
+	unsetArgs, generatorErrs, err := ArgsFromSettings[set, setIntf](ctx, settingsPointer)
+	if err != nil {
+		return nil, err
+	}
+
+	const generatorChanCount = 1
+	errChans := make([]<-chan error, 0,
+		generatorChanCount+len(setFuncs),
+	)
+	errChans = append(errChans, generatorErrs)
+
+	for _, setter := range setFuncs {
+		var errChan <-chan error
+		unsetArgs, errChan = setter(ctx, unsetArgs, parsers...)
+		errChans = append(errChans, errChan)
+	}
+
+	var (
+		errs  = CtxMerge(ctx, errChans...)
+		drain = func(Argument) error { return nil }
+	)
+	if err := ForEachOrError(ctx, unsetArgs, errs, drain); err != nil {
+		return nil, fmt.Errorf("Parse encountered an error: %w", err)
+	}
+	return settingsPointer, ctx.Err()
+}
+
 // Either, take in a callback, or return a channel.
 // ^ do the latter, use ForEach within params?
 // TODO: replace ParameterMaker with this.
@@ -72,7 +110,8 @@ func (parameter CmdsParameter) Aliases(source parameters.SourceID) []string {
 // Either take in things like namespace and return params
 // or return chan of partial params for caller to range over and complete.
 func GenerateParameters[settings any, setPtr SettingsConstraint[settings]](ctx context.Context,
-	partialParams []CmdsParameter) parameters.Parameters {
+	partialParams []CmdsParameter,
+) parameters.Parameters {
 	/* TODO re-use docs
 	// NewParameter constructs a parameter using either the provided options,
 	// or a set of defaults (derived from the calling function's name, pkg, and binary name).
@@ -103,11 +142,11 @@ func GenerateParameters[settings any, setPtr SettingsConstraint[settings]](ctx c
 			select {
 			case field, ok := <-fields:
 				if !ok {
-					//log.Println("fields closed")
+					// log.Println("fields closed")
 					return
 				}
 				fieldName := field.Name
-				//log.Println("got field:", fieldName)
+				// log.Println("got field:", fieldName)
 				if param.OptionName == "" {
 					param.OptionName = fieldName
 				}
@@ -124,7 +163,7 @@ func GenerateParameters[settings any, setPtr SettingsConstraint[settings]](ctx c
 				param.envPrefix = envPrefix
 				select {
 				case params <- param:
-					//log.Println("sent param from field:", fieldName)
+					// log.Println("sent param from field:", fieldName)
 				case <-ctx.Done():
 					return
 				}

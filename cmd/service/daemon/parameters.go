@@ -9,27 +9,16 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
 	. "github.com/djdv/go-filesystem-utils/internal/generic"
-	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
 )
 
-type (
-	errCh = <-chan error
-
-	Settings struct {
-		settings.Settings
-	}
-)
-
-func (*Settings) Parameters(ctx context.Context) parameters.Parameters {
-	return (*settings.Settings)(nil).Parameters(ctx)
-}
+type errCh = <-chan error
 
 func parseCmds(ctx context.Context, request *cmds.Request,
 	env cmds.Environment,
 ) (*Settings, cmdsenv.Environment, error) {
-	daemonSettings, err := settings.ParseAll[Settings](ctx, request)
+	daemonSettings, err := settings.Parse[Settings](ctx, request)
 	if err != nil {
 		return nil, nil, err
 	}

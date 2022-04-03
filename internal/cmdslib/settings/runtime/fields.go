@@ -1,4 +1,4 @@
-package cmdslib
+package runtime
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 
 var (
 	errTooFewFields = errors.New("settings struct has more parameters than fields")
-	//errGoldilocks = errors.New("just enough fields")
+	// errGoldilocks = errors.New("just enough fields")
 	errTooManyFields = errors.New("settings struct has more fields than parameters")
 )
 
@@ -27,6 +27,10 @@ type (
 	ParamFields = <-chan ParamField
 )
 
+// TODO: review this.
+// convert to generic and do type check internally like other exported funcs?
+// change to MustX and panic if type isn't ptrstruct?
+// export?
 func generateFields(ctx context.Context, setTyp reflect.Type) StructFields {
 	var (
 		fieldCount = setTyp.NumField()
@@ -92,9 +96,10 @@ func prefixIndex(ctx context.Context, prefix []int, fields StructFields) StructF
 	return prefixed
 }
 
-func BindParameterFields[settings any,
-	setPtr SettingsConstraint[settings]](ctx context.Context) (ParamFields, errCh, error) {
-	typ, err := checkType[settings, setPtr]()
+func BindParameterFields[set any,
+	setPtr SettingsConstraint[set]](ctx context.Context,
+) (ParamFields, errCh, error) {
+	typ, err := checkType[set, setPtr]()
 	if err != nil {
 		return nil, nil, err
 	}

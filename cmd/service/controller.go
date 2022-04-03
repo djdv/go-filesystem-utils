@@ -27,7 +27,7 @@ func registerControllerCommands(subcommands map[string]*cmds.Command,
 				_ cmds.ResponseEmitter, _ cmds.Environment,
 			) (err error) {
 				ctx := request.Context
-				controllerSettings, err := settings.ParseAll[Settings](ctx, request)
+				controllerSettings, err := settings.Parse[Settings](ctx, request)
 				if err != nil {
 					return err
 				}

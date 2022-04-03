@@ -1,16 +1,21 @@
 package mount
 
 import (
+	"context"
 	"errors"
 	"io"
-	"runtime"
+	goruntime "runtime"
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/filesystem"
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/options"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/runtime"
+	. "github.com/djdv/go-filesystem-utils/internal/generic"
+	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
+	"github.com/multiformats/go-multiaddr"
 )
 
 const (
@@ -18,7 +23,38 @@ const (
 
 	ArgumentName        = "targets"
 	ArgumentDescription = "Multiaddr style targets to bind to host."
+
+	hostAPIParam      = "system"
+	fileSystemIDParam = "fs"
 )
+
+type Settings struct {
+	HostAPI   filesystem.API
+	FSID      filesystem.ID
+	IPFSMaddr multiaddr.Multiaddr
+	settings.Root
+}
+
+func (self *Settings) Parameters(ctx context.Context) parameters.Parameters {
+	partialParams := []runtime.CmdsParameter{
+		{
+			OptionName: hostAPIParam,
+			HelpText:   "Host system API to use.",
+		},
+		{
+			OptionName: fileSystemIDParam,
+			HelpText:   "Target FS to use.",
+		},
+		{
+			OptionName: "ipfs",
+			HelpText:   "IPFS multiaddr to use.",
+		},
+	}
+	return CtxJoin(ctx,
+		runtime.GenerateParameters[Settings](ctx, partialParams),
+		(*settings.Root).Parameters(nil, ctx),
+	)
+}
 
 func Command() *cmds.Command {
 	Command := &cmds.Command{
@@ -36,7 +72,7 @@ func Command() *cmds.Command {
 		Type:     Response{},
 		PreRun:   mountPreRun,
 		Run:      mountRun,
-		Options:  options.MustMakeCmdsOptions[Settings](),
+		Options:  settings.MakeOptions[Settings](),
 		PostRun: cmds.PostRunMap{
 			cmds.CLI: formatMount,
 		},
@@ -79,7 +115,7 @@ func mountRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Envi
 
 func examplePaths() []string {
 	// TODO: build constraints
-	if runtime.GOOS == "windows" {
+	if goruntime.GOOS == "windows" {
 		return []string{
 			`I:`,
 			`C:\ipfs`,
@@ -99,7 +135,8 @@ func descriptionString(canonical bool, paths []string) string {
 	for _, path := range paths {
 		if canonical {
 			builder.WriteString("/path")
-			if runtime.GOOS == "windows" {
+			// TODO: build constraints
+			if goruntime.GOOS == "windows" {
 				builder.WriteRune('/')
 			}
 		}

@@ -6,24 +6,24 @@ import (
 	"os"
 	"reflect"
 
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/runtime"
 	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
 // SettingsFromEnvironment uses the process environment as a source for settings values.
-func SettingsFromEnvironment() cmdslib.SetFunc {
-	return func(ctx context.Context, argsToSet cmdslib.Arguments,
-		parsers ...cmdslib.TypeParser,
-	) (cmdslib.Arguments, <-chan error) {
+func SettingsFromEnvironment() runtime.SetFunc {
+	return func(ctx context.Context, argsToSet runtime.Arguments,
+		parsers ...runtime.TypeParser,
+	) (runtime.Arguments, <-chan error) {
 		var (
-			unsetArgs = make(chan cmdslib.Argument, cap(argsToSet))
+			unsetArgs = make(chan runtime.Argument, cap(argsToSet))
 			errs      = make(chan error)
 		)
 		go func() {
 			defer close(unsetArgs)
 			defer close(errs)
-			fn := func(unsetArg cmdslib.Argument) (cmdslib.Argument, error) {
+			fn := func(unsetArg runtime.Argument) (runtime.Argument, error) {
 				provided, err := fromEnv(unsetArg, parsers...)
 				if err != nil {
 					return unsetArg, err
@@ -40,7 +40,7 @@ func SettingsFromEnvironment() cmdslib.SetFunc {
 	}
 }
 
-func fromEnv(arg cmdslib.Argument, parsers ...cmdslib.TypeParser) (provided bool, _ error) {
+func fromEnv(arg runtime.Argument, parsers ...runtime.TypeParser) (provided bool, _ error) {
 	var (
 		envKey         string
 		envStringValue string
@@ -68,7 +68,7 @@ func fromEnv(arg cmdslib.Argument, parsers ...cmdslib.TypeParser) (provided bool
 			envKey, err,
 		)
 	}
-	if err := cmdslib.AssignToArgument(arg, typedEnvVar, parsers...); err != nil {
+	if err := runtime.AssignToArgument(arg, typedEnvVar, parsers...); err != nil {
 		return false, fmt.Errorf(
 			"failed to assign from environment variable `%s` (%v): %w",
 			envKey, typedEnvVar, err,
@@ -79,7 +79,7 @@ func fromEnv(arg cmdslib.Argument, parsers ...cmdslib.TypeParser) (provided bool
 
 func assertEnvValue(goValueRef interface{}, envValue string) (interface{}, error) {
 	leftType := reflect.TypeOf(goValueRef).Elem()
-	reflectValue, err := cmdslib.ParseString(leftType, envValue)
+	reflectValue, err := runtime.ParseString(leftType, envValue)
 	if err != nil {
 		err = fmt.Errorf("could not assert value (for reference %T): %w ",
 			goValueRef, err,

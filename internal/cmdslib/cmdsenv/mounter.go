@@ -14,7 +14,6 @@ import (
 	ipfs "github.com/djdv/go-filesystem-utils/filesystem/ipfscore"
 	"github.com/djdv/go-filesystem-utils/filesystem/keyfs"
 	"github.com/djdv/go-filesystem-utils/filesystem/pinfs"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	ipfsconfig "github.com/ipfs/go-ipfs-config"
 	ipfsconfigfile "github.com/ipfs/go-ipfs-config/serialize"
@@ -61,101 +60,105 @@ type (
 )
 
 func (env *mounter) Mount(request *cmds.Request) ([]filesystem.MountPoint, error) {
-	ctx := env.Context
-	mountSettings, err := settings.ParseAll[settings.MountSettings](ctx, request)
-	if err != nil {
-		return nil, err
-	}
+	return nil, errors.New("TODO: port in progress")
+	/*
+		ctx := env.Context
 
-	var (
-		args         = request.Arguments
-		targetMaddrs = make([]multiaddr.Multiaddr, len(args))
-	)
-	for i, target := range args {
-		maddr, err := multiaddr.NewMultiaddr(target)
+		mountSettings, err := settings.Parse[settings.MountSettings](ctx, request)
 		if err != nil {
 			return nil, err
 		}
-		targetMaddrs[i] = maddr
-	}
 
-	// TODO: use a dynamic default value, the one most appropriate for this platform
-	var (
-		host = mountSettings.HostAPI
-		fsid = mountSettings.FSID
-	)
-	if host == 0 {
-		host = filesystem.Fuse
-	}
-	if fsid == 0 {
-		fsid = filesystem.IPFS
-	}
-
-	var (
-		// TODO: Reconsider how to distinguish sets.
-		// We need some kind interface for this.
-		// myfs.uuid(), myfs.hashfn(somethingUnique), etc.
-		// Anything to split up things like IPFS targets used
-		// with the host API; but generic, not strictly a maddr.
-		fileSystem fs.FS
-		identifier string
-	)
-	switch fsid {
-	case filesystem.IPFS,
-		filesystem.IPNS,
-		filesystem.PinFS,
-		filesystem.KeyFS:
 		var (
-			ipfsMaddr = mountSettings.IPFSMaddr
-			err       error
+			args         = request.Arguments
+			targetMaddrs = make([]multiaddr.Multiaddr, len(args))
 		)
-		if ipfsMaddr == nil {
-			if ipfsMaddr, err = ipfsMaddrFromConfig(); err != nil {
+		for i, target := range args {
+			maddr, err := multiaddr.NewMultiaddr(target)
+			if err != nil {
 				return nil, err
 			}
+			targetMaddrs[i] = maddr
 		}
-		identifier = ipfsMaddr.String() // delineate via the node maddr
-		if fileSystem, err = env.getIPFS(fsid, ipfsMaddr); err != nil {
-			return nil, err
-		}
-	default:
-		return nil, fmt.Errorf("TODO: real msg - fsid \"%s\" not yet supported", fsid)
-	}
 
-	var (
-		mounter         filesystem.Mounter
-		mountIdentifier = binderPair{fsid: fsid, identifier: identifier}
-	)
-	switch host {
-	case filesystem.Fuse:
-		var err error
-		if mounter, err = env.getFuse(mountIdentifier, fileSystem); err != nil {
-			return nil, err
+		// TODO: use a dynamic default value, the one most appropriate for this platform
+		var (
+			host = mountSettings.HostAPI
+			fsid = mountSettings.FSID
+		)
+		if host == 0 {
+			host = filesystem.Fuse
 		}
-	default:
-		return nil, fmt.Errorf("TODO: real msg - host API \"%s\" not yet supported", host)
-	}
+		if fsid == 0 {
+			fsid = filesystem.IPFS
+		}
 
-	mountPoints := make([]filesystem.MountPoint, 0, len(targetMaddrs))
-	for _, target := range targetMaddrs {
-		mountPoint, err := mounter.Mount(env.Context, target)
-		if err != nil {
-			for _, mountPoint := range mountPoints {
-				if unmountErr := mountPoint.Close(); unmountErr != nil {
-					err = fmt.Errorf("%w - %s", err, unmountErr)
+		var (
+			// TODO: Reconsider how to distinguish sets.
+			// We need some kind interface for this.
+			// myfs.uuid(), myfs.hashfn(somethingUnique), etc.
+			// Anything to split up things like IPFS targets used
+			// with the host API; but generic, not strictly a maddr.
+			fileSystem fs.FS
+			identifier string
+		)
+		switch fsid {
+		case filesystem.IPFS,
+			filesystem.IPNS,
+			filesystem.PinFS,
+			filesystem.KeyFS:
+			var (
+				ipfsMaddr = mountSettings.IPFSMaddr
+				err       error
+			)
+			if ipfsMaddr == nil {
+				if ipfsMaddr, err = ipfsMaddrFromConfig(); err != nil {
+					return nil, err
 				}
 			}
-			return nil, err
+			identifier = ipfsMaddr.String() // delineate via the node maddr
+			if fileSystem, err = env.getIPFS(fsid, ipfsMaddr); err != nil {
+				return nil, err
+			}
+		default:
+			return nil, fmt.Errorf("TODO: real msg - fsid \"%s\" not yet supported", fsid)
 		}
-		mountPoints = append(mountPoints, mountPoint)
-	}
 
-	// Only store these after success mounting above.
-	for i, mountPoint := range mountPoints {
-		env.hostInstances.Add(targetMaddrs[i], mountPoint)
-	}
+		var (
+			mounter         filesystem.Mounter
+			mountIdentifier = binderPair{fsid: fsid, identifier: identifier}
+		)
+		switch host {
+		case filesystem.Fuse:
+			var err error
+			if mounter, err = env.getFuse(mountIdentifier, fileSystem); err != nil {
+				return nil, err
+			}
+		default:
+			return nil, fmt.Errorf("TODO: real msg - host API \"%s\" not yet supported", host)
+		}
 
-	return mountPoints, nil
+		mountPoints := make([]filesystem.MountPoint, 0, len(targetMaddrs))
+		for _, target := range targetMaddrs {
+			mountPoint, err := mounter.Mount(env.Context, target)
+			if err != nil {
+				for _, mountPoint := range mountPoints {
+					if unmountErr := mountPoint.Close(); unmountErr != nil {
+						err = fmt.Errorf("%w - %s", err, unmountErr)
+					}
+				}
+				return nil, err
+			}
+			mountPoints = append(mountPoints, mountPoint)
+		}
+
+		// Only store these after success mounting above.
+		for i, mountPoint := range mountPoints {
+			env.hostInstances.Add(targetMaddrs[i], mountPoint)
+		}
+
+		return mountPoints, nil
+	*/
 }
 
 func ipfsMaddrFromConfig() (multiaddr.Multiaddr, error) {
@@ -335,31 +338,46 @@ func (m *instanceMap) Close(maddr multiaddr.Multiaddr) error {
 
 // TODO: channel outputs
 func (env *mounter) Unmount(request *cmds.Request) ([]multiaddr.Multiaddr, error) {
-	ctx := request.Context
-	unmountSettings, err := settings.ParseAll[settings.UnmountSettings](ctx, request)
-	if err != nil {
-		return nil, err
-	}
-
-	var (
-		args         = request.Arguments
-		targetMaddrs = make([]multiaddr.Multiaddr, len(args))
-	)
-	for i, target := range args {
-		maddr, err := multiaddr.NewMultiaddr(target)
+	return nil, errors.New("TODO: port in progress")
+	/*
+		ctx := request.Context
+		unmountSettings, err := settings.Parse[settings.UnmountSettings](ctx, request)
 		if err != nil {
 			return nil, err
 		}
-		targetMaddrs[i] = maddr
-	}
 
-	closed := make([]multiaddr.Multiaddr, 0, len(targetMaddrs))
-	if unmountSettings.All {
-		// TODO: alloc once
-		closed = make([]multiaddr.Multiaddr, 0, len(env.hostInstances))
-		// TODO: [port] make sure to prevent calling --all with args too
-		for _, mountPoint := range env.hostInstances {
-			target := mountPoint.Target()
+		var (
+			args         = request.Arguments
+			targetMaddrs = make([]multiaddr.Multiaddr, len(args))
+		)
+		for i, target := range args {
+			maddr, err := multiaddr.NewMultiaddr(target)
+			if err != nil {
+				return nil, err
+			}
+			targetMaddrs[i] = maddr
+		}
+
+		closed := make([]multiaddr.Multiaddr, 0, len(targetMaddrs))
+		if unmountSettings.All {
+			// TODO: alloc once
+			closed = make([]multiaddr.Multiaddr, 0, len(env.hostInstances))
+			// TODO: [port] make sure to prevent calling --all with args too
+			for _, mountPoint := range env.hostInstances {
+				target := mountPoint.Target()
+				if cErr := env.hostInstances.Close(target); cErr != nil {
+					if err == nil {
+						err = fmt.Errorf("could not close: \"%s\" - %w", target, cErr)
+					} else {
+						err = fmt.Errorf("%w\n\t\"%s\" - %s", err, target, cErr)
+					}
+					continue
+				}
+				closed = append(closed, target)
+			}
+			return closed, err
+		}
+		for _, target := range targetMaddrs {
 			if cErr := env.hostInstances.Close(target); cErr != nil {
 				if err == nil {
 					err = fmt.Errorf("could not close: \"%s\" - %w", target, cErr)
@@ -370,21 +388,9 @@ func (env *mounter) Unmount(request *cmds.Request) ([]multiaddr.Multiaddr, error
 			}
 			closed = append(closed, target)
 		}
-		return closed, err
-	}
-	for _, target := range targetMaddrs {
-		if cErr := env.hostInstances.Close(target); cErr != nil {
-			if err == nil {
-				err = fmt.Errorf("could not close: \"%s\" - %w", target, cErr)
-			} else {
-				err = fmt.Errorf("%w\n\t\"%s\" - %s", err, target, cErr)
-			}
-			continue
-		}
-		closed = append(closed, target)
-	}
 
-	return closed, err
+		return closed, err
+	*/
 }
 
 func (env *mounter) List() (<-chan multiaddr.Multiaddr, error) {

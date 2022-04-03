@@ -2,12 +2,14 @@ package daemon
 
 import (
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/options"
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
 const Name = "daemon"
+
+// TODO: do we need anything?
+type Settings = settings.Root
 
 // Command returns an instance of the `daemon` command.
 func Command() *cmds.Command {
@@ -18,7 +20,7 @@ func Command() *cmds.Command {
 		NoRemote: true,
 		PreRun:   daemonPreRun,
 		Run:      daemonRun,
-		Options:  options.MustMakeCmdsOptions[Settings](),
+		Options:  settings.MakeOptions[Settings](),
 		Encoders: settings.CmdsEncoders,
 		Type:     Response{},
 		Subcommands: map[string]*cmds.Command{

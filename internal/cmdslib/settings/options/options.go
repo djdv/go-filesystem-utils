@@ -6,7 +6,7 @@ import (
 	"log"
 	"reflect"
 
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/runtime"
 	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
@@ -36,8 +36,6 @@ type (
 
 	cmdsOptionMakerOpt struct{ OptionMaker }
 	cmdsBuiltinOpt     bool
-
-	errCh = <-chan error
 )
 
 func (optionMakers optionMakers) Index(typ reflect.Type) *OptionMaker {
@@ -76,11 +74,11 @@ func parseCmdsOptionOptions(options ...CmdsOptionOption) cmdsOptionSettings {
 // and will panic if the provided type does not conform to the expectations of this library.
 //
 // NOTE: The cmds-lib panics when registering duplicate options.
-// In order to support subcommands/subsettings, this function
+// In order to support subcommands, this function
 // skips any embedded (assumed super-)settings structs.
 // (The expectation is that a parent command has already registered them.)
-func MustMakeCmdsOptions[settings any,
-	setPtr cmdslib.SettingsConstraint[settings]](options ...CmdsOptionOption,
+func MustMakeCmdsOptions[set any,
+	setPtr runtime.SettingsConstraint[set]](options ...CmdsOptionOption,
 ) []cmds.Option {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -88,7 +86,7 @@ func MustMakeCmdsOptions[settings any,
 	// TODO: Change this to avoid `expandFields` in the first place.
 	// Rather than filtering it out.
 	// We need to do the bidning ourselves too / refactor into function both ops can use
-	optionFields, generatorErrs, err := cmdslib.BindParameterFields[settings, setPtr](ctx)
+	optionFields, generatorErrs, err := runtime.BindParameterFields[set, setPtr](ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -110,8 +108,8 @@ func MustMakeCmdsOptions[settings any,
 		constructorSettings = parseCmdsOptionOptions(options...)
 
 		makers  = constructorSettings.customMakers
-		makeOpt = func(field cmdslib.ParamField) error {
-			//log.Println("reduced:", field.StructField.Name)
+		makeOpt = func(field runtime.ParamField) error {
+			// log.Println("reduced:", field.StructField.Name)
 			opt := makeCmdsOption(field.StructField, field.Parameter, makers)
 			cmdsOptions = append(cmdsOptions, opt)
 			return nil
@@ -140,11 +138,11 @@ func builtinOptions() []cmds.Option {
 	}
 }
 
-func onlyRootOptions(ctx context.Context, params cmdslib.ParamFields) cmdslib.ParamFields {
-	relay := make(chan cmdslib.ParamField, cap(params))
+func onlyRootOptions(ctx context.Context, params runtime.ParamFields) runtime.ParamFields {
+	relay := make(chan runtime.ParamField, cap(params))
 	go func() {
 		defer close(relay)
-		relayRootFields := func(param cmdslib.ParamField) error {
+		relayRootFields := func(param runtime.ParamField) error {
 			if len(param.StructField.Index) > 1 {
 				log.Println("filtering non-root:", param.StructField.Name)
 				return nil
@@ -166,7 +164,7 @@ func makeCmdsOption(field reflect.StructField, parameter parameters.Parameter, m
 		err := fmt.Errorf("%w:"+
 			" refusing to create option for unassignable field"+
 			" - `%s` is not exported",
-			cmdslib.ErrUnassignable,
+			runtime.ErrUnassignable,
 			field.Name,
 		)
 		panic(err)
@@ -188,7 +186,7 @@ func makeCmdsOption(field reflect.StructField, parameter parameters.Parameter, m
 	err := fmt.Errorf("%w:"+
 		" can't determine which option constructor to use for `%s`"+
 		" (type %v with no custom handler)",
-		cmdslib.ErrUnexpectedType,
+		runtime.ErrUnexpectedType,
 		field.Name,
 		typ,
 	)

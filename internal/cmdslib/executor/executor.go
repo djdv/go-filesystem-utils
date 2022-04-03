@@ -32,7 +32,7 @@ func MakeExecutor(request *cmds.Request, env interface{}) (cmds.Executor, error)
 
 	// Everything else connects as a client.
 	ctx := request.Context
-	execSettings, err := settings.ParseAll[settings.Settings](ctx, request)
+	execSettings, err := settings.Parse[settings.Root](ctx, request)
 	if err != nil {
 		return nil, err
 	}

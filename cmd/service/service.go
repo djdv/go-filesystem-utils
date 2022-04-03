@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,8 +10,9 @@ import (
 	"github.com/djdv/go-filesystem-utils/cmd/service/host"
 	"github.com/djdv/go-filesystem-utils/cmd/service/status"
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/options"
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
+	. "github.com/djdv/go-filesystem-utils/internal/generic"
+	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
 	manet "github.com/multiformats/go-multiaddr/net"
@@ -18,13 +20,28 @@ import (
 
 const Name = "service"
 
+type (
+	Host     = host.Settings
+	Settings struct {
+		Host
+		settings.Root
+	}
+)
+
+func (*Settings) Parameters(ctx context.Context) parameters.Parameters {
+	return CtxJoin(ctx,
+		(*host.Settings).Parameters(nil, ctx),
+		(*settings.Root).Parameters(nil, ctx),
+	)
+}
+
 var Command = &cmds.Command{
 	Helptext: cmds.HelpText{
 		Tagline: "Interact with the host system's service manager",
 	},
 	NoRemote: true,
 	Run:      serviceRun,
-	Options:  options.MustMakeCmdsOptions[Settings](),
+	Options:  settings.MakeOptions[Settings](),
 	Encoders: settings.CmdsEncoders,
 	Type:     daemon.Response{},
 	Subcommands: func() (subCmds map[string]*cmds.Command) {
@@ -55,7 +72,7 @@ func serviceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.En
 	}
 
 	ctx := request.Context
-	serviceSettings, err := settings.ParseAll[Settings](ctx, request)
+	serviceSettings, err := settings.Parse[Settings](ctx, request)
 	if err != nil {
 		return err
 	}

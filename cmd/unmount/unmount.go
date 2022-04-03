@@ -1,6 +1,7 @@
 package unmount
 
 import (
+	"context"
 	"errors"
 	"io"
 
@@ -8,7 +9,9 @@ import (
 	"github.com/djdv/go-filesystem-utils/filesystem"
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/options"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
+	. "github.com/djdv/go-filesystem-utils/internal/generic"
+	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -16,7 +19,18 @@ const (
 	Name = "unmount"
 )
 
-// TODO: extend mount settings; --all
+type Settings struct {
+	All bool
+	mount.Settings
+	settings.Root
+}
+
+func (self *Settings) Parameters(ctx context.Context) parameters.Parameters {
+	return CtxMerge(ctx,
+		(*mount.Settings)(nil).Parameters(ctx),
+		(*settings.Root)(nil).Parameters(ctx),
+	)
+}
 
 var Command = &cmds.Command{
 	Arguments: []cmds.Argument{
@@ -31,7 +45,7 @@ var Command = &cmds.Command{
 	Type:     Response{},
 	PreRun:   unmountPreRun,
 	Run:      unmountRun,
-	Options:  options.MustMakeCmdsOptions[Settings](),
+	Options:  settings.MakeOptions[Settings](),
 	PostRun: cmds.PostRunMap{
 		cmds.CLI: formatUnmount,
 	},

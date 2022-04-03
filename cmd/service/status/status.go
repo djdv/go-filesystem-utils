@@ -1,12 +1,15 @@
 package status
 
 import (
+	"context"
 	"errors"
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/service/host"
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
+	. "github.com/djdv/go-filesystem-utils/internal/generic"
+	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
 	"github.com/multiformats/go-multiaddr"
@@ -15,6 +18,12 @@ import (
 const Name = "status"
 
 type (
+	Host     = host.Settings
+	Settings struct {
+		Host
+		settings.Root
+	}
+
 	Response struct {
 		SystemController
 		Listeners []multiaddr.Multiaddr
@@ -24,6 +33,13 @@ type (
 		service.Status
 	}
 )
+
+func (*Settings) Parameters(ctx context.Context) parameters.Parameters {
+	return CtxJoin(ctx,
+		(*host.Settings).Parameters(nil, ctx),
+		(*settings.Root).Parameters(nil, ctx),
+	)
+}
 
 func (r *Response) String() string {
 	var output strings.Builder
@@ -82,7 +98,7 @@ var Command = &cmds.Command{
 	Type:     Response{},
 	Run: func(request *cmds.Request, emitter cmds.ResponseEmitter, _ cmds.Environment) error {
 		ctx := request.Context
-		statusSettings, err := settings.ParseAll[Settings](ctx, request)
+		statusSettings, err := settings.Parse[Settings](ctx, request)
 		if err != nil {
 			return err
 		}

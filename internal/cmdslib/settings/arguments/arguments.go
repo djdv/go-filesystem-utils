@@ -4,17 +4,17 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/runtime"
 	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
 // SettingsFromCmds uses a cmds.Request as a source for settings values.
-func SettingsFromCmds(request *cmds.Request) cmdslib.SetFunc {
+func SettingsFromCmds(request *cmds.Request) runtime.SetFunc {
 	return func(ctx context.Context,
-		argsToSet cmdslib.Arguments, parsers ...cmdslib.TypeParser,
-	) (cmdslib.Arguments, <-chan error) {
+		argsToSet runtime.Arguments, parsers ...runtime.TypeParser,
+	) (runtime.Arguments, <-chan error) {
 		options := request.Options
 		if !hasUserDefinedOptions(options) {
 			// If we have nothing to process,
@@ -25,13 +25,13 @@ func SettingsFromCmds(request *cmds.Request) cmdslib.SetFunc {
 		}
 
 		var (
-			unsetArgs = make(chan cmdslib.Argument, cap(argsToSet))
+			unsetArgs = make(chan runtime.Argument, cap(argsToSet))
 			errs      = make(chan error)
 		)
 		go func() {
 			defer close(unsetArgs)
 			defer close(errs)
-			fn := func(unsetArg cmdslib.Argument) (cmdslib.Argument, error) {
+			fn := func(unsetArg runtime.Argument) (runtime.Argument, error) {
 				provided, err := fromRequest(unsetArg, options, parsers...)
 				if err != nil {
 					return unsetArg, err
@@ -48,7 +48,7 @@ func SettingsFromCmds(request *cmds.Request) cmdslib.SetFunc {
 	}
 }
 
-func fromRequest(arg cmdslib.Argument, options cmds.OptMap, parsers ...cmdslib.TypeParser) (provided bool, _ error) {
+func fromRequest(arg runtime.Argument, options cmds.OptMap, parsers ...runtime.TypeParser) (provided bool, _ error) {
 	var (
 		cmdsArg interface{}
 		// NOTE: The cmds-libs already stores values
@@ -57,7 +57,7 @@ func fromRequest(arg cmdslib.Argument, options cmds.OptMap, parsers ...cmdslib.T
 		commandlineName = arg.Name(parameters.CommandLine)
 	)
 	if cmdsArg, provided = options[commandlineName]; provided {
-		if err := cmdslib.AssignToArgument(arg, cmdsArg, parsers...); err != nil {
+		if err := runtime.AssignToArgument(arg, cmdsArg, parsers...); err != nil {
 			return false, fmt.Errorf(
 				"parameter `%s`: couldn't assign value: %w",
 				commandlineName, err)

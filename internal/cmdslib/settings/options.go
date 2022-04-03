@@ -6,16 +6,14 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/filesystem"
 	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/options"
+	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/runtime"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
 )
 
-func MakeOptions[settings any](opts ...options.CmdsOptionOption) []cmds.Option {
-	return options.MustMakeCmdsOptions[Settings](append(optionMakers(), opts...)...)
-	// return options.MustMakeCmdsOptions(empty, append(optionMakers(), options...)...)
-}
-
-func optionMakers() []options.CmdsOptionOption {
+func MakeOptions[settings any,
+	setPtr runtime.SettingsConstraint[settings]](opts ...options.CmdsOptionOption,
+) []cmds.Option {
 	var (
 		makers = []options.OptionMaker{
 			{
@@ -35,10 +33,15 @@ func optionMakers() []options.CmdsOptionOption {
 				MakeOptionFunc: cmds.StringOption,
 			},
 		}
-		opts = make([]options.CmdsOptionOption, len(makers))
+		makerOpts = func() []options.CmdsOptionOption {
+			makerOpts := make([]options.CmdsOptionOption, len(makers))
+			for i, maker := range makers {
+				makerOpts[i] = options.WithMaker(maker)
+			}
+			return makerOpts
+		}()
 	)
-	for i, maker := range makers {
-		opts[i] = options.WithMaker(maker)
-	}
-	return opts
+
+	opts = append(makerOpts, opts...)
+	return options.MustMakeCmdsOptions[settings, setPtr](opts...)
 }
