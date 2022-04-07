@@ -95,10 +95,9 @@ func prefixIndex(ctx context.Context, prefix []int, fields StructFields) StructF
 	return prefixed
 }
 
-func BindParameterFields[set any,
-	setPtr SettingsConstraint[set]](ctx context.Context,
+func BindParameterFields[setPtr SettingsConstraint[set], set any](ctx context.Context,
 ) (ParamFields, errCh, error) {
-	typ, err := checkType[set, setPtr]()
+	typ, err := checkType[set]()
 	if err != nil {
 		return nil, nil, err
 	}

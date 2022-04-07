@@ -12,7 +12,7 @@ import (
 )
 
 func MakeOptions[settings any,
-	setPtr runtime.SettingsConstraint[settings]](opts ...options.CmdsOptionOption,
+	setPtr runtime.SettingsConstraint[settings]](opts ...options.ConstructorOption,
 ) []cmds.Option {
 	var (
 		makers = []options.OptionMaker{
@@ -33,8 +33,8 @@ func MakeOptions[settings any,
 				MakeOptionFunc: cmds.StringOption,
 			},
 		}
-		makerOpts = func() []options.CmdsOptionOption {
-			makerOpts := make([]options.CmdsOptionOption, len(makers))
+		makerOpts = func() []options.ConstructorOption {
+			makerOpts := make([]options.ConstructorOption, len(makers))
 			for i, maker := range makers {
 				makerOpts[i] = options.WithMaker(maker)
 			}
@@ -43,5 +43,5 @@ func MakeOptions[settings any,
 	)
 
 	opts = append(makerOpts, opts...)
-	return options.MustMakeCmdsOptions[settings, setPtr](opts...)
+	return options.MustMakeCmdsOptions[setPtr](opts...)
 }

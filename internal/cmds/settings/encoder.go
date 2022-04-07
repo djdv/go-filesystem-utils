@@ -1,22 +1,14 @@
 package settings
 
 import (
-	"context"
 	"fmt"
 	"io"
-	"reflect"
-	"time"
 
-	"github.com/djdv/go-filesystem-utils/filesystem"
-	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/arguments"
-	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/environment"
-	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
 	cmds "github.com/ipfs/go-ipfs-cmds"
-	"github.com/multiformats/go-multiaddr"
 )
 
 var (
-	CmdsEncoders = cmds.EncoderMap{
+	Encoders = cmds.EncoderMap{
 		cmds.XML:  cmds.Encoders[cmds.XML],
 		cmds.JSON: cmds.Encoders[cmds.JSON],
 		cmds.Text: func(*cmds.Request) func(io.Writer) cmds.Encoder {
@@ -74,47 +66,4 @@ func (e *textEncoder) Encode(v interface{}) error {
 		e.prefixUnit = true
 	}
 	return nil
-}
-
-func Parse[settings any, setIntf runtime.SettingsConstraint[settings]](ctx context.Context,
-	request *cmds.Request,
-) (*settings, error) {
-	var (
-		typeHandlers = handlers()
-		sources      = []runtime.SetFunc{
-			arguments.SettingsFromCmds(request),
-			environment.SettingsFromEnvironment(),
-		}
-	)
-	return runtime.Parse[settings, setIntf](ctx, sources, typeHandlers...)
-}
-
-// TODO: Name.
-func handlers() []runtime.TypeParser {
-	return []runtime.TypeParser{
-		{
-			Type: reflect.TypeOf((*multiaddr.Multiaddr)(nil)).Elem(),
-			ParseFunc: func(argument string) (interface{}, error) {
-				return multiaddr.NewMultiaddr(argument)
-			},
-		},
-		{
-			Type: reflect.TypeOf((*time.Duration)(nil)).Elem(),
-			ParseFunc: func(argument string) (interface{}, error) {
-				return time.ParseDuration(argument)
-			},
-		},
-		{
-			Type: reflect.TypeOf((*filesystem.ID)(nil)).Elem(),
-			ParseFunc: func(argument string) (interface{}, error) {
-				return filesystem.StringToID(argument)
-			},
-		},
-		{
-			Type: reflect.TypeOf((*filesystem.API)(nil)).Elem(),
-			ParseFunc: func(argument string) (interface{}, error) {
-				return filesystem.StringToAPI(argument)
-			},
-		},
-	}
 }

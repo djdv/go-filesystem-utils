@@ -26,8 +26,7 @@ type (
 	}
 	optionMakers []OptionMaker
 
-	// CmdsOptionOption is a funny name used for the option constructor's own options.
-	CmdsOptionOption   interface{ apply(*cmdsOptionSettings) }
+	ConstructorOption  interface{ apply(*cmdsOptionSettings) }
 	cmdsOptionSettings struct {
 		includeBuiltin bool
 		customMakers   optionMakers
@@ -48,19 +47,19 @@ func (optionMakers optionMakers) Index(typ reflect.Type) *OptionMaker {
 
 // WithBuiltin includes the cmds-lib native options (such as `--help`, `--timeout`, and more)
 // in the returned options.
-func WithBuiltin(b bool) CmdsOptionOption              { return cmdsBuiltinOpt(b) }
+func WithBuiltin(b bool) ConstructorOption             { return cmdsBuiltinOpt(b) }
 func (b cmdsBuiltinOpt) apply(set *cmdsOptionSettings) { set.includeBuiltin = bool(b) }
 
 // WithMaker supplies the Settings parser
 // with a constructor for a non-built-in type.
 // (This option may be provided multiple times for multiple types.)
-func WithMaker(maker OptionMaker) CmdsOptionOption { return cmdsOptionMakerOpt{maker} }
+func WithMaker(maker OptionMaker) ConstructorOption { return cmdsOptionMakerOpt{maker} }
 
 func (maker cmdsOptionMakerOpt) apply(set *cmdsOptionSettings) {
 	set.customMakers = append(set.customMakers, maker.OptionMaker)
 }
 
-func parseCmdsOptionOptions(options ...CmdsOptionOption) cmdsOptionSettings {
+func parseCmdsOptionOptions(options ...ConstructorOption) cmdsOptionSettings {
 	var set cmdsOptionSettings
 	for _, opt := range options {
 		opt.apply(&set)
@@ -76,21 +75,19 @@ func parseCmdsOptionOptions(options ...CmdsOptionOption) cmdsOptionSettings {
 // In order to support subcommands, this function
 // skips any embedded (assumed super-)settings structs.
 // (The expectation is that a parent command has already registered them.)
-func MustMakeCmdsOptions[set any,
-	setPtr runtime.SettingsConstraint[set]](options ...CmdsOptionOption,
-) []cmds.Option {
+func MustMakeCmdsOptions[setPtr runtime.SettingsConstraint[set],
+	set any](options ...ConstructorOption) []cmds.Option {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// TODO: Change this to avoid `expandFields` in the first place.
 	// Rather than filtering it out.
-	// We need to do the bidning ourselves too / refactor into function both ops can use
-	optionFields, generatorErrs, err := runtime.BindParameterFields[set, setPtr](ctx)
+	// We need to do the binding ourselves too / refactor into function both ops can use
+	optionFields, generatorErrs, err := runtime.BindParameterFields[setPtr](ctx)
 	if err != nil {
 		panic(err)
 	}
 	reducedFields := onlyRootOptions(ctx, optionFields)
-	//reducedFields := optionFields
 
 	// TODO: The generator should produce a 3 value struct
 	// field, param, paramindex
@@ -98,7 +95,7 @@ func MustMakeCmdsOptions[set any,
 	// and blit into it
 	// or just append and sort-by-index
 	// before calling makeCmdsOption on them
-	// (cmds-lib preserves options as they're registered)
+	// (cmds-lib preserves/prints options in the order they're registered)
 
 	var (
 		cmdsOptions,
@@ -123,8 +120,7 @@ func MustMakeCmdsOptions[set any,
 		panic(err)
 	}
 
-	cmdsOptions = append(cmdsOptions, maybeBuiltin...)
-	return cmdsOptions
+	return append(cmdsOptions, maybeBuiltin...)
 }
 
 func builtinOptions() []cmds.Option {
@@ -137,6 +133,9 @@ func builtinOptions() []cmds.Option {
 	}
 }
 
+// TODO: when we hit a non-root just exit
+// input needs to be canceled when we exit too
+// ^ wrap this {ctx;gen;roots;cancel}
 func onlyRootOptions(ctx context.Context, params runtime.ParamFields) runtime.ParamFields {
 	relay := make(chan runtime.ParamField, cap(params))
 	go func() {

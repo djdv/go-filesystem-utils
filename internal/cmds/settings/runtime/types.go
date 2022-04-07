@@ -20,8 +20,9 @@ var (
 	errMultiPointer   = errors.New("multiple layers of indirection (not supported)")
 )
 
-func ArgsFromSettings[settings any, setPtr SettingsConstraint[settings]](ctx context.Context, set setPtr) (Arguments, errCh, error) {
-	fields, fieldsErrs, err := BindParameterFields[settings, setPtr](ctx)
+func ArgsFromSettings[setPtr SettingsConstraint[settings], settings any](ctx context.Context,
+	set setPtr) (Arguments, errCh, error) {
+	fields, fieldsErrs, err := BindParameterFields[setPtr](ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -62,26 +63,18 @@ func ArgsFromSettings[settings any, setPtr SettingsConstraint[settings]](ctx con
 	return arguments, CtxMerge(ctx, fieldsErrs, errs), nil
 }
 
-func checkType[settings any, structPtr SettingsConstraint[settings]]() (reflect.Type, error) {
-	var (
-		pointerType = reflect.TypeOf((*structPtr)(nil)).Elem()
-		makeErr     = func() error {
-			var instance structPtr
-			return fmt.Errorf("%w:"+
-				" got: %T"+
-				" want: pointer to struct",
-				ErrUnexpectedType,
-				instance,
-			)
-		}
-	)
-	if pointerType.Kind() != reflect.Ptr {
-		return nil, makeErr()
+func checkType[settings any]() (reflect.Type, error) {
+	typ := reflect.TypeOf((*settings)(nil)).Elem()
+	if kind := typ.Kind(); kind != reflect.Struct {
+		err := fmt.Errorf("%w:"+
+			" got: `%s`"+
+			" want: `struct`",
+			ErrUnexpectedType,
+			kind,
+		)
+		return nil, err
 	}
-	if structType := pointerType.Elem(); structType.Kind() == reflect.Struct {
-		return structType, nil
-	}
-	return nil, makeErr()
+	return typ, nil
 }
 
 func referenceFromField(field reflect.StructField, fieldValue reflect.Value) (interface{}, error) {

@@ -1,4 +1,4 @@
-package cmdslib_test
+package runtime_test
 
 import (
 	"github.com/djdv/go-filesystem-utils/internal/parameters"

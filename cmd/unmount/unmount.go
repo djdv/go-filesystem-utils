@@ -27,7 +27,7 @@ type Settings struct {
 	settings.Root
 }
 
-func (self *Settings) Parameters(ctx context.Context) parameters.Parameters {
+func (*Settings) Parameters(ctx context.Context) parameters.Parameters {
 	partialParams := []runtime.CmdsParameter{
 		{
 			OptionAliases: []string{"a"},
@@ -35,7 +35,7 @@ func (self *Settings) Parameters(ctx context.Context) parameters.Parameters {
 		},
 	}
 	return CtxMerge(ctx,
-		runtime.GenerateParameters[Settings](ctx, partialParams),
+		runtime.MustMakeParameters[*Settings](ctx, partialParams),
 		(*mount.Settings)(nil).Parameters(ctx),
 		(*settings.Root)(nil).Parameters(ctx),
 	)

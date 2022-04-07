@@ -19,7 +19,7 @@ func Command() *cmds.Command {
 			Tagline: "List file systems bound to the host.",
 		},
 		NoLocal:  true, // Always communicate with the file system service (as a client).
-		Encoders: settings.CmdsEncoders,
+		Encoders: settings.Encoders,
 		Type:     Response{},
 		PreRun:   listPreRun,
 		Run:      listRun,

@@ -140,28 +140,17 @@ func (*embeddedStructSettings) Parameters() parameters.Parameters {
 
 // Various invalid declarations/combinations.
 type (
-	notAStruct      bool
-	settingsTagless struct {
-		TestField  bool
-		TestField2 bool
-	}
-	settingsMissingSettingsTag struct {
-		TestField  bool `parameters:"notSettings"`
-		TestField2 bool
-	}
-	settingsNonStandardTag struct {
-		TestField  bool `parameters:"""settings"""`
-		TestField2 bool
-	}
+	notAStruct    bool
 	settingsShort struct {
-		TestField bool `parameters:"settings"`
+		TestField bool
 	}
+	// ^ TODO: long
 	settingsUnassignable struct {
-		testField  bool `parameters:"settings"`
+		testField  bool
 		testField2 bool
 	}
 	settingsUnhandledType struct {
-		TestField  interface{} `parameters:"settings"`
+		TestField  interface{}
 		TestField2 *interface{}
 	}
 )
@@ -177,15 +166,10 @@ func invalidParamSet() []parameters.Parameter {
 	}
 }
 
-func (*settingsTagless) Parameters() parameters.Parameters { return invalidParamSet() }
-func (*settingsMissingSettingsTag) Parameters() parameters.Parameters {
-	return invalidParamSet()
-}
-func (*settingsNonStandardTag) Parameters() parameters.Parameters { return invalidParamSet() }
-func (*settingsShort) Parameters() parameters.Parameters          { return invalidParamSet() }
-func (*settingsUnassignable) Parameters() parameters.Parameters   { return invalidParamSet() }
-func (*settingsUnhandledType) Parameters() parameters.Parameters  { return invalidParamSet() }
-func (notAStruct) Parameters() parameters.Parameters              { return invalidParamSet() }
+func (*settingsShort) Parameters() parameters.Parameters         { return invalidParamSet() }
+func (*settingsUnassignable) Parameters() parameters.Parameters  { return invalidParamSet() }
+func (*settingsUnhandledType) Parameters() parameters.Parameters { return invalidParamSet() }
+func (notAStruct) Parameters() parameters.Parameters             { return invalidParamSet() }
 
 type invalidInterfaceSet struct {
 	name            string

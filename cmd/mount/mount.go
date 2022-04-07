@@ -36,7 +36,7 @@ type Settings struct {
 	settings.Root
 }
 
-func (self *Settings) Parameters(ctx context.Context) parameters.Parameters {
+func (*Settings) Parameters(ctx context.Context) parameters.Parameters {
 	partialParams := []runtime.CmdsParameter{
 		{
 			OptionName: hostAPIParam,
@@ -52,7 +52,7 @@ func (self *Settings) Parameters(ctx context.Context) parameters.Parameters {
 		},
 	}
 	return CtxJoin(ctx,
-		runtime.GenerateParameters[Settings](ctx, partialParams),
+		runtime.MustMakeParameters[*Settings](ctx, partialParams),
 		(*settings.Root).Parameters(nil, ctx),
 	)
 }

@@ -1,7 +1,7 @@
 package stop
 
 import (
-	"github.com/djdv/go-filesystem-utils/internal/cmds/environment"
+	cmdsenv "github.com/djdv/go-filesystem-utils/internal/cmds/environment"
 	"github.com/djdv/go-filesystem-utils/internal/cmds/environment/stop"
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings"
 	cmds "github.com/ipfs/go-ipfs-cmds"
@@ -15,7 +15,7 @@ var Command = &cmds.Command{
 		Tagline: "Stop the currently running service instance.",
 	},
 	NoLocal:  true,
-	Encoders: settings.CmdsEncoders,
+	Encoders: settings.Encoders,
 	Run: func(_ *cmds.Request, _ cmds.ResponseEmitter, env cmds.Environment) error {
 		serviceEnv, err := cmdsenv.Assert(env)
 		if err != nil {

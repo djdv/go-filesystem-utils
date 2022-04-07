@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
-	"github.com/djdv/go-filesystem-utils/internal/cmds/environment"
+	cmdsenv "github.com/djdv/go-filesystem-utils/internal/cmds/environment"
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings"
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
 	. "github.com/djdv/go-filesystem-utils/internal/generic"
@@ -38,7 +38,7 @@ func (*Settings) Parameters(ctx context.Context) parameters.Parameters {
 		{HelpText: "Description (usually seen in UI labels) to associate with the service (when installing)"},
 	}
 	return CtxJoin(ctx,
-		runtime.GenerateParameters[Settings](ctx, partialParams),
+		runtime.MustMakeParameters[*Settings](ctx, partialParams),
 		(*PlatformSettings).Parameters(nil, ctx),
 		(*settings.Root).Parameters(nil, ctx),
 	)
@@ -55,7 +55,7 @@ func Command() *cmds.Command {
 			settings.MakeOptions[Settings](),
 			settings.MakeOptions[PlatformSettings]()...,
 		),
-		Encoders: settings.CmdsEncoders,
+		Encoders: settings.Encoders,
 		Type:     daemon.Response{},
 		Subcommands: func() (subCmds map[string]*cmds.Command) {
 			const staticCmdsCount = 2

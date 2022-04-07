@@ -30,7 +30,7 @@ func Command() *cmds.Command {
 		NoRemote: true,
 		PreRun:   daemonPreRun,
 		Run:      daemonRun,
-		Encoders: settings.CmdsEncoders,
+		Encoders: settings.Encoders,
 		Type:     Response{},
 		Subcommands: map[string]*cmds.Command{
 			stopcmd.Name: stopcmd.Command,

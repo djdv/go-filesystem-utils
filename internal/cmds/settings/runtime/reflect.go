@@ -8,15 +8,15 @@ import (
 	"runtime"
 	"strings"
 
-	. "github.com/djdv/go-filesystem-utils/internal/generic"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
 type (
 	// TODO: name
-	SettingsConstraint[settingsPtr any] interface {
+	SettingsConstraint[settings any] interface {
+		*settings
 		parameters.Settings
-		*settingsPtr
 	}
 
 	CmdsParameter struct {
@@ -69,11 +69,11 @@ func (parameter CmdsParameter) Aliases(source parameters.SourceID) []string {
 // Value sources are queried in the same order they're provided.
 // If a setting cannot be set by one source,
 // it's reference is relayed to the next `SetFunc`.
-func Parse[set any, setIntf SettingsConstraint[set]](ctx context.Context,
+func Parse[setIntf SettingsConstraint[set], set any](ctx context.Context,
 	setFuncs []SetFunc, parsers ...TypeParser,
 ) (*set, error) {
 	settingsPointer := new(set)
-	unsetArgs, generatorErrs, err := ArgsFromSettings[set, setIntf](ctx, settingsPointer)
+	unsetArgs, generatorErrs, err := ArgsFromSettings[setIntf](ctx, settingsPointer)
 	if err != nil {
 		return nil, err
 	}
@@ -91,57 +91,52 @@ func Parse[set any, setIntf SettingsConstraint[set]](ctx context.Context,
 	}
 
 	var (
-		errs  = CtxMerge(ctx, errChans...)
+		errs  = generic.CtxMerge(ctx, errChans...)
 		drain = func(Argument) error { return nil }
 	)
-	if err := ForEachOrError(ctx, unsetArgs, errs, drain); err != nil {
+	if err := generic.ForEachOrError(ctx, unsetArgs, errs, drain); err != nil {
 		return nil, fmt.Errorf("Parse encountered an error: %w", err)
 	}
 	return settingsPointer, ctx.Err()
 }
 
-func GenerateParameters[settings any, setPtr SettingsConstraint[settings]](ctx context.Context,
+/* TODO re-do docs (things changed)
+// NewParameter constructs a parameter using either the provided options,
+// or a set of defaults (derived from the calling function's name, pkg, and binary name).
+*/
+func MustMakeParameters[setPtr SettingsConstraint[settings], settings any](ctx context.Context,
 	partialParams []CmdsParameter,
 ) parameters.Parameters {
-	/* TODO re-use docs
-	// NewParameter constructs a parameter using either the provided options,
-	// or a set of defaults (derived from the calling function's name, pkg, and binary name).
-	*/
-	typ, err := checkType[settings, setPtr]()
+	typ, err := checkType[settings]()
 	if err != nil {
 		panic(err)
 	}
+	paramCount := len(partialParams)
+	if typ.NumField() < paramCount {
+		panic(errTooFewFields)
+	}
 
-	namespace, envPrefix := programMetadata()
-
-	// FIXME:
-	// should we just do root params? (generate only, no expand)
-	// caller can combine sub-structs manually with CtxJoin.
-	// Our loop swaps target? range over params, pull from fields?
-	// or just keep the same.
-	// ^ we should invert, there's no reason for us to skip embedded structs
-	// we should just stop processing before we hit it
-	// (if the partials are the right length, if not fail somewhere later in the pipeline)
-	params := make(chan parameters.Parameter, len(partialParams))
+	var (
+		params               = make(chan parameters.Parameter, paramCount)
+		namespace, envPrefix = programMetadata()
+	)
 	go func() {
 		defer close(params)
-		var (
-			fields = generateFields(ctx, typ)
-		)
+		subCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		fields := generateFields(subCtx, typ)
 		for _, param := range partialParams {
 			select {
 			case field, ok := <-fields:
 				if !ok {
-					// log.Println("fields closed")
 					return
 				}
 				fieldName := field.Name
-				// log.Println("got field:", fieldName)
 				if param.OptionName == "" {
 					param.OptionName = fieldName
 				}
 				if param.HelpText == "" {
-					param.HelpText = fmt.Sprintf( // TODO: from descs
+					param.HelpText = fmt.Sprintf(
 						"Dynamic parameter for %s",
 						fieldName,
 					)
@@ -153,17 +148,14 @@ func GenerateParameters[settings any, setPtr SettingsConstraint[settings]](ctx c
 				param.envPrefix = envPrefix
 				select {
 				case params <- param:
-					// log.Println("sent param from field:", fieldName)
 				case <-ctx.Done():
 					return
 				}
-
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
-
 	return params
 }
 
@@ -179,6 +171,7 @@ func programMetadata() (namespace, envPrefix string) {
 	if namespace == "settings" {
 		namespace = ""
 	}
+
 	progName := filepath.Base(os.Args[0])
 	envPrefix = strings.TrimSuffix(progName, filepath.Ext(progName))
 	return
