@@ -3,15 +3,16 @@ package mount
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	goruntime "runtime"
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/filesystem"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/runtime"
+	cmdsenv "github.com/djdv/go-filesystem-utils/internal/cmds/environment"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/environment/mount"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/settings"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
 	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
@@ -81,7 +82,7 @@ func Command() *cmds.Command {
 	return Command
 }
 
-type Response struct{ cmdslib.Multiaddr }
+type Response struct{ multiaddr.Multiaddr }
 
 func mountPreRun(request *cmds.Request, _ cmds.Environment) error {
 	if err := checkSubCmd(2, request.Path); err != nil {
@@ -96,21 +97,95 @@ func mountRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Envi
 		return err
 	}
 
-	mounter := fsEnv.Daemon()
-	mountPoints, err := mounter.Mount(request)
+	ctx := request.Context
+	settings, err := settings.Parse[Settings](ctx, request)
+	if err != nil {
+		return err
+	}
+	argMaddrs, err := parseArgs(request.Arguments)
+	var (
+		opts    []mount.Option
+		mounter = fsEnv.Daemon().Mounter()
+		host    = settings.HostAPI
+		fsid    = settings.FSID
+		ipfs    = settings.IPFSMaddr // TODO: optional
+	)
+	// TODO: use dynamic default values
+	// (the one most appropriate for the current system)
+	if host == 0 {
+		host = filesystem.Fuse
+	}
+	if fsid == 0 {
+		fsid = filesystem.IPFS
+	}
+	if ipfs != nil {
+		opts = append(opts, mount.WithIPFS(ipfs))
+	}
+
+	mountPoints, errs, err := mounter.Mount(ctx, host, fsid, argMaddrs, opts...)
 	if err != nil {
 		return err
 	}
 
-	for _, mountPoint := range mountPoints {
-		if err := emitter.Emit(&Response{
-			Multiaddr: cmdslib.Multiaddr{Interface: mountPoint.Target()},
-		}); err != nil {
-			return err
+	// TODO: less closure
+	var (
+		mountErr error
+		addErr   = func(e error) {
+			if mountErr == nil {
+				mountErr = e
+			} else {
+				mountErr = fmt.Errorf("%w - %s", mountErr, e)
+			}
+		}
+		cache  = make([]filesystem.MountPoint, 0, cap(mountPoints))
+		unwind = func() {
+			for _, mountPoint := range cache {
+				if unmountErr := mountPoint.Close(); unmountErr != nil {
+					addErr(unmountErr)
+				}
+			}
+		}
+	)
+	for mountPoints != nil ||
+		errs != nil {
+		select {
+		case mountPoint, ok := <-mountPoints:
+			if !ok {
+				mountPoints = nil
+				continue
+			}
+			cache = append(cache, mountPoint)
+			if err := emitter.Emit(&Response{
+				//Multiaddr: cmdslib.Multiaddr{Interface: mountPoint.Target()},
+				Multiaddr: mountPoint.Target(),
+			}); err != nil {
+				addErr(err)
+			}
+		case err, ok := <-errs:
+			if !ok {
+				errs = nil
+				continue
+			}
+			addErr(err)
 		}
 	}
 
-	return nil
+	if mountErr != nil {
+		unwind()
+	}
+	return mountErr
+}
+
+func parseArgs(args []string) ([]multiaddr.Multiaddr, error) {
+	targetMaddrs := make([]multiaddr.Multiaddr, len(args))
+	for i, target := range args {
+		maddr, err := multiaddr.NewMultiaddr(target)
+		if err != nil {
+			return nil, err
+		}
+		targetMaddrs[i] = maddr
+	}
+	return targetMaddrs, nil
 }
 
 func examplePaths() []string {

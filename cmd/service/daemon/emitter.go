@@ -6,12 +6,11 @@ import (
 	"path"
 	"time"
 
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/environment/stop"
 	"github.com/multiformats/go-multiaddr"
 )
 
-func statusResponse(status Status, stopReason cmdsenv.Reason) *Response {
+func statusResponse(status Status, stopReason stop.Reason) *Response {
 	return &Response{
 		Status:     status,
 		StopReason: stopReason,
@@ -21,15 +20,15 @@ func statusResponse(status Status, stopReason cmdsenv.Reason) *Response {
 func maddrListenerResponse(maddr multiaddr.Multiaddr) *Response {
 	return &Response{
 		Status:        Starting,
-		ListenerMaddr: &cmdslib.Multiaddr{Interface: maddr},
+		ListenerMaddr: maddr,
 	}
 }
 
-func maddrShutdownResponse(maddr multiaddr.Multiaddr, reason cmdsenv.Reason) *Response {
+func maddrShutdownResponse(maddr multiaddr.Multiaddr, reason stop.Reason) *Response {
 	return &Response{
 		Status:        Stopping,
 		StopReason:    reason,
-		ListenerMaddr: &cmdslib.Multiaddr{Interface: maddr},
+		ListenerMaddr: maddr,
 	}
 }
 
@@ -43,7 +42,7 @@ func infoResponsef(fmtStr string, v ...interface{}) *Response {
 
 func startingResponse() *Response { return statusResponse(Starting, 0) }
 func readyResponse() *Response    { return statusResponse(Ready, 0) }
-func stoppingResponse(reason cmdsenv.Reason) *Response {
+func stoppingResponse(reason stop.Reason) *Response {
 	return statusResponse(Stopping, reason)
 }
 

@@ -3,41 +3,22 @@ package main
 import (
 	"context"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/djdv/go-filesystem-utils/cmd/config"
-	"github.com/djdv/go-filesystem-utils/cmd/list"
-	"github.com/djdv/go-filesystem-utils/cmd/mount"
-	"github.com/djdv/go-filesystem-utils/cmd/service"
-	"github.com/djdv/go-filesystem-utils/cmd/unmount"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/executor"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/options"
-	cmds "github.com/ipfs/go-ipfs-cmds"
+	cmdslib "github.com/djdv/go-filesystem-utils/internal/cmds"
+	cmdsenv "github.com/djdv/go-filesystem-utils/internal/cmds/environment"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/executor"
 	"github.com/ipfs/go-ipfs-cmds/cli"
 )
 
 func main() {
+	log.SetFlags(log.Lshortfile)
 	var (
 		ctx  = context.Background()
-		root = &cmds.Command{
-			Options: settings.MakeOptions[settings.Root](options.WithBuiltin(true)),
-			Helptext: cmds.HelpText{
-				Tagline: "File system service utility.",
-			},
-			// TODO: figure out if the Encoder gets inherited
-			// and if not, which commands explicitly need it.
-			Subcommands: map[string]*cmds.Command{
-				config.Name:  config.Command(),
-				service.Name: service.Command,
-				mount.Name:   mount.Command(),
-				list.Name:    list.Command,
-				unmount.Name: unmount.Command,
-			},
-		}
+		root = cmdslib.Root()
 		// cmdline[0] is used literally in helptext generation.
 		ourName = filepath.Base(os.Args[0]) // We set it to the program's name.
 		cmdline = append([]string{          // (sans path, extension, etc.)

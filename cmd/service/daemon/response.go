@@ -9,18 +9,18 @@ import (
 	"io"
 	"strings"
 
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/environment/stop"
 	cmds "github.com/ipfs/go-ipfs-cmds"
+	"github.com/multiformats/go-multiaddr"
 )
 
 type (
 	Status   uint
 	Response struct {
-		ListenerMaddr *cmdslib.Multiaddr `json:"listenerMaddr,omitempty"`
-		Info          string             `json:"info,omitempty"`
-		Status        Status             `json:"status,omitempty"`
-		StopReason    cmdsenv.Reason     `json:"stopReason,omitempty"`
+		ListenerMaddr multiaddr.Multiaddr `json:"listenerMaddr,omitempty"`
+		Info          string              `json:"info,omitempty"`
+		Status        Status              `json:"status,omitempty"`
+		StopReason    stop.Reason         `json:"stopReason,omitempty"`
 	}
 	responses = <-chan *Response
 
@@ -58,7 +58,7 @@ func (response *Response) String() string {
 	switch status := response.Status; status {
 	case Starting:
 		if encodedMaddr := response.ListenerMaddr; encodedMaddr != nil {
-			return fmt.Sprintf("listening on: %s", encodedMaddr.Interface)
+			return fmt.Sprintf("listening on: %s", encodedMaddr)
 		}
 		return status.String()
 	case Ready:

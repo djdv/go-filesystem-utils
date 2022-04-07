@@ -1,8 +1,9 @@
 package stop
 
 import (
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/environment"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/environment/stop"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/settings"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -15,24 +16,14 @@ var Command = &cmds.Command{
 	},
 	NoLocal:  true,
 	Encoders: settings.CmdsEncoders,
-	Run: func(request *cmds.Request, _ cmds.ResponseEmitter, env cmds.Environment) error {
-		/*
-			ctx := request.Context
-				stopSettings, err := settings.ParseAll[settings.Settings](ctx, request)
-				if err != nil {
-					return err
-				}
-		*/
-
+	Run: func(_ *cmds.Request, _ cmds.ResponseEmitter, env cmds.Environment) error {
 		serviceEnv, err := cmdsenv.Assert(env)
 		if err != nil {
 			return err
 		}
-
-		if err := serviceEnv.Daemon().Stopper().Stop(cmdsenv.Requested); err != nil {
+		if err := serviceEnv.Stopper().Stop(stop.Requested); err != nil {
 			return err
 		}
-
 		return nil
 	},
 }

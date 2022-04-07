@@ -5,29 +5,31 @@ import (
 	"io"
 
 	"github.com/djdv/go-filesystem-utils/filesystem"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
+	cmdsenv "github.com/djdv/go-filesystem-utils/internal/cmds/environment"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/settings"
 	cmds "github.com/ipfs/go-ipfs-cmds"
+	"github.com/multiformats/go-multiaddr"
 )
 
 const Name = "list"
 
-var Command = &cmds.Command{
-	Helptext: cmds.HelpText{
-		Tagline: "List file systems bound to the host.",
-	},
-	NoLocal:  true, // Always communicate with the file system service (as a client).
-	Encoders: settings.CmdsEncoders,
-	Type:     Response{},
-	PreRun:   listPreRun,
-	Run:      listRun,
-	PostRun: cmds.PostRunMap{
-		cmds.CLI: formatList,
-	},
+func Command() *cmds.Command {
+	return &cmds.Command{
+		Helptext: cmds.HelpText{
+			Tagline: "List file systems bound to the host.",
+		},
+		NoLocal:  true, // Always communicate with the file system service (as a client).
+		Encoders: settings.CmdsEncoders,
+		Type:     Response{},
+		PreRun:   listPreRun,
+		Run:      listRun,
+		PostRun: cmds.PostRunMap{
+			cmds.CLI: formatList,
+		},
+	}
 }
 
-type Response struct{ cmdslib.Multiaddr }
+type Response struct{ multiaddr.Multiaddr }
 
 func listPreRun(*cmds.Request, cmds.Environment) error {
 	return filesystem.RegisterPathMultiaddr()
@@ -39,17 +41,20 @@ func listRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Envir
 		return err
 	}
 
-	lister := serviceEnv.Daemon()
+	var (
+		ctx    = request.Context
+		lister = serviceEnv.Daemon().Mounter()
+	)
 	// mountPoints, err := lister.List(request)
 	// TODO: cmds request -> list options
-	mountPoints, err := lister.List()
+	mountPoints, err := lister.List(ctx)
 	if err != nil {
 		return err
 	}
 
 	for mountPoint := range mountPoints {
 		if err := emitter.Emit(&Response{
-			Multiaddr: cmdslib.Multiaddr{Interface: mountPoint},
+			Multiaddr: mountPoint,
 		}); err != nil {
 			return err
 		}

@@ -4,8 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/djdv/go-filesystem-utils/cmd/service/host"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/settings"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
 )
@@ -31,7 +30,7 @@ func registerControllerCommands(subcommands map[string]*cmds.Command,
 				if err != nil {
 					return err
 				}
-				serviceConfig := host.ServiceConfig(&controllerSettings.Host)
+				serviceConfig := serviceConfig(controllerSettings)
 				serviceClient, err := service.New((service.Interface)(nil), serviceConfig)
 				if err != nil {
 					return err

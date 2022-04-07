@@ -6,17 +6,18 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
+	cmdsenv "github.com/djdv/go-filesystem-utils/internal/cmds/environment"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/environment/stop"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
 // setupStopperAPI primes the stopper interface
 // and emits it's name to the client.
 func setupStopperAPI(ctx context.Context, apiPath []string,
-	daemon cmdsenv.Daemon,
-) (<-chan *Response, <-chan cmdsenv.Reason, error) {
+	serviceEnv cmdsenv.Environment,
+) (<-chan *Response, <-chan stop.Reason, error) {
 	var (
-		stopper          = daemon.Stopper()
+		stopper          = serviceEnv.Stopper()
 		stopReasons, err = stopper.Initialize(ctx)
 		responses        = make(chan *Response, 1)
 	)
@@ -26,10 +27,9 @@ func setupStopperAPI(ctx context.Context, apiPath []string,
 }
 
 func stopOnSignal(ctx context.Context,
-	stopper cmdsenv.Stopper, notifySignal os.Signal,
+	stopper stop.Stopper, notifySignal os.Signal,
 ) (responses, errCh) {
 	var (
-		stop      = stopper.Stop
 		errs      = make(chan error, 1)
 		responses = make(chan *Response, 1)
 		sigChan   = make(chan os.Signal, 1)
@@ -43,8 +43,8 @@ func stopOnSignal(ctx context.Context,
 		defer signal.Reset(notifySignal)
 		select {
 		case <-sigChan:
-			const reason = cmdsenv.Canceled
-			if sErr := stop(reason); sErr != nil {
+			const reason = stop.Canceled
+			if sErr := stopper.Stop(reason); sErr != nil {
 				errs <- sErr
 			}
 		case <-ctx.Done():
@@ -53,10 +53,9 @@ func stopOnSignal(ctx context.Context,
 	return responses, errs
 }
 
-func stopOnRequestCancel(ctx context.Context, stopper cmdsenv.Stopper, request *cmds.Request) (responses, errCh) {
+func stopOnRequestCancel(ctx context.Context, stopper stop.Stopper, request *cmds.Request) (responses, errCh) {
 	var (
 		triggerCtx = request.Context
-		stop       = stopper.Stop
 		errs       = make(chan error)
 		responses  = make(chan *Response, 1)
 	)
@@ -66,8 +65,8 @@ func stopOnRequestCancel(ctx context.Context, stopper cmdsenv.Stopper, request *
 		defer close(errs)
 		select {
 		case <-triggerCtx.Done():
-			const reason = cmdsenv.Canceled
-			if sErr := stop(reason); sErr != nil {
+			const reason = stop.Canceled
+			if sErr := stopper.Stop(reason); sErr != nil {
 				select {
 				case errs <- sErr:
 				case <-ctx.Done():
@@ -86,8 +85,9 @@ func stopOnIdleEvent(ctx context.Context,
 		// NOTE [placeholder]: This build is never busy.
 		// The ipc env should be used to query activity when implemented.
 		daemon      = serviceEnv.Daemon()
+		mounter     = daemon.Mounter()
 		checkIfBusy = func() (bool, error) {
-			instances, err := daemon.List()
+			instances, err := mounter.List(ctx)
 			if err != nil {
 				return false, err
 			}
@@ -103,13 +103,13 @@ func stopOnIdleEvent(ctx context.Context,
 	defer close(responses)
 	responses <- tickerListenerResponse(interval, "is-service-idle-every")
 
-	stopper := daemon.Stopper()
+	stopper := serviceEnv.Stopper()
 	return responses, stopOnIdle(ctx, stopper, interval, checkIfBusy)
 }
 
 type isBusyFunc func() (bool, error)
 
-func stopOnIdle(ctx context.Context, stopper cmdsenv.Stopper,
+func stopOnIdle(ctx context.Context, stopper stop.Stopper,
 	checkInterval time.Duration, checkIfBusy isBusyFunc,
 ) <-chan error {
 	errs := make(chan error)
@@ -131,7 +131,7 @@ func stopOnIdle(ctx context.Context, stopper cmdsenv.Stopper,
 				if busy {
 					continue
 				}
-				if err := stopper.Stop(cmdsenv.Idle); err != nil {
+				if err := stopper.Stop(stop.Idle); err != nil {
 					select {
 					case errs <- err:
 					case <-ctx.Done():

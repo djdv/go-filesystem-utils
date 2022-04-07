@@ -15,8 +15,8 @@ import (
 	"github.com/djdv/go-filesystem-utils/cmd/service"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
-	fscmds "github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/environment"
+	fscmds "github.com/djdv/go-filesystem-utils/internal/cmds/settings"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/environment"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
 )

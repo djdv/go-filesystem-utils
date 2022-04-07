@@ -1,114 +1,16 @@
 package service
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
-	"github.com/djdv/go-filesystem-utils/cmd/service/host"
-	"github.com/djdv/go-filesystem-utils/cmd/service/status"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
-	. "github.com/djdv/go-filesystem-utils/internal/generic"
-	"github.com/djdv/go-filesystem-utils/internal/parameters"
+	cmdsenv "github.com/djdv/go-filesystem-utils/internal/cmds/environment"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/environment/stop"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/kardianos/service"
 	manet "github.com/multiformats/go-multiaddr/net"
 )
-
-const Name = "service"
-
-type (
-	Host     = host.Settings
-	Settings struct {
-		Host
-		settings.Root
-	}
-)
-
-func (*Settings) Parameters(ctx context.Context) parameters.Parameters {
-	return CtxJoin(ctx,
-		(*host.Settings).Parameters(nil, ctx),
-		(*settings.Root).Parameters(nil, ctx),
-	)
-}
-
-var Command = &cmds.Command{
-	Helptext: cmds.HelpText{
-		Tagline: "Interact with the host system's service manager",
-	},
-	NoRemote: true,
-	Run:      serviceRun,
-	Options:  settings.MakeOptions[Settings](),
-	Encoders: settings.CmdsEncoders,
-	Type:     daemon.Response{},
-	Subcommands: func() (subCmds map[string]*cmds.Command) {
-		const staticCmdsCount = 2
-		subCmds = make(map[string]*cmds.Command,
-			staticCmdsCount+len(service.ControlAction))
-		subCmds[status.Name] = status.Command
-		subCmds[daemon.Name] = daemon.Command()
-		registerControllerCommands(subCmds, service.ControlAction[:]...)
-		return
-	}(),
-}
-
-func serviceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Environment) error {
-	if service.Interactive() {
-		return fmt.Errorf(
-			"This version of the daemon is intended for use by the host service manager."+
-				" Use `%s` for interactive use.",
-			strings.Join(append(request.Path, daemon.Name), " "),
-		)
-	}
-
-	// NOTE: We don't have the system logger yet.
-	// Early errors will only show up in tests or a debugger.
-	serviceEnv, err := cmdsenv.Assert(env)
-	if err != nil {
-		return err
-	}
-
-	ctx := request.Context
-	serviceSettings, err := settings.Parse[Settings](ctx, request)
-	if err != nil {
-		return err
-	}
-
-	var (
-		serviceInterface = &daemonCmdWrapper{
-			serviceRequest: request,
-			emitter:        emitter,
-			environment:    serviceEnv,
-		}
-		serviceConfig = host.ServiceConfig(&serviceSettings.Host)
-	)
-	serviceController, err := service.New(serviceInterface, serviceConfig)
-	if err != nil {
-		return err
-	}
-
-	sysLog, err := serviceController.SystemLogger(nil)
-	if err != nil {
-		return err
-	}
-
-	maddrsProvided := len(serviceSettings.ServiceMaddrs) > 0
-	serviceListeners, cleanup, err := systemListeners(maddrsProvided, sysLog)
-	if err != nil {
-		return err
-	}
-	if serviceListeners != nil {
-		serviceInterface.hostListeners = serviceListeners
-	}
-
-	serviceInterface.sysLog = sysLog
-	serviceInterface.cleanup = cleanup
-
-	return serviceController.Run()
-}
 
 type (
 	daemonCmdWrapper struct {
@@ -215,7 +117,7 @@ func (svc *daemonCmdWrapper) Stop(svcIntf service.Service) (err error) {
 		err = cleanupAndLog(sysLog, cleanup, err)
 	}()
 
-	stopper := svc.environment.Daemon().Stopper()
+	stopper := svc.environment.Stopper()
 	select {
 	case daemonErr, running := <-daemonErrs:
 		if !running {
@@ -223,7 +125,7 @@ func (svc *daemonCmdWrapper) Stop(svcIntf service.Service) (err error) {
 		}
 		err = daemonErr
 	default:
-		if stopErr := stopper.Stop(cmdsenv.Requested); stopErr != nil {
+		if stopErr := stopper.Stop(stop.Requested); stopErr != nil {
 			err = stopErr
 			return
 		}

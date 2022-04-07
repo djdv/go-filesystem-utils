@@ -7,12 +7,14 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/cmd/mount"
 	"github.com/djdv/go-filesystem-utils/filesystem"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/cmdsenv"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
+	cmdsenv "github.com/djdv/go-filesystem-utils/internal/cmds/environment"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/settings"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
+	"github.com/multiformats/go-multiaddr"
 )
 
 const (
@@ -26,32 +28,41 @@ type Settings struct {
 }
 
 func (self *Settings) Parameters(ctx context.Context) parameters.Parameters {
+	partialParams := []runtime.CmdsParameter{
+		{
+			OptionAliases: []string{"a"},
+			HelpText:      "Unmount all mountpoints.",
+		},
+	}
 	return CtxMerge(ctx,
+		runtime.GenerateParameters[Settings](ctx, partialParams),
 		(*mount.Settings)(nil).Parameters(ctx),
 		(*settings.Root)(nil).Parameters(ctx),
 	)
 }
 
-var Command = &cmds.Command{
-	Arguments: []cmds.Argument{
-		cmds.StringArg(mount.ArgumentName, false, true, mount.ArgumentDescription),
-		// TODO: stdin handling
-	},
-	Helptext: cmds.HelpText{
-		Tagline: "Detach file systems from the host.",
-	},
-	NoLocal:  true, // Always communicate with the file system service (as a client).
-	Encoders: cmds.Encoders,
-	Type:     Response{},
-	PreRun:   unmountPreRun,
-	Run:      unmountRun,
-	Options:  settings.MakeOptions[Settings](),
-	PostRun: cmds.PostRunMap{
-		cmds.CLI: formatUnmount,
-	},
+func Command() *cmds.Command {
+	return &cmds.Command{
+		Arguments: []cmds.Argument{
+			cmds.StringArg(mount.ArgumentName, false, true, mount.ArgumentDescription),
+			// TODO: stdin handling
+		},
+		Helptext: cmds.HelpText{
+			Tagline: "Detach file systems from the host.",
+		},
+		NoLocal:  true, // Always communicate with the file system service (as a client).
+		Encoders: cmds.Encoders,
+		Type:     Response{},
+		PreRun:   unmountPreRun,
+		Run:      unmountRun,
+		Options:  settings.MakeOptions[Settings](),
+		PostRun: cmds.PostRunMap{
+			cmds.CLI: formatUnmount,
+		},
+	}
 }
 
-type Response struct{ cmdslib.Multiaddr }
+type Response struct{ multiaddr.Multiaddr }
 
 func unmountPreRun(*cmds.Request, cmds.Environment) error {
 	return filesystem.RegisterPathMultiaddr()
@@ -77,21 +88,17 @@ func unmountRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.En
 		return err
 	}
 
-	unmounter := fsEnv.Daemon()
-	formerTargets, err := unmounter.Unmount(request)
+	ctx := request.Context
+	unmounter := fsEnv.Daemon().Mounter()
+	formerTargets, errs, err := unmounter.Unmount(ctx, 0, 0, nil) // FIXME:
 	if err != nil {
 		return err
 	}
 
-	for _, target := range formerTargets {
-		if err := emitter.Emit(&Response{
-			Multiaddr: cmdslib.Multiaddr{Interface: target},
-		}); err != nil {
-			return err
-		}
+	fn := func(mountpoint filesystem.MountPoint) error {
+		return emitter.Emit(&Response{Multiaddr: mountpoint.Target()})
 	}
-
-	return nil
+	return generic.ForEachOrError(ctx, formerTargets, errs, fn)
 }
 
 /*

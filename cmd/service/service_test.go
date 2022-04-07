@@ -9,9 +9,9 @@ import (
 	"time"
 
 	servicecmd "github.com/djdv/go-filesystem-utils/cmd/service"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/executor"
-	fscmds "github.com/djdv/go-filesystem-utils/internal/cmdslib/settings"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/environment"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/executor"
+	fscmds "github.com/djdv/go-filesystem-utils/internal/cmds/settings"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/environment"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
 	"github.com/kardianos/service"

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
-	"github.com/djdv/go-filesystem-utils/internal/cmdslib/settings/environment"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/environment"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
 )
