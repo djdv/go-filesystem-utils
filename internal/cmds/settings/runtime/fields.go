@@ -12,8 +12,8 @@ import (
 )
 
 var (
-	errTooFewFields  = errors.New("settings struct has more parameters than fields")
-	errTooManyFields = errors.New("settings struct has more fields than parameters")
+	errTooFewFields  = errors.New("more parameters than fields")
+	errTooManyFields = errors.New("more fields than parameters")
 )
 
 type (
@@ -121,7 +121,10 @@ func BindParameterFields[setPtr SettingsConstraint[set], set any](ctx context.Co
 				select {
 				case parameter, ok := <-params:
 					if !ok {
-						return ParamField{}, errTooManyFields
+						err := fmt.Errorf("%s: %w",
+							typ.Name(), errTooManyFields,
+						)
+						return ParamField{}, err
 					}
 					binding := ParamField{
 						Parameter:   parameter,

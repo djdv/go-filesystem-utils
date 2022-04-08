@@ -36,7 +36,7 @@ func SettingsFromCmds(request *cmds.Request) runtime.SetFunc {
 				if err != nil {
 					return unsetArg, err
 				}
-				if provided {
+				if provided { // We're going to process this, skip relaying it.
 					return unsetArg, ErrSkip
 				}
 				return unsetArg, nil

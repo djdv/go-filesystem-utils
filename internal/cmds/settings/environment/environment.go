@@ -7,10 +7,11 @@ import (
 	"reflect"
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
-	. "github.com/djdv/go-filesystem-utils/internal/generic"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
+// TODO: name convention for these; `SetFunc`, `FromEnv`?
 // SettingsFromEnvironment uses the process environment as a source for settings values.
 func SettingsFromEnvironment() runtime.SetFunc {
 	return func(ctx context.Context, argsToSet runtime.Arguments,
@@ -28,13 +29,13 @@ func SettingsFromEnvironment() runtime.SetFunc {
 				if err != nil {
 					return unsetArg, err
 				}
-				if provided {
-					return unsetArg, ErrSkip
+				if provided { // We're going to process this, skip relaying it.
+					return unsetArg, generic.ErrSkip
 				}
 				return unsetArg, nil
 			}
 
-			ProcessResults(ctx, argsToSet, unsetArgs, errs, fn)
+			generic.ProcessResults(ctx, argsToSet, unsetArgs, errs, fn)
 		}()
 		return unsetArgs, errs
 	}

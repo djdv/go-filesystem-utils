@@ -6,91 +6,94 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/environment"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
-	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
-func testEnvironment(t *testing.T) {
-	var (
-		ctx      = context.Background()
-		settings = new(pkgSettings)
-		params   = settings.Parameters()
-		clearEnv = func() {
-			for _, param := range params {
-				key := param.Name(parameters.Environment)
-				if osErr := os.Unsetenv(key); osErr != nil {
-					t.Errorf("failed to unset environment %q: %s",
-						key, osErr)
-				}
-			}
-		}
+func TestEnvironment(t *testing.T) {
+	t.Run("valid", testEnvironmentValid)
+	t.Run("invalid", testEnvironmentInvalid)
+}
 
-		wantSettings = new(pkgSettings)
-	)
-	nonzeroValueSetter(wantSettings)
-
-	// Make sure env is clear before and after the test.
-	clearEnv()
-	defer clearEnv()
-
-	// Populate the env with our expected data.
-	testSettingsToEnv(t, wantSettings)
-
-	// TODO: these should be 2 separate tests "passthrough" and "solo/standalone/whatever"
-	// We don't use the request for anything other than testing pass though.
-	// Options not set by it should be picked up from the environment instead.
-
-	var (
-		request, _ = cmds.NewRequest(ctx, nil, nil, nil, nil, &cmds.Command{})
-		types      = typeParsers()
-	)
-	for _, test := range []struct {
-		name    string
-		sources []parameters.SetFunc
-	}{
-		{
-			name: "solo source",
-			sources: []parameters.SetFunc{
-				parameters.SettingsFromEnvironment(),
-			},
-		},
-		{
-			name: "source passthrough",
-			sources: []parameters.SetFunc{
-				parameters.SettingsFromCmds(request),
-				parameters.SettingsFromEnvironment(),
-			},
-		},
-	} {
-		sources := test.sources
-		t.Run(test.name, func(t *testing.T) {
-			if err := parameters.Parse(ctx, settings, sources, types...); err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(wantSettings, settings) {
-				t.Fatalf("settings field values do not match input values"+
-					"\n\tgot: %#v"+
-					"\n\twant: %#v",
-					settings, wantSettings)
-			}
-		})
+type (
+	envSettings struct {
+		TestField  bool
+		TestField2 int
+		UnsetField int
 	}
+)
 
+func (*envSettings) Parameters(ctx context.Context) parameters.Parameters {
+	return emptyParams[*envSettings](ctx)
+}
+
+func testEnvironmentValid(t *testing.T) {
+	var (
+		ctx          = context.Background()
+		wantSettings = &envSettings{
+			TestField:  true,
+			TestField2: 2,
+		}
+	)
+	settingsToEnv(t, wantSettings)
+	var (
+		sources       = []runtime.SetFunc{environment.SettingsFromEnvironment()}
+		settings, err = runtime.Parse[*envSettings](ctx, sources)
+	)
+	if err != nil {
+		t.Error(err)
+	}
+	if !reflect.DeepEqual(wantSettings, settings) {
+		t.Errorf("settings field values do not match input values"+
+			"\n\tgot: %#v"+
+			"\n\twant: %#v",
+			settings, wantSettings)
+	}
+}
+
+func testEnvironmentInvalid(t *testing.T) {
+	t.Run("values", badValues)
+	t.Run("canceled", cancelParse)
+}
+
+func badValues(t *testing.T) {
+	ctx := context.Background()
+	for param := range (*envSettings).Parameters(nil, ctx) {
+		t.Setenv(
+			param.Name(parameters.Environment),
+			"invalid non-string value",
+		)
+	}
+	var (
+		sources       = []runtime.SetFunc{environment.SettingsFromEnvironment()}
+		settings, err = runtime.Parse[*envSettings](ctx, sources)
+	)
+	if err == nil {
+		t.Error("expected Parse to return an error, but it did not")
+	}
+	if settings != nil {
+		t.Error("expected Parse to return nil settings, but it did not")
+	}
+}
+
+func cancelParse(t *testing.T) {
 	t.Run("cancel context", func(t *testing.T) {
-		expectedErr := context.Canceled
-		testContext, testCancel := context.WithCancel(ctx)
+		var (
+			expectedErr             = context.Canceled
+			testContext, testCancel = context.WithCancel(context.Background())
+		)
 		testCancel()
 		var (
-			sources = []parameters.SetFunc{parameters.SettingsFromEnvironment()}
-			err     = parameters.Parse(testContext, settings, sources)
+			sources = []runtime.SetFunc{environment.SettingsFromEnvironment()}
+			_, err  = runtime.Parse[*envSettings](testContext, sources)
 		)
 		if !errors.Is(err, expectedErr) {
-			t.Fatalf("error value does not match"+
+			t.Errorf("error value does not match"+
 				"\n\tgot: %v"+
 				"\n\twant: %v",
 				err, expectedErr,
@@ -99,44 +102,44 @@ func testEnvironment(t *testing.T) {
 	})
 }
 
-func testSettingsToEnv(t *testing.T, set parameters.Settings) {
+func emptyParams[setPtr runtime.SettingsConstraint[set], set any](ctx context.Context) parameters.Parameters {
+	var (
+		fieldCount  = reflect.TypeOf((*set)(nil)).Elem().NumField()
+		emptyParams = make([]runtime.CmdsParameter, fieldCount)
+	)
+	return runtime.MustMakeParameters[setPtr](ctx, emptyParams)
+}
+
+func settingsToEnv(t *testing.T, set parameters.Settings) {
 	t.Helper()
 	var (
-		params        = set.Parameters()
-		publicFields  = make([]reflect.StructField, 0, len(params))
+		ctx           = context.Background()
+		params        = set.Parameters(ctx)
 		settingsValue = reflect.ValueOf(set).Elem()
 		fields        = reflect.VisibleFields(settingsValue.Type())
 	)
 
-	for _, field := range fields {
-		if !field.IsExported() {
-			continue
-		}
-		publicFields = append(publicFields, field)
-	}
-
-	for i, param := range params {
-		field := publicFields[i]
-		if field.Type.Kind() == reflect.Struct {
-			continue
-		}
+	var fieldIndex int
+	for param := range params {
 		var (
-			fieldIndex = field.Index
-			key        = param.Name(parameters.Environment)
-			value      = settingsValue.FieldByIndex(fieldIndex).Interface()
+			field        = fields[fieldIndex]
+			fieldsIndex  = field.Index // Field's Index - possessive 's'
+			key          = param.Name(parameters.Environment)
+			reflectValue = settingsValue.FieldByIndex(fieldsIndex)
 		)
+		if reflectValue.IsZero() {
+			continue
+		}
+		value := reflectValue.Interface()
 		if strs, ok := value.([]string); ok {
-			value = testStringsToCSV(t, strs)
+			value = stringsToCSV(t, strs)
 		}
-		osErr := os.Setenv(key, fmt.Sprintf("%v", value))
-		if osErr != nil {
-			t.Fatalf("failed to set environment %q: %s",
-				key, osErr)
-		}
+		t.Setenv(key, fmt.Sprintf("%v", value))
+		fieldIndex++
 	}
 }
 
-func testStringsToCSV(t *testing.T, strs []string) string {
+func stringsToCSV(t *testing.T, strs []string) string {
 	t.Helper()
 	var (
 		strBld = new(strings.Builder)
