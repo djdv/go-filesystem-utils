@@ -124,18 +124,20 @@ func settingsToEnv(t *testing.T, set parameters.Settings) {
 		var (
 			field        = fields[fieldIndex]
 			fieldsIndex  = field.Index // Field's Index - possessive 's'
-			key          = param.Name(parameters.Environment)
 			reflectValue = settingsValue.FieldByIndex(fieldsIndex)
 		)
+		fieldIndex++
 		if reflectValue.IsZero() {
 			continue
 		}
-		value := reflectValue.Interface()
+		var (
+			key   = param.Name(parameters.Environment)
+			value = reflectValue.Interface()
+		)
 		if strs, ok := value.([]string); ok {
 			value = stringsToCSV(t, strs)
 		}
 		t.Setenv(key, fmt.Sprintf("%v", value))
-		fieldIndex++
 	}
 }
 
