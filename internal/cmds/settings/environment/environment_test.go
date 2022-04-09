@@ -2,12 +2,9 @@ package environment_test
 
 import (
 	"context"
-	"encoding/csv"
 	"errors"
 	"fmt"
-	"io"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/environment"
@@ -134,26 +131,6 @@ func settingsToEnv(t *testing.T, set parameters.Settings) {
 			key   = param.Name(parameters.Environment)
 			value = reflectValue.Interface()
 		)
-		if strs, ok := value.([]string); ok {
-			value = stringsToCSV(t, strs)
-		}
 		t.Setenv(key, fmt.Sprintf("%v", value))
 	}
-}
-
-func stringsToCSV(t *testing.T, strs []string) string {
-	t.Helper()
-	var (
-		strBld = new(strings.Builder)
-		csvWr  = csv.NewWriter(strBld)
-	)
-	if err := csvWr.Write(strs); err != nil &&
-		!errors.Is(err, io.EOF) {
-		t.Error(err)
-	}
-	csvWr.Flush()
-	if err := csvWr.Error(); err != nil {
-		t.Error(err)
-	}
-	return strBld.String()
 }
