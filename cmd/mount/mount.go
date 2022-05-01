@@ -98,7 +98,7 @@ func mountRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Envi
 	}
 
 	ctx := request.Context
-	settings, err := settings.Parse[Settings](ctx, request)
+	settings, err := settings.Parse[*Settings](ctx, request)
 	if err != nil {
 		return err
 	}

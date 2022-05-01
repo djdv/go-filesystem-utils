@@ -3,11 +3,9 @@ package runtime
 import (
 	"context"
 	"errors"
-	"fmt"
 	"reflect"
-	"strings"
 
-	. "github.com/djdv/go-filesystem-utils/internal/generic"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
@@ -26,10 +24,15 @@ type (
 	ParamFields = <-chan ParamField
 )
 
-// TODO: review this.
-// convert to generic and do type check internally like other exported funcs?
-// change to MustX and panic if type isn't ptrstruct?
-// export?
+func ReflectFields[setPtr SettingsConstraint[set], set any](ctx context.Context,
+) (StructFields, error) {
+	typ, err := checkType[set]()
+	if err != nil {
+		return nil, err
+	}
+	return generateFields(ctx, typ), nil
+}
+
 func generateFields(ctx context.Context, setTyp reflect.Type) StructFields {
 	var (
 		fieldCount = setTyp.NumField()
@@ -77,7 +80,7 @@ func expandFields(ctx context.Context, fields StructFields) StructFields {
 			}
 			return nil
 		}
-		ForEachOrError(ctx, fields, nil, relayOrExpand)
+		generic.ForEachOrError(ctx, fields, nil, relayOrExpand)
 	}()
 	return out
 }
@@ -90,83 +93,7 @@ func prefixIndex(ctx context.Context, prefix []int, fields StructFields) StructF
 			field.Index = append(prefix, field.Index...)
 			return field, nil
 		}
-		ProcessResults(ctx, fields, prefixed, nil, descend)
+		generic.ProcessResults(ctx, fields, prefixed, nil, descend)
 	}()
 	return prefixed
-}
-
-func BindParameterFields[setPtr SettingsConstraint[set], set any](ctx context.Context,
-) (ParamFields, errCh, error) {
-	typ, err := checkType[set]()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	var (
-		// MAGIC: We know our parameter methods never use data,
-		// so we call them directly with a nil pointer.
-		// This just avoids allocating an unnecessary struct value.
-		// If needed, we could instantiate and call `settings.Parameters` instead.
-		params      = setPtr.Parameters(nil, ctx)
-		paramFields = make(chan ParamField, cap(params))
-		errs        = make(chan error)
-	)
-	go func() {
-		defer close(paramFields)
-		defer close(errs)
-		var (
-			baseFields = generateFields(ctx, typ)
-			allFields  = expandFields(ctx, baseFields)
-			bindParams = func(field reflect.StructField) (ParamField, error) {
-				select {
-				case parameter, ok := <-params:
-					if !ok {
-						err := fmt.Errorf("%s: %w",
-							typ.Name(), errTooManyFields,
-						)
-						return ParamField{}, err
-					}
-					binding := ParamField{
-						Parameter:   parameter,
-						StructField: field,
-					}
-					return binding, nil
-
-				case <-ctx.Done():
-					return ParamField{}, ctx.Err()
-				}
-			}
-		)
-		ProcessResults(ctx, allFields, paramFields, errs, bindParams)
-		if err := checkParameterCount(ctx, params); err != nil {
-			select {
-			case errs <- err:
-			case <-ctx.Done():
-			}
-		}
-	}()
-
-	return paramFields, errs, nil
-}
-
-func checkParameterCount(ctx context.Context, params parameters.Parameters) error {
-	var extraParams []string
-out:
-	for {
-		select {
-		case extra, ok := <-params:
-			if !ok {
-				break out
-			}
-			name := extra.Name(parameters.CommandLine)
-			extraParams = append(extraParams, name)
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	if extraParams != nil {
-		errStr := strings.Join(extraParams, ", ")
-		return fmt.Errorf("%w: %s", errTooFewFields, errStr)
-	}
-	return nil
 }

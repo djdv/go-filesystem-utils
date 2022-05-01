@@ -10,17 +10,17 @@ import (
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/environment/stop"
+	cmdsmaddr "github.com/djdv/go-filesystem-utils/internal/cmds/multiaddr"
 	cmds "github.com/ipfs/go-ipfs-cmds"
-	"github.com/multiformats/go-multiaddr"
 )
 
 type (
 	Status   uint
 	Response struct {
-		ListenerMaddr multiaddr.Multiaddr `json:"listenerMaddr,omitempty"`
-		Info          string              `json:"info,omitempty"`
-		Status        Status              `json:"status,omitempty"`
-		StopReason    stop.Reason         `json:"stopReason,omitempty"`
+		ListenerMaddr *cmdsmaddr.Encapsulated `json:"listenerMaddr,omitempty"`
+		Info          string                  `json:"info,omitempty"`
+		Status        Status                  `json:"status,omitempty"`
+		StopReason    stop.Reason             `json:"stopReason,omitempty"`
 	}
 	responses = <-chan *Response
 

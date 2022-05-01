@@ -33,15 +33,10 @@ func Command() *cmds.Command {
 		Encoders: settings.Encoders,
 		Type:     Response{},
 		Subcommands: map[string]*cmds.Command{
-			stopcmd.Name: stopcmd.Command,
+			stopcmd.Name: stopcmd.Command(),
 		},
 	}
 }
-
-// TODO: remove/replace this where used.
-// CmdsPath returns the leading parameters
-// to invoke the daemon's `Run` method from `main`.
-func CmdsPath() []string { return []string{"service", Name} }
 
 func daemonPreRun(*cmds.Request, cmds.Environment) error {
 	return filesystem.RegisterPathMultiaddr()
@@ -162,7 +157,7 @@ func daemonRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.Env
 func parseCmds(ctx context.Context, request *cmds.Request,
 	env cmds.Environment,
 ) (*Settings, cmdsenv.Environment, error) {
-	daemonSettings, err := settings.Parse[Settings](ctx, request)
+	daemonSettings, err := settings.Parse[*Settings](ctx, request)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -2,7 +2,10 @@ package settings
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/filesystem"
@@ -14,19 +17,13 @@ import (
 	"github.com/multiformats/go-multiaddr"
 )
 
-const (
-	// TODO: names
-	APIParam      = "api"
-	AutoExitParam = "auto-exit-interval"
-)
-
 type Root struct {
-	// ServiceMaddrs is a list of addresses to server instances.
-	// Commands are free to use this value for any purpose as a context hint.
+	// ServiceMaddrs is a list of addresses to service instances.
+	// Commands are free to use this value for any purpose.
 	// E.g. It may be used to connect to existing servers,
 	// spawn new ones, check the status of them, etc.
 	ServiceMaddrs []multiaddr.Multiaddr
-	// AutoExitInterval will cause processes spawned by this command
+	// AutoExitInterval will cause processes spawned by commands
 	// to exit (if not busy) after some interval.
 	// If the process remains busy, it will remain running
 	// until another stop condition is met.
@@ -34,17 +31,46 @@ type Root struct {
 }
 
 func (*Root) Parameters(ctx context.Context) parameters.Parameters {
-	partialParams := []runtime.CmdsParameter{
-		{
-			OptionName: APIParam,
-			HelpText:   "File system service multiaddr to use.",
-		},
-		{
-			OptionName: AutoExitParam,
-			HelpText:   `Time interval (e.g. "30s") to check if the service is active and exit if not.`,
-		},
+	var (
+		constructors = []func() parameters.Parameter{
+			APIParam,
+			AutoExitParam,
+		}
+		out = make(chan parameters.Parameter, len(constructors))
+	)
+	go func() {
+		defer close(out)
+		for _, paramGen := range constructors {
+			if ctx.Err() != nil {
+				return
+			}
+			out <- paramGen()
+		}
+	}()
+	return out
+}
+
+// TODO: should runtime expose a function which gives us consistent defaults?
+// i.e. export `runtime.programMetadata`
+func execName() string {
+	progName := filepath.Base(os.Args[0])
+	return strings.TrimSuffix(progName, filepath.Ext(progName))
+}
+
+func APIParam() parameters.Parameter {
+	return runtime.CmdsParameter{
+		OptionName: "api",
+		HelpText:   "File system service multiaddrs to use.",
+		EnvPrefix:  execName(),
 	}
-	return runtime.MustMakeParameters[*Root](ctx, partialParams)
+}
+
+func AutoExitParam() parameters.Parameter {
+	return runtime.CmdsParameter{
+		OptionName: "auto exit interval",
+		HelpText:   `Check every time interval (e.g. "30s") and stop the service if it's not active`,
+		EnvPrefix:  execName(),
+	}
 }
 
 func Parse[setIntf runtime.SettingsConstraint[settings], settings any](ctx context.Context,

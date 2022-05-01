@@ -15,13 +15,15 @@ import (
 	"github.com/multiformats/go-multiaddr"
 )
 
+// TODO: most of these tests were moved to executor_test
+//
 // spawnDaemon sets up the daemon environment and starts the server daemon.
 // The returned context is done when the daemon returns.
 func spawnDaemon(ctx context.Context, t *testing.T,
 	root *cmds.Command, optMap cmds.OptMap,
 ) (context.Context, environment.Environment, cmds.Response) {
 	t.Helper()
-	request, err := cmds.NewRequest(ctx, daemon.CmdsPath(),
+	request, err := cmds.NewRequest(ctx, cmdslib.CmdsPath(),
 		optMap, nil, nil, root)
 	if err != nil {
 		t.Log("hit:", err)

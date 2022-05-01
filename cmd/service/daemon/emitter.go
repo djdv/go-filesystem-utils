@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/environment/stop"
+	cmdsmaddr "github.com/djdv/go-filesystem-utils/internal/cmds/multiaddr"
 	"github.com/multiformats/go-multiaddr"
 )
 
@@ -20,7 +21,7 @@ func statusResponse(status Status, stopReason stop.Reason) *Response {
 func maddrListenerResponse(maddr multiaddr.Multiaddr) *Response {
 	return &Response{
 		Status:        Starting,
-		ListenerMaddr: maddr,
+		ListenerMaddr: &cmdsmaddr.Encapsulated{Multiaddr: maddr},
 	}
 }
 
@@ -28,7 +29,7 @@ func maddrShutdownResponse(maddr multiaddr.Multiaddr, reason stop.Reason) *Respo
 	return &Response{
 		Status:        Stopping,
 		StopReason:    reason,
-		ListenerMaddr: maddr,
+		ListenerMaddr: &cmdsmaddr.Encapsulated{Multiaddr: maddr},
 	}
 }
 

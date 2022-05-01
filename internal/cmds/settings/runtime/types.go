@@ -2,27 +2,31 @@ package runtime
 
 import (
 	"context"
-	"encoding/csv"
 	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
-	"strings"
 
-	. "github.com/djdv/go-filesystem-utils/internal/generic"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
+	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
-type errCh = <-chan error
+// TODO: Name. SettingsType?
+type SettingsConstraint[Settings any] interface {
+	*Settings           // Type parameter must be pointer to struct
+	parameters.Settings // which implements the Settings interface.
+}
 
 var (
+	// TODO: [review] should these be exported? Probably, but double check.
 	ErrUnassignable   = errors.New("cannot assign")
 	ErrUnexpectedType = errors.New("unexpected type")
-	errMultiPointer   = errors.New("multiple layers of indirection (not supported)")
 )
 
-func ArgsFromSettings[setPtr SettingsConstraint[settings], settings any](ctx context.Context,
-	set setPtr) (Arguments, errCh, error) {
-	fields, fieldsErrs, err := BindParameterFields[setPtr](ctx)
+func argsFromSettings[setPtr SettingsConstraint[settings], settings any](ctx context.Context,
+	set setPtr,
+) (Arguments, <-chan error, error) {
+	fields, fieldsErrs, err := bindParameterFields[setPtr](ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -57,10 +61,10 @@ func ArgsFromSettings[setPtr SettingsConstraint[settings], settings any](ctx con
 				return argument, nil
 			}
 		)
-		ProcessResults(ctx, fields, arguments, errs, fieldToArg)
+		generic.ProcessResults(ctx, fields, arguments, errs, fieldToArg)
 	}()
 
-	return arguments, CtxMerge(ctx, fieldsErrs, errs), nil
+	return arguments, generic.CtxMerge(ctx, fieldsErrs, errs), nil
 }
 
 func checkType[settings any]() (reflect.Type, error) {
@@ -93,187 +97,108 @@ func referenceFromField(field reflect.StructField, fieldValue reflect.Value) (in
 	return fieldValue.Addr().Interface(), nil
 }
 
-func maybeConvert(leftType, rightType reflect.Type, rightValue reflect.Value,
-	parsers typeParsers,
-) (*reflect.Value, error) {
-	specialValue, err := handlePtrArgTypes(leftType, rightType, rightValue, parsers)
+// parseBuiltin parses the string value as/to the provided Go type.
+func parseBuiltin(typ reflect.Type, value string) (interface{}, error) {
+	switch kind := typ.Kind(); kind {
+	case reflect.Bool:
+		return strconv.ParseBool(value)
+	case reflect.Int:
+		return strconv.Atoi(value)
+	case reflect.Int8:
+		parsedInt, err := strconv.ParseInt(value, 0, 8)
+		return int8(parsedInt), err
+	case reflect.Int16:
+		parsedInt, err := strconv.ParseInt(value, 0, 16)
+		return int16(parsedInt), err
+	case reflect.Int32:
+		parsedInt, err := strconv.ParseInt(value, 0, 32)
+		return int32(parsedInt), err
+	case reflect.Int64:
+		return strconv.ParseInt(value, 0, 64)
+	case reflect.Uint:
+		parsedUint, err := strconv.ParseUint(value, 0, 0)
+		return uint(parsedUint), err
+	case reflect.Uint8:
+		parsedUint, err := strconv.ParseUint(value, 0, 8)
+		return int8(parsedUint), err
+	case reflect.Uint16:
+		parsedUint, err := strconv.ParseUint(value, 0, 16)
+		return int16(parsedUint), err
+	case reflect.Uint32:
+		parsedUint, err := strconv.ParseUint(value, 0, 32)
+		return int32(parsedUint), err
+	case reflect.Uint64:
+		return strconv.ParseUint(value, 0, 64)
+	case reflect.Float32:
+		parsedFloat, err := strconv.ParseFloat(value, 32)
+		return float32(parsedFloat), err
+	case reflect.Float64:
+		return strconv.ParseFloat(value, 64)
+	case reflect.Complex64:
+		parsedComplex, err := strconv.ParseComplex(value, 64)
+		return complex64(parsedComplex), err
+	case reflect.Complex128:
+		return strconv.ParseComplex(value, 128)
+	default:
+		return nil, fmt.Errorf("%w: no parser for value type: %s kind: %s",
+			ErrUnexpectedType, typ, kind,
+		)
+	}
+}
+
+func parseVector(typ reflect.Type, values []string, parsers ...TypeParser) (interface{}, error) {
+	vectorValue, err := makeVector(typ, len(values))
 	if err != nil {
 		return nil, err
 	}
-	if specialValue != nil {
-		return specialValue, nil
+	var (
+		elemType       = typ.Elem()
+		userParser     = maybeGetParser(elemType, parsers...)
+		haveUserParser = userParser != nil
+		parse          func(s string) (interface{}, error)
+	)
+	if haveUserParser {
+		parse = userParser.ParseFunc
+	} else {
+		parse = func(s string) (interface{}, error) {
+			return parseBuiltin(elemType, s)
+		}
 	}
-	return maybeConvertBuiltin(leftType, rightType, rightValue)
-}
-
-func handlePtrArgTypes(leftType, rightType reflect.Type, rightValue reflect.Value,
-	parsers typeParsers,
-) (*reflect.Value, error) {
-	leftKind := leftType.Kind()
-	if leftKind == reflect.Slice ||
-		leftKind == reflect.Array {
-		return handleVectorArgs(leftType, rightValue, parsers)
-	}
-
-	goString, argIsString := rightValue.Interface().(string)
-	if argIsString {
-		convertedValue, err := ParseString(leftType, goString)
+	for i, stringValue := range values {
+		goValue, err := parse(stringValue)
 		if err != nil {
 			return nil, err
 		}
-		if convertedValue != nil {
-			var (
-				rVal          = *convertedValue
-				convertedType = rVal.Type()
+		vectorValue.Index(i).Set(reflect.ValueOf(goValue))
+	}
+	return vectorValue.Interface(), nil
+}
+
+// makeVector takes in an array or slice type and returns a new value for it.
+func makeVector(typ reflect.Type, elemCount int) (*reflect.Value, error) {
+	switch vectorKind := typ.Kind(); vectorKind {
+	case reflect.Array:
+		vectorLen := typ.Len()
+		if elemCount > vectorLen {
+			err := fmt.Errorf("array of size %d cannot fit %d elements",
+				vectorLen, elemCount,
 			)
-			return maybeConvertBuiltin(leftType, convertedType, rVal)
+			return nil, err
 		}
-	}
-
-	return nil, nil
-}
-
-func handleVectorArgs(leftType reflect.Type, rightValue reflect.Value,
-	parsers typeParsers,
-) (*reflect.Value, error) {
-	// Reduce the set to only the one we need.
-	if parser := parsers.Index(leftType.Elem()); parser != nil {
-		parsers = []TypeParser{*parser}
-	}
-	return parseVector(leftType, rightValue, parsers)
-}
-
-func parseVector(typ reflect.Type, value reflect.Value, parsers typeParsers) (*reflect.Value, error) {
-	kind := typ.Kind()
-	if kind != reflect.Slice &&
-		kind != reflect.Array {
+		arrayValue := reflect.New(typ).Elem()
+		return &arrayValue, nil
+	case reflect.Slice:
+		sliceValue := reflect.MakeSlice(typ, elemCount, elemCount)
+		return &sliceValue, nil
+	default:
 		err := fmt.Errorf(
 			"%w:"+
-				" got: `%v`"+
-				" want: `%v` or `%v`",
+				" got: `%s`"+
+				" want: `%s` or `%s`",
 			ErrUnexpectedType,
-			kind,
+			vectorKind,
 			reflect.Slice, reflect.Array,
 		)
 		return nil, err
 	}
-
-	var (
-		goValue          = value.Interface()
-		valueStrings, ok = goValue.([]string)
-	)
-	if !ok {
-		err := fmt.Errorf(
-			"%w:"+
-				" got: %T for type %v"+
-				" want: %T",
-			ErrUnexpectedType,
-			goValue, typ,
-			valueStrings,
-		)
-		return nil, err
-	}
-
-	var (
-		vectorLen  = value.Len()
-		arrayType  = reflect.ArrayOf(vectorLen, typ.Elem())
-		arrayValue = reflect.New(arrayType).Elem()
-	)
-	for i, argStr := range valueStrings {
-		var (
-			indexPtr   = arrayValue.Index(i).Addr().Interface()
-			indexAsArg = Argument{ValueReference: indexPtr}
-		)
-		if err := AssignToArgument(indexAsArg, argStr, parsers...); err != nil {
-			return nil, err
-		}
-	}
-	if kind == reflect.Array {
-		return &arrayValue, nil
-	}
-	sliceValue := arrayValue.Slice(0, vectorLen)
-	return &sliceValue, nil
-}
-
-func maybeConvertBuiltin(leftType, rightType reflect.Type, rightValue reflect.Value) (*reflect.Value, error) {
-	switch kind := leftType.Kind(); kind {
-	case reflect.Bool:
-		return &rightValue, nil
-	case reflect.String,
-		reflect.Struct,
-		reflect.Interface,
-		reflect.Int,
-		reflect.Int8,
-		reflect.Int16,
-		reflect.Int32,
-		reflect.Int64,
-		reflect.Uint,
-		reflect.Uint8,
-		reflect.Uint16,
-		reflect.Uint32,
-		reflect.Uint64,
-		reflect.Float32,
-		reflect.Float64,
-		reflect.Complex64,
-		reflect.Complex128:
-		if convertableTo := rightType.ConvertibleTo(leftType); convertableTo {
-			converted := rightValue.Convert(leftType)
-			return &converted, nil
-		}
-	case reflect.Ptr:
-		err := fmt.Errorf(
-			"%w: left type (%v)",
-			errMultiPointer, leftType,
-		)
-		return nil, err
-	}
-	return nil, nil
-}
-
-func ParseString(typ reflect.Type, value string) (*reflect.Value, error) {
-	const (
-		numberSize  = 64
-		complexSize = 128
-	)
-	var (
-		typedValue interface{}
-		err        error
-	)
-	switch kind := typ.Kind(); kind {
-	case reflect.String,
-		reflect.Interface:
-		typedValue = value
-	case reflect.Bool:
-		typedValue, err = strconv.ParseBool(value)
-	case reflect.Int,
-		reflect.Int8,
-		reflect.Int16,
-		reflect.Int32,
-		reflect.Int64:
-		typedValue, err = strconv.ParseInt(value, 0, numberSize)
-	case reflect.Uint,
-		reflect.Uint8,
-		reflect.Uint16,
-		reflect.Uint32,
-		reflect.Uint64:
-		typedValue, err = strconv.ParseUint(value, 0, numberSize)
-	case reflect.Float32,
-		reflect.Float64:
-		typedValue, err = strconv.ParseFloat(value, numberSize)
-	case reflect.Complex64,
-		reflect.Complex128:
-		typedValue, err = strconv.ParseComplex(value, complexSize)
-	case reflect.Slice,
-		reflect.Array:
-		typedValue, err = csv.NewReader(strings.NewReader(value)).Read()
-	default:
-		err = fmt.Errorf("%w: no parser for value kind %v",
-			ErrUnexpectedType, kind,
-		)
-	}
-	if err != nil {
-		return nil, err
-	}
-	reflectValue := reflect.ValueOf(typedValue)
-	return &reflectValue, nil
 }

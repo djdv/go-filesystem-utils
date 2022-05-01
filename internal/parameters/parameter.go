@@ -47,10 +47,11 @@ type (
 	}
 )
 
+//go:generate stringer -type=SourceID -linecomment
 const (
-	_ SourceID = iota
-	CommandLine
-	Environment
+	_           SourceID = iota
+	CommandLine          // command-line
+	Environment          // PROCESS_ENVIRONMENT
 )
 
 var ErrUnexpectedSourceID = errors.New("unexpected source ID")

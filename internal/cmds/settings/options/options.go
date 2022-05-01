@@ -6,7 +6,7 @@ import (
 	"reflect"
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
-	. "github.com/djdv/go-filesystem-utils/internal/generic"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
@@ -59,7 +59,7 @@ func (maker cmdsOptionMakerOpt) apply(set *cmdsOptionSettings) {
 	set.customMakers = append(set.customMakers, maker.OptionMaker)
 }
 
-func parseCmdsOptionOptions(options ...ConstructorOption) cmdsOptionSettings {
+func parseConstructorOptions(options ...ConstructorOption) cmdsOptionSettings {
 	var set cmdsOptionSettings
 	for _, opt := range options {
 		opt.apply(&set)
@@ -80,33 +80,31 @@ func MustMakeCmdsOptions[setPtr runtime.SettingsConstraint[set],
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// TODO: Change this to avoid `expandFields` in the first place.
-	// Rather than filtering it out.
-	// We need to do the binding ourselves too / refactor into function both ops can use
-	optionFields, generatorErrs, err := runtime.BindParameterFields[setPtr](ctx)
+	fields, err := runtime.ReflectFields[setPtr](ctx)
 	if err != nil {
 		panic(err)
 	}
-	reducedFields := onlyRootOptions(ctx, optionFields)
-
-	// TODO: The generator should produce a 3 value struct
-	// field, param, paramindex
-	// we should allocate for all-opts
-	// and blit into it
-	// or just append and sort-by-index
-	// before calling makeCmdsOption on them
-	// (cmds-lib preserves/prints options in the order they're registered)
-
 	var (
+		params = setPtr.Parameters(nil, ctx)
+		// FIXME: fields need to be reduced (pruned of embedded)
+		// before being fed to Bind
+		// ^ Done. Logic is still wrong.
+		// We need to drop the parameters with it.
+		// I.e. we need to expand in place, and for each field, skip param.
+		// TODO: need a test case for this.
+		reducedFields, reducedParams = skipEmbbedded(ctx, fields, params)
+		paramFields, errs            = runtime.BindParameterFields(ctx, reducedFields, reducedParams)
+		optionBufferHint             = cap(paramFields)
 		cmdsOptions,
 		maybeBuiltin []cmds.Option
-		optionBufferHint = cap(reducedFields)
 
-		constructorSettings = parseCmdsOptionOptions(options...)
-
-		makers  = constructorSettings.customMakers
-		makeOpt = func(field runtime.ParamField) error {
-			opt := makeCmdsOption(field.StructField, field.Parameter, makers)
+		constructorSettings = parseConstructorOptions(options...)
+		makers              = constructorSettings.customMakers
+		makeOpt             = func(field runtime.ParamField) error {
+			opt, err := makeCmdsOption(field.StructField, field.Parameter, makers)
+			if err != nil {
+				return err
+			}
 			cmdsOptions = append(cmdsOptions, opt)
 			return nil
 		}
@@ -115,12 +113,59 @@ func MustMakeCmdsOptions[setPtr runtime.SettingsConstraint[set],
 		maybeBuiltin = builtinOptions()
 		optionBufferHint += len(maybeBuiltin)
 	}
+
 	cmdsOptions = make([]cmds.Option, 0, optionBufferHint)
-	if err := ForEachOrError(ctx, reducedFields, generatorErrs, makeOpt); err != nil {
-		panic(err)
+	if err := generic.ForEachOrError(ctx, paramFields, errs, makeOpt); err != nil {
+		typ := reflect.TypeOf((*set)(nil)).Elem()
+		panic(fmt.Errorf("%s: %w", typ, err))
 	}
 
 	return append(cmdsOptions, maybeBuiltin...)
+}
+
+func skipEmbbedded(ctx context.Context, fields runtime.StructFields,
+	params parameters.Parameters) (runtime.StructFields, parameters.Parameters) {
+	var (
+		reducedFields = make(chan reflect.StructField, cap(fields))
+		reducedParams = make(chan parameters.Parameter, cap(params))
+	)
+	go func() {
+		defer close(reducedFields)
+		defer close(reducedParams)
+		skipEmbedded := func(field reflect.StructField) error {
+			if field.Anonymous &&
+				field.Type.Kind() == reflect.Struct {
+				for skipCount := field.Type.NumField(); skipCount != 0; skipCount-- {
+					select {
+					case <-params:
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+				return nil
+			}
+			// TODO: can we simplify this?
+			var param parameters.Parameter
+			select {
+			case param = <-params:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			select {
+			case reducedFields <- field:
+				select {
+				case reducedParams <- param:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		generic.ForEachOrError(ctx, fields, nil, skipEmbedded)
+	}()
+	return reducedFields, reducedParams
 }
 
 func builtinOptions() []cmds.Option {
@@ -133,30 +178,8 @@ func builtinOptions() []cmds.Option {
 	}
 }
 
-// TODO: when we hit a non-root just exit
-// input needs to be canceled when we exit too
-// ^ wrap this {ctx;gen;roots;cancel}
-func onlyRootOptions(ctx context.Context, params runtime.ParamFields) runtime.ParamFields {
-	relay := make(chan runtime.ParamField, cap(params))
-	go func() {
-		defer close(relay)
-		relayRootFields := func(param runtime.ParamField) error {
-			if len(param.StructField.Index) > 1 {
-				return nil
-			}
-			select {
-			case relay <- param:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-			return nil
-		}
-		ForEachOrError(ctx, params, nil, relayRootFields)
-	}()
-	return relay
-}
-
-func makeCmdsOption(field reflect.StructField, parameter parameters.Parameter, makers optionMakers) cmds.Option {
+func makeCmdsOption(field reflect.StructField,
+	parameter parameters.Parameter, makers optionMakers) (cmds.Option, error) {
 	if !field.IsExported() {
 		err := fmt.Errorf("%w:"+
 			" refusing to create option for unassignable field"+
@@ -164,7 +187,7 @@ func makeCmdsOption(field reflect.StructField, parameter parameters.Parameter, m
 			runtime.ErrUnassignable,
 			field.Name,
 		)
-		panic(err)
+		return nil, err
 	}
 
 	var (
@@ -172,12 +195,12 @@ func makeCmdsOption(field reflect.StructField, parameter parameters.Parameter, m
 		optionArgs = parameterToCmdsOptionArgs(parameter)
 	)
 	if customMaker := makers.Index(typ); customMaker != nil {
-		return customMaker.MakeOptionFunc(optionArgs...)
+		return customMaker.MakeOptionFunc(optionArgs...), nil
 	}
 
 	valKind := typ.Kind()
 	if builtinMaker := kindToCmdsOptionMaker(valKind); builtinMaker != nil {
-		return builtinMaker(optionArgs...)
+		return builtinMaker(optionArgs...), nil
 	}
 
 	err := fmt.Errorf("%w:"+
@@ -187,7 +210,7 @@ func makeCmdsOption(field reflect.StructField, parameter parameters.Parameter, m
 		field.Name,
 		typ,
 	)
-	panic(err)
+	return nil, err
 }
 
 func parameterToCmdsOptionArgs(parameter parameters.Parameter) []string {

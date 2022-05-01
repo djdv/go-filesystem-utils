@@ -57,7 +57,10 @@ func fromRequest(arg runtime.Argument, options cmds.OptMap, parsers ...runtime.T
 		commandlineName = arg.Name(parameters.CommandLine)
 	)
 	if cmdsArg, provided = options[commandlineName]; provided {
-		if err := runtime.AssignToArgument(arg, cmdsArg, parsers...); err != nil {
+		// TODO: [maybe] type check `cmdsArg` and pass to runtime.Parse if string?
+		// ^ We really just need a better name for AssignToArgument, that does maybeParse and Assign
+		// with the assignment part split out.
+		if err := runtime.ParseAndAssign(arg, cmdsArg, parsers...); err != nil {
 			return false, fmt.Errorf(
 				"parameter `%s`: couldn't assign value: %w",
 				commandlineName, err)

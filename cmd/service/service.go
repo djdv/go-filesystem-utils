@@ -43,9 +43,11 @@ func (svc *daemonCmdWrapper) Start(svcIntf service.Service) error {
 		sysLog         = svc.sysLog
 		serviceRequest = svc.serviceRequest
 		ctx            = serviceRequest.Context
+		requestPath    = []string{Name, daemon.Name}
+		options        = serviceRequest.Options
+		root           = serviceRequest.Root
 	)
-	daemonRequest, err := cmds.NewRequest(ctx, daemon.CmdsPath(),
-		serviceRequest.Options, nil, nil, serviceRequest.Root)
+	daemonRequest, err := cmds.NewRequest(ctx, requestPath, options, nil, nil, root)
 	if err != nil {
 		return logErr(sysLog, err)
 	}

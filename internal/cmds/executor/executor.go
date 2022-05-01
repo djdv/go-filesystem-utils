@@ -7,11 +7,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sync"
 	"time"
 
+	"github.com/djdv/go-filesystem-utils/cmd/service"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
-	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
+	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -23,7 +26,7 @@ var ErrCouldNotConnect = errors.New("could not connect to remote API")
 //
 // If no remote addresses are provided in the request,
 // a local service instance will be created and used automatically.
-func MakeExecutor(request *cmds.Request, env interface{}) (cmds.Executor, error) {
+func MakeExecutor(request *cmds.Request, _ interface{}) (cmds.Executor, error) {
 	// Execute the request locally if we can.
 	if request.Command.NoRemote ||
 		!request.Command.NoLocal {
@@ -32,48 +35,90 @@ func MakeExecutor(request *cmds.Request, env interface{}) (cmds.Executor, error)
 
 	// Everything else connects as a client.
 	ctx := request.Context
-	execSettings, err := settings.Parse[settings.Root](ctx, request)
+	settings, err := settings.Parse[*settings.Root](ctx, request)
 	if err != nil {
 		return nil, err
 	}
 	var (
-		cmd              = request.Command
-		serviceMaddrs    = execSettings.ServiceMaddrs
-		autoExitInterval = execSettings.AutoExitInterval
+		serviceMaddrs    = settings.ServiceMaddrs
+		autoExitInterval = settings.AutoExitInterval
 	)
-
-	return connectToOrLaunchDaemon(cmd, env, autoExitInterval, serviceMaddrs...)
-}
-
-func fLaunch(env cmds.Environment, autoExitInterval time.Duration) (cmds.Executor, error) {
-	if autoExitInterval == 0 { // Don't linger around forever.
-		autoExitInterval = 30 * time.Second
+	if len(serviceMaddrs) > 0 {
+		activeMaddr, err := getFirstDialable(ctx, serviceMaddrs...)
+		if err != nil {
+			return nil, err
+		}
+		return daemon.MakeClient(activeMaddr)
 	}
-	subCmd, serviceMaddr, err := relaunchSelfAsService(autoExitInterval)
+
+	defaultMaddrs, err := defaultMaddrs()
 	if err != nil {
 		return nil, err
 	}
-	// XXX: `environment` will only be this type in our `_test` package.
-	// This is not supported behavior and for validation only.
-	cmdPtr, callerWillManageProc := env.(*exec.Cmd)
-	if callerWillManageProc {
-		// Caller must call proc.Wait() or proc.Release()
-		*cmdPtr = *subCmd
-		// Otherwise call it now.
-	} else if err := subCmd.Process.Release(); err != nil {
+	switch activeMaddr, err := getFirstDialable(ctx, defaultMaddrs...); {
+	case err == nil:
+		return daemon.MakeClient(activeMaddr)
+	case errors.Is(err, ErrCouldNotConnect):
+		// TODO: don't spawn server if request.Command is `stop` command.
+		// We can no longer compare pointer values, so we need a new way to check
+		// equality of commands.
+		// Maybe something like command.Extra.DontStart would be general and good.
+		return launchServerAndConnect(autoExitInterval)
+	default:
 		return nil, err
 	}
-
-	return daemon.GetClient(serviceMaddr)
 }
 
-func connectToOrLaunchDaemon(cmd *cmds.Command, env cmds.Environment,
-	idleCheck time.Duration, args ...multiaddr.Multiaddr,
-) (cmds.Executor, error) {
-	if len(args) > 0 {
-		return getFirstConnection(args...)
+func getFirstDialable(ctx context.Context,
+	maddrs ...multiaddr.Multiaddr,
+) (multiaddr.Multiaddr, error) {
+	subCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	dialable := dialableMaddrs(subCtx, generate(subCtx, maddrs...))
+	select {
+	case dialableMaddr, ok := <-dialable:
+		if !ok {
+			return nil, ErrCouldNotConnect // TODO: add context to message. Canceled? tried which?
+		}
+		return dialableMaddr, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
+}
 
+// TODO: use handshake instead when implemented in server code.
+// ^ maybe we should return the net.Conn instead of a maddr
+// let the caller use and/or close it. This will be necessary for the handshake.
+// ^^ it'd make more sense to just do maddrs=>cmdsClients->handshake()=>cmdsClients
+// where the cmdslib will call our (ctx)dial itself internally.
+// TODO: review - make sure we exit cleanly when not needed
+func dialableMaddrs(ctx context.Context, maddrs <-chan multiaddr.Multiaddr) <-chan multiaddr.Multiaddr {
+	var (
+		maddrCount = len(maddrs)
+		dialable   = make(chan multiaddr.Multiaddr, maddrCount)
+	)
+	go func() {
+		defer close(dialable)
+		var (
+			dialerWg sync.WaitGroup
+			dial     = func(maddr multiaddr.Multiaddr) error {
+				dialerWg.Add(1)
+				go func() {
+					defer dialerWg.Done()
+					if daemon.ServerDialable(maddr) {
+						dialable <- maddr // no select (buffered).
+					}
+				}()
+				return nil
+			}
+		)
+		generic.ForEachOrError(ctx, maddrs, nil, dial)
+		dialerWg.Wait()
+	}()
+	return dialable
+}
+
+func defaultMaddrs() ([]multiaddr.Multiaddr, error) {
 	var (
 		sources = []func() ([]multiaddr.Multiaddr, error){
 			daemon.UserServiceMaddrs,
@@ -88,94 +133,50 @@ func connectToOrLaunchDaemon(cmd *cmds.Command, env cmds.Environment,
 		}
 		defaults = append(defaults, maddrs...)
 	}
-	client, err := connectToOrLaunchDaemon(cmd, env, idleCheck, defaults...)
-	if err == nil && client != nil {
-		return client, nil
+	return defaults, nil
+}
+
+// TODO: better names
+func launchServerAndConnect(autoExitInterval time.Duration) (cmds.Executor, error) {
+	if autoExitInterval == 0 { // Don't linger around forever.
+		autoExitInterval = 30 * time.Second
 	}
-	if !errors.Is(err, ErrCouldNotConnect) {
+	serviceMaddr, err := startService(autoExitInterval)
+	if err != nil {
 		return nil, err
 	}
-	// Don't launch daemon, just to stop it.
-	if cmd == stop.Command {
-		return nil, ErrCouldNotConnect
-	}
-
-	// Launch daemon, and try again via defaults.
-	return fLaunch(env, idleCheck)
+	return daemon.MakeClient(serviceMaddr)
 }
 
-func getFirstConnection(args ...multiaddr.Multiaddr) (cmds.Executor, error) {
-	var errs []error
-	for result := range testConnection(generateMaddrs(args...)) {
-		if err := result.error; err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		client, err := daemon.GetClient(result.Multiaddr)
-		if err == nil {
-			return client, nil
-		}
-		errs = append(errs, err)
-	}
-	err := ErrCouldNotConnect
-	for _, e := range errs {
-		err = fmt.Errorf("%w\n\t%s", err, e)
-	}
-	return nil, err
-}
-
-type maddrResult struct {
-	multiaddr.Multiaddr
-	error
-}
-
-func generateMaddrs(maddrs ...multiaddr.Multiaddr) <-chan multiaddr.Multiaddr {
-	maddrChan := make(chan multiaddr.Multiaddr, len(maddrs))
+func generate[typ any](ctx context.Context, inputs ...typ) <-chan typ {
+	out := make(chan typ, len(inputs))
 	go func() {
-		defer close(maddrChan)
-		for _, maddr := range maddrs {
-			maddrChan <- maddr
-		}
-	}()
-	return maddrChan
-}
-
-func testConnection(maddrs <-chan multiaddr.Multiaddr) <-chan maddrResult {
-	results := make(chan maddrResult, cap(maddrs))
-	go func() {
-		defer close(results)
-		for maddr := range maddrs {
-			var result maddrResult
-			if daemon.ServerDialable(maddr) {
-				result.Multiaddr = maddr
-			} else {
-				result.error = fmt.Errorf(
-					"could not connect to %s",
-					maddr.String(),
-				)
+		defer close(out)
+		for _, in := range inputs {
+			if ctx.Err() != nil { // Non-select check / full-buffered receiver.
+				return
 			}
-			results <- result
+			out <- in
 		}
 	}()
-	return results
+	return out
 }
 
-// relaunchSelfAsService creates a process,
-// and waits for the service to return its address.
-// Caller must call either cmd.Wait or cmd.proc.Release.
-func relaunchSelfAsService(exitInterval time.Duration) (*exec.Cmd, multiaddr.Multiaddr, error) {
-	cmd, err := selfCommand(exitInterval)
+// startService creates a service process and
+// returns the addresses received from that process.
+func startService(exitInterval time.Duration) (multiaddr.Multiaddr, error) {
+	cmd, err := newServiceCommand(exitInterval)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	sio, err := setupIPC(cmd)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	serviceMaddr, err := startAndCommunicateWith(cmd, sio)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	if err := detatchIO(sio); err != nil {
@@ -194,35 +195,35 @@ func relaunchSelfAsService(exitInterval time.Duration) (*exec.Cmd, multiaddr.Mul
 				)
 			}
 		}
-		return nil, nil, fmt.Errorf("could not start background service: %w", err)
+		return nil, fmt.Errorf("could not start background service: %w", err)
+	}
+	if err := cmd.Process.Release(); err != nil {
+		return nil, err
 	}
 
-	return cmd, serviceMaddr, nil
+	return serviceMaddr, nil
 }
 
-func selfCommand(exitInterval time.Duration) (*exec.Cmd, error) {
-	self, err := os.Executable()
-	if err != nil {
-		return nil, err
-	}
-	cwd, err := os.Getwd()
+func newServiceCommand(exitInterval time.Duration) (*exec.Cmd, error) {
+	execName, err := os.Executable()
 	if err != nil {
 		return nil, err
 	}
 
-	cmd := exec.Command(self, daemon.CmdsPath()...)
-	cmd.Dir = cwd
-	cmd.Env = os.Environ()
+	execArgs := []string{
+		service.Name, daemon.Name,
+		fmt.Sprintf("--%s=%s",
+			cmds.EncShort, cmds.JSON,
+		),
+	}
 	if exitInterval != 0 {
-		cmd.Args = append(cmd.Args,
+		execArgs = append(execArgs,
 			fmt.Sprintf("--%s=%s",
-				settings.AutoExitParam, exitInterval,
-			),
-			fmt.Sprintf("--%s=%s",
-				cmds.EncShort, cmds.JSON,
+				settings.AutoExitParam().Name(parameters.CommandLine), exitInterval,
 			),
 		)
 	}
+	cmd := exec.Command(execName, execArgs...)
 	return cmd, nil
 }
 

@@ -97,6 +97,11 @@ func FindLocalServer() (multiaddr.Multiaddr, error) {
 	)
 }
 
+// TODO: replace this.
+// We should have something that both checks and returns a client
+// By doing more than just dialing, some handshake protocol `/up`, `/version` etc.
+// (so that we know we're talking to the daemon, not some arbitrary socket.)
+//
 // ServerDialable returns true if the multiaddr is dialable.
 // Signifying the target service at that address is ready for operation.
 func ServerDialable(maddr multiaddr.Multiaddr) (connected bool) {
@@ -110,7 +115,10 @@ func ServerDialable(maddr multiaddr.Multiaddr) (connected bool) {
 	return
 }
 
-func GetClient(maddr multiaddr.Multiaddr) (cmds.Executor, error) {
+// TODO: unexport this in favour of something that
+// makes the client and tests that the server is up?
+// When would a caller need a client for a server that isn't up?
+func MakeClient(maddr multiaddr.Multiaddr) (cmds.Executor, error) {
 	clientHost, clientOpts, err := parseCmdsClientOptions(maddr)
 	if err != nil {
 		return nil, err
@@ -129,9 +137,9 @@ func parseCmdsClientOptions(maddr multiaddr.Multiaddr) (clientHost string, clien
 	case "unix":
 		// TODO: Consider patching cmds-lib.
 		// We want to use the URL scheme "http+unix".
-		// As-is, it prefixes the value to be parsed by pkg `url` as `http://http+unix://`.
-		// It would be nice if this was handled internally.
-		// (I.e. if `http+unix://`, setup up the http client)
+		// But as-is, cmdslib doesn't recognize that protocol and will prefix the value
+		// as `http://http+unix://`.
+		// It would be nice if unix socket maddrs were handled internally by `cmdshttp`
 		clientHost = fmt.Sprintf("http://%s-%s", ServerRootName, ServerName)
 		netDialer := new(net.Dialer)
 		clientOpts = append(clientOpts, cmdshttp.ClientWithHTTPClient(&http.Client{

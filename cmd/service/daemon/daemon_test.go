@@ -180,7 +180,7 @@ func testDaemonRemote(t *testing.T, root *cmds.Command) {
 			t.Run(fmt.Sprintf("Make client for: %s", serverMaddr.String()),
 				func(t *testing.T) {
 					var err error
-					if client, err = daemon.GetClient(serverMaddr); err != nil {
+					if client, err = daemon.MakeClient(serverMaddr); err != nil {
 						t.Fatal(err)
 					}
 				})

@@ -6,32 +6,33 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/environment"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/environment/stop"
 )
 
-// Make sure the stringer file was generated and works (at compile time).
 func TestStringer(t *testing.T) {
-	var zeroReason environment.Reason
+	// Make sure the `stringer` file was generated (compile time)
+	// and works (no panic at runtime).
+	var zeroReason stop.Reason
 	_ = zeroReason.String()
-	_ = environment.Requested.String()
+	_ = stop.Requested.String()
 }
 
 func TestStopper(t *testing.T) {
 	var (
 		ctx, cancel           = context.WithCancel(context.Background())
 		serviceEnv, envCancel = makeEnv(t)
-		stopEnv               = serviceEnv.Daemon().Stopper()
+		stopEnv               = serviceEnv.Stopper()
 	)
 	defer cancel()
 	defer envCancel()
 
 	t.Run("Stop should error", func(t *testing.T) {
-		if err := stopEnv.Stop(environment.Requested); err == nil {
+		if err := stopEnv.Stop(stop.Requested); err == nil {
 			t.Fatal("expected Stop to return error (not initialized) but received nil")
 		}
 	})
 
-	var stopChan <-chan environment.Reason
+	var stopChan <-chan stop.Reason
 	t.Run("Initialize", func(t *testing.T) {
 		var err error
 		if stopChan, err = stopEnv.Initialize(ctx); err != nil {
@@ -44,7 +45,7 @@ func TestStopper(t *testing.T) {
 
 	t.Run("Stop", func(t *testing.T) {
 		var (
-			testReason = environment.Requested
+			testReason = stop.Requested
 
 			stopErrs = make(chan error, 1)
 			stop     = func() {
@@ -100,7 +101,7 @@ func TestStopper(t *testing.T) {
 		}
 		testCancel()
 		var (
-			err         = stopEnv.Stop(environment.Requested)
+			err         = stopEnv.Stop(stop.Requested)
 			expectedErr = context.Canceled
 		)
 		if !errors.Is(err, expectedErr) {

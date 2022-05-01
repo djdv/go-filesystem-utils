@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/djdv/go-filesystem-utils/internal/cmds/environment"
+	cmdsenv "github.com/djdv/go-filesystem-utils/internal/cmds/environment"
 	. "github.com/djdv/go-filesystem-utils/internal/generic"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	cmdshttp "github.com/ipfs/go-ipfs-cmds/http"

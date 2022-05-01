@@ -2,8 +2,10 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
@@ -17,16 +19,13 @@ type (
 	}
 	Arguments <-chan Argument
 
-	// SetFunc is provided a settings's Arguments to be set.
-	// It should attempt to set the ValueReference,
-	// by utilizing the Parameter to search some value store.
-	// If SetFunc doesn't have a value for the Parameter,
-	// it should relay the Argument to its output channel.
-	// (So that subsequent SetFuncs may search their own value sources for it.)
+	// SetFunc should attempt to assign to each `Argument.ValueReference` it receives.
+	// (Typically by utilizing the `Argument.Parameter.Name` as a key to a value store.)
+	// SetFunc must send all unassigned `Argument`s (if any) to its output channel.
 	SetFunc func(context.Context, Arguments, ...TypeParser) (unsetArgs Arguments, _ <-chan error)
 
 	// ParseFunc receives a string representation of the data value,
-	// and should return a typed Go value of it.
+	// and returns a typed Go value of it.
 	ParseFunc func(argument string) (value interface{}, _ error)
 
 	// TypeParser is the binding of a type with its corresponding parser function.
@@ -34,14 +33,49 @@ type (
 		reflect.Type
 		ParseFunc
 	}
-	typeParsers []TypeParser
 )
 
-func (parsers typeParsers) Index(typ reflect.Type) *TypeParser {
+func maybeGetParser(typ reflect.Type, parsers ...TypeParser) *TypeParser {
 	for _, parser := range parsers {
 		if parser.Type == typ {
 			return &parser
 		}
 	}
 	return nil
+}
+
+// TODO: outdated? check comment
+// / Parse will populate `set` using values returned by each `SetFunc`.
+// Value sources are queried in the same order they're provided.
+// If a setting cannot be set by one source,
+// it's reference is relayed to the next `SetFunc`.
+func Parse[setIntf SettingsConstraint[set], set any](ctx context.Context,
+	setFuncs []SetFunc, parsers ...TypeParser,
+) (*set, error) {
+	settingsPointer := new(set)
+	unsetArgs, generatorErrs, err := argsFromSettings[setIntf](ctx, settingsPointer)
+	if err != nil {
+		return nil, err
+	}
+
+	const generatorChanCount = 1
+	errChans := make([]<-chan error, 0,
+		generatorChanCount+len(setFuncs),
+	)
+	errChans = append(errChans, generatorErrs)
+
+	for _, setter := range setFuncs {
+		var errChan <-chan error
+		unsetArgs, errChan = setter(ctx, unsetArgs, parsers...)
+		errChans = append(errChans, errChan)
+	}
+
+	var (
+		errs  = generic.CtxMerge(ctx, errChans...)
+		drain = func(Argument) error { return nil }
+	)
+	if err := generic.ForEachOrError(ctx, unsetArgs, errs, drain); err != nil {
+		return nil, fmt.Errorf("Parse encountered an error: %w", err)
+	}
+	return settingsPointer, ctx.Err()
 }

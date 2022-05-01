@@ -80,7 +80,7 @@ func StatusCommand() *cmds.Command {
 		Type:     Response{},
 		Run: func(request *cmds.Request, emitter cmds.ResponseEmitter, _ cmds.Environment) error {
 			ctx := request.Context
-			statusSettings, err := settings.Parse[Settings](ctx, request)
+			statusSettings, err := settings.Parse[*Settings](ctx, request)
 			if err != nil {
 				return err
 			}

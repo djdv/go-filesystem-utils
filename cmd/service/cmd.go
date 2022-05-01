@@ -21,7 +21,7 @@ const (
 )
 
 type Settings struct {
-	Username string `settings:"arguments"`
+	Username string
 	ServiceName,
 	ServiceDisplayName,
 	ServiceDescription string
@@ -86,7 +86,7 @@ func serviceRun(request *cmds.Request, emitter cmds.ResponseEmitter, env cmds.En
 	}
 
 	ctx := request.Context
-	serviceSettings, err := settings.Parse[Settings](ctx, request)
+	serviceSettings, err := settings.Parse[*Settings](ctx, request)
 	if err != nil {
 		return err
 	}

@@ -4,11 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/environment"
+	cmdsenv "github.com/djdv/go-filesystem-utils/internal/cmds/environment"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
-func makeEnv(t *testing.T) (environment.Environment, context.CancelFunc) {
+func makeEnv(t *testing.T) (cmdsenv.Environment, context.CancelFunc) {
 	t.Helper()
 	var (
 		ctx, cancel = context.WithCancel(context.Background())
@@ -21,12 +21,12 @@ func makeEnv(t *testing.T) (environment.Environment, context.CancelFunc) {
 		t.Fatal(err)
 	}
 
-	env, err := environment.MakeEnvironment(ctx, request)
+	env, err := cmdsenv.MakeEnvironment(ctx, request)
 	if err != nil {
 		cancel()
 		t.Fatal(err)
 	}
-	serviceEnv, err := environment.Assert(env)
+	serviceEnv, err := cmdsenv.Assert(env)
 	if err != nil {
 		cancel()
 		t.Fatal(err)
@@ -42,7 +42,7 @@ func TestEnvironment(t *testing.T) {
 func TestAssert(t *testing.T) {
 	_, cancel := makeEnv(t)
 	defer cancel()
-	if _, err := environment.Assert(nil); err == nil {
+	if _, err := cmdsenv.Assert(nil); err == nil {
 		t.Fatal("expected assert to error (nil input), but got nil error")
 	}
 }

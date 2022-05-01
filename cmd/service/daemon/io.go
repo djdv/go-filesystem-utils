@@ -215,7 +215,7 @@ func signalFromReader(ctx context.Context, signal stdioSignal, reader io.Reader)
 			if !bytes.Equal(expected, signal) {
 				err := fmt.Errorf(
 					"unexpected response on stdin"+
-						"\n\t wanted: %#v"+
+						"\n\twanted: %#v"+
 						"\n\tgot: %#v",
 					expected, signal,
 				)

@@ -3,17 +3,22 @@ package executor_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/djdv/go-filesystem-utils/cmd/service"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon"
 	"github.com/djdv/go-filesystem-utils/cmd/service/daemon/stop"
+	cmdslib "github.com/djdv/go-filesystem-utils/internal/cmds"
+	cmdsenv "github.com/djdv/go-filesystem-utils/internal/cmds/environment"
 	"github.com/djdv/go-filesystem-utils/internal/cmds/executor"
-	fscmds "github.com/djdv/go-filesystem-utils/internal/cmds/settings"
-	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/environment"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/settings"
+	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
 	"github.com/multiformats/go-multiaddr"
@@ -26,16 +31,15 @@ func TestMain(m *testing.M) {
 		os.Args[1] == service.Name &&
 		os.Args[2] == daemon.Name {
 		var (
-			ctx  = context.Background()
-			root = &cmds.Command{
-				Options: fscmds.RootOptions(),
-				Subcommands: map[string]*cmds.Command{
-					service.Name: service.Command,
-				},
-			}
-			err = cli.Run(ctx, root, os.Args,
+			ctx = context.Background()
+			// FIXME: the remote test commands are not going to be seen
+			// when the executor respawns us (argv[0])
+			// We need an explicit testRoot() that adds on to the normal root
+			// root = cmdslib.Root()
+			root = testRoot()
+			err  = cli.Run(ctx, root, os.Args,
 				os.Stdin, os.Stdout, os.Stderr,
-				environment.MakeEnvironment, executor.MakeExecutor)
+				cmdsenv.MakeEnvironment, executor.MakeExecutor)
 		)
 		if err != nil {
 			var cliError cli.ExitError
@@ -45,186 +49,328 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
-	// otherwise call Go's standard testing.Main
+	// Otherwise call Go's standard testing.Main
 	os.Exit(m.Run())
 }
 
-func TestExecutor(t *testing.T) {
-	t.Run("nil inputs", func(t *testing.T) {
-		defer func() { recover() }() // nil args are expected to panic.
-		_, err := executor.MakeExecutor(nil, nil)
-		if err == nil {
-			t.Fatal("executor was returned with nil constructor arguments")
-		}
-	})
+const remoteCommandName = "remote-test"
 
-	type testStruct struct {
-		name    string
-		cmdPath []string
+type responseType bool
+
+func testRoot() *cmds.Command {
+	// responseInstance responseType // Pre-generic vestige - will be reflected for its type.
+	root := cmdslib.Root()
+	root.Subcommands[remoteCommandName] = &cmds.Command{
+		NoLocal: true,
+		// TODO: file a bug upstream
+		// even if Type is non-pointer, http.Response gives us one.
+		// This is inconsistent with chan.Response which gives us the exact value
+		// Either chan should always return pointers, or http should return values
+		// (if the type is a value rather than a pointer)
+		// Type:    responseInstance,
+		Type: new(responseType),
+		Run: func(_ *cmds.Request, re cmds.ResponseEmitter, _ cmds.Environment) error {
+			// if err := re.Emit(responseType(true)); err != nil {
+			var response responseType = true
+			if err := re.Emit(&response); err != nil {
+				return err
+			}
+			return nil
+		},
 	}
-	const (
-		rootCmdName   = "root"
-		localCmdName  = "local"
-		remoteCmdName = "remote"
-	)
+	return root
+}
+
+func TestExecutor(t *testing.T) {
+	t.Run("valid", testExecutorValid)
+}
+
+func testExecutorValid(t *testing.T) {
+	t.Run("local", localCommand)
+	t.Run("remote", remoteCommands)
+}
+
+func localCommand(t *testing.T) {
 	var (
-		remoteCmdTest = testStruct{
-			name:    remoteCmdName,
-			cmdPath: []string{remoteCmdName},
-		}
-
-		tests = []testStruct{
-			{
-				name:    rootCmdName,
-				cmdPath: nil,
-			},
-			{
-				name:    localCmdName,
-				cmdPath: []string{localCmdName},
-			},
-			remoteCmdTest,
-		}
-		root = &cmds.Command{
-			Subcommands: map[string]*cmds.Command{
-				localCmdName: {NoRemote: true},
-				remoteCmdName: {
-					NoLocal: true,
-					Run: func(*cmds.Request, cmds.ResponseEmitter, cmds.Environment) error {
-						return nil
-					},
-				},
-				service.Name: service.Command,
+		ctx, cancel = context.WithCancel(context.Background())
+		root        = &cmds.Command{
+			Run: func(*cmds.Request, cmds.ResponseEmitter, cmds.Environment) error {
+				return nil
 			},
 		}
+		request, env            = newRequestAndEnv(t, ctx, ctx, root, nil, nil)
+		exec, emitter, response = newExecAndResponsePair(t, env, request)
 	)
-	t.Run("No options", func(t *testing.T) {
-		serviceMaddrs, err := daemon.UserServiceMaddrs()
-		if err != nil {
-			t.Fatal(err)
+	defer cancel()
+	if err := exec.Execute(request, emitter, env); err != nil {
+		t.Error(err)
+	}
+	respChan, errs := responseToChan[any](response)
+	for respChan != nil ||
+		errs != nil {
+		select {
+		case _, ok := <-respChan:
+			if !ok {
+				respChan = nil
+				continue
+			}
+		case err, ok := <-errs:
+			if !ok {
+				errs = nil
+				continue
+			}
+			t.Error(err)
+			cancel()
 		}
+	}
+}
 
-		var (
-			procLauncherIndex = len(tests) - 1
-			subCmdEnv         = new(exec.Cmd)
-		)
-		for i, test := range tests {
-			t.Run(test.name+" request", func(t *testing.T) {
-				request, cmdsEnv := issueRequest(t, root, test.cmdPath, nil)
-				var (
-					execEnv    cmds.Environment
-					useProcEnv = i == procLauncherIndex
+// TODO: break the cmdslib dance into generic functions or something.
+// We magically know how it works, but it's not obvious and not documented upstream either.
+// Since we can use type parameters we can probably break this into generic steps or callbacks.
+func remoteCommands(t *testing.T) {
+	t.Run("auto daemon", autoDaemon)
+	t.Run("manual daemon", manualDaemon)
+}
+
+func manualDaemon(t *testing.T) {
+	var (
+		daemonErrs  <-chan error
+		ctx, cancel = context.WithCancel(context.Background())
+		daemonOpts  = daemonOpts()
+	)
+	defer cancel()
+	t.Run("start daemon", func(t *testing.T) { daemonErrs = execDaemon(t, ctx, daemonOpts) })
+	t.Run("call remote", func(t *testing.T) { execRemote(t, ctx, daemonOpts) })
+	t.Run("request daemon stop", func(t *testing.T) { execStop(t, ctx, daemonOpts) })
+	t.Run("wait for daemon to stop", func(t *testing.T) {
+		const timeout = 4 * time.Second
+		select {
+		case err := <-daemonErrs:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(timeout):
+			t.Error("daemon did not stop after ", timeout)
+		}
+	})
+}
+
+func autoDaemon(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	t.Run("call remote", func(t *testing.T) { execRemote(t, ctx, nil) })
+	t.Run("request daemon stop", func(t *testing.T) { execStop(t, ctx, nil) })
+}
+
+func daemonOpts() cmds.OptMap {
+	const sockName = "exec-test-socket"
+	var (
+		sockPath         = filepath.Join(os.TempDir(), sockName)
+		sockMaddr        = "/unix/" + sockPath
+		apiParameterName = settings.APIParam().Name(parameters.CommandLine)
+	)
+	return cmds.OptMap{apiParameterName: []string{sockMaddr}}
+}
+
+// returned context is done when daemon call exits.
+func execDaemon(t *testing.T, ctx context.Context, options cmds.OptMap) <-chan error {
+	var (
+		root                 = testRoot()
+		testPath             = []string{service.Name, daemon.Name}
+		request, env         = newRequestAndEnv(t, ctx, ctx, root, testPath, options)
+		_, emitter, response = newExecAndResponsePair(t, env, request)
+	)
+	go func() {
+		root.Call(request, emitter, env)
+	}()
+	var (
+		noopHandler      = func(*daemon.Response) error { return nil }
+		startup, runtime = daemon.SplitResponse(response, noopHandler, noopHandler)
+		daemonErrs       = make(chan error, 1)
+	)
+	if err := startup(); err != nil {
+		t.Error(err)
+	}
+	go func() {
+		defer close(daemonErrs)
+		if err := runtime(); err != nil {
+			daemonErrs <- err
+		}
+	}()
+
+	return daemonErrs
+}
+
+func execRemote(t *testing.T, ctx context.Context, options cmds.OptMap) {
+	var (
+		root                                 = testRoot()
+		testPath                             = []string{remoteCommandName}
+		expectedResponse        responseType = true
+		request                              = newRequest(t, ctx, ctx, root, testPath, options)
+		exec, emitter, response              = newExecAndResponsePair(t, nil, request)
+		execErrs                             = execute(exec, request, emitter, nil)
+		respChan, respErrs                   = responseToChan[*responseType](response)
+	)
+	select {
+	case err := <-execErrs:
+		t.Fatal(err)
+	default:
+	}
+	for respChan != nil ||
+		respErrs != nil {
+		select {
+		case resp, ok := <-respChan:
+			if !ok {
+				respChan = nil
+				continue
+			}
+			if *resp != expectedResponse {
+				// TODO: add a count/bool we only expect to get 1 response, if we get more, error out.
+				t.Errorf("command responded with unexpected response"+
+					"\n\tgot: (%T)%v"+
+					"\n\twant: (%T)%v",
+					resp, resp, expectedResponse, expectedResponse,
 				)
-				if useProcEnv {
-					execEnv = subCmdEnv
-				} else {
-					execEnv = cmdsEnv
-				}
-
-				if _, err := executor.MakeExecutor(request, execEnv); err != nil {
-					t.Fatal(err)
-				}
-
-				if useProcEnv &&
-					subCmdEnv.Process == nil {
-					t.Fatal("subprocess was not returned by constructor/launcher")
-				}
-			})
-		}
-
-		t.Run("reuse instance", func(t *testing.T) {
-			// FIXME: sometimes panics (go test -count=10 .\...)
-			// because `.Process` is nil
-			// ^ daemon is panicing and exiting abruptly?
-			currentPid := subCmdEnv.Process.Pid
-			request, _ := issueRequest(t, root, remoteCmdTest.cmdPath, nil)
-			if _, err = executor.MakeExecutor(request, subCmdEnv); err != nil {
-				t.Fatal(err)
 			}
-			if currentPid != subCmdEnv.Process.Pid {
-				t.Fatal("subprocess was overwritten before exiting")
+		case err, ok := <-respErrs:
+			if !ok {
+				respErrs = nil
+				continue
 			}
-		})
-
-		for _, serviceMaddr := range serviceMaddrs {
-			stopIntstance(t, serviceMaddr, root, subCmdEnv)
+			t.Error(err)
 		}
-	})
+	}
 
-	t.Run("Stop special case", func(t *testing.T) {
-		cmdPath := []string{service.Name, daemon.Name, stop.Name}
-		request, serviceEnv := issueRequest(t, root, cmdPath, nil)
-		if _, err := executor.MakeExecutor(request, serviceEnv); err != nil {
-			if !errors.Is(err, executor.ErrCouldNotConnect) {
-				t.Fatal(err)
+	if err := <-execErrs; err != nil {
+		t.Error(err)
+	}
+}
+
+func execStop(t *testing.T, ctx context.Context, options cmds.OptMap) {
+	var (
+		root                    = testRoot()
+		testPath                = []string{service.Name, daemon.Name, stop.Name}
+		request                 = newRequest(t, ctx, ctx, root, testPath, options)
+		exec, emitter, response = newExecAndResponsePair(t, nil, request)
+		execErrs                = execute(exec, request, emitter, nil)
+		respChan, respErrs      = responseToChan[any](response)
+	)
+	select {
+	case err := <-execErrs:
+		t.Fatal(err)
+	default:
+	}
+	for respChan != nil ||
+		respErrs != nil {
+		select {
+		case _, ok := <-respChan:
+			if !ok {
+				respChan = nil
+				continue
 			}
+		case err, ok := <-respErrs:
+			if !ok {
+				respErrs = nil
+				continue
+			}
+			t.Error(err)
 		}
-	})
+	}
+	if err := <-execErrs; err != nil {
+		t.Error(err)
+	}
+}
 
-	t.Run("With options", func(t *testing.T) {
-		var (
-			serviceMaddr = multiaddr.StringCast("/ip4/127.0.0.1/tcp/0")
-			optMap       = cmds.OptMap{
-				// NOTE: We provide an address just to prevent the executor-constructor
-				// from trying to spawn a server instance (which happens by default)
-				fscmds.APIParam().CommandLine(): []multiaddr.Multiaddr{
-					serviceMaddr,
-				},
-			}
-		)
-		for _, test := range tests {
-			t.Run(test.name+" request", func(t *testing.T) {
-				request, serviceEnv := issueRequest(t, root, test.cmdPath, optMap)
-				if _, err := executor.MakeExecutor(request, serviceEnv); err != nil {
-					if !errors.Is(err, executor.ErrCouldNotConnect) {
-						t.Fatal(err)
-					}
+func execute(exec cmds.Executor, request *cmds.Request,
+	emitter cmds.ResponseEmitter, env cmds.Environment,
+) <-chan error {
+	errs := make(chan error)
+	go func() {
+		defer close(errs)
+		if err := exec.Execute(request, emitter, env); err != nil {
+			errs <- err
+		}
+	}()
+	return errs
+}
+
+func responseToChan[responseType any](response cmds.Response) (<-chan responseType, <-chan error) {
+	var (
+		out  = make(chan responseType)
+		errs = make(chan error)
+	)
+	go func() {
+		defer close(out)
+		defer close(errs)
+		for {
+			resp, err := response.Next()
+			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					errs <- err
 				}
-			})
+				return
+			}
+			typedResponse, ok := resp.(responseType)
+			if !ok {
+				errs <- fmt.Errorf("emitter responded with unexpected type"+
+					"\n\tgot: %T"+
+					"\n\twant: %T",
+					resp, typedResponse,
+				)
+				continue // Caller should cancel request/response context now.
+			}
+			out <- typedResponse
 		}
-	})
+	}()
+	return out, errs
 }
 
 func stopIntstance(t *testing.T,
 	serviceMaddr multiaddr.Multiaddr, root *cmds.Command,
 	subCmd *exec.Cmd,
 ) {
-	client, err := daemon.GetClient(serviceMaddr)
+	client, err := daemon.MakeClient(serviceMaddr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stopRequest, err := cmds.NewRequest(context.Background(),
-		append(daemon.CmdsPath(), stop.Name),
+
+	testCtx, testCancel := context.WithCancel(context.Background())
+	defer testCancel()
+
+	stopRequest, err := cmds.NewRequest(testCtx,
+		[]string{service.Name, daemon.Name, stop.Name},
 		nil, nil, nil, root,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	// TODO: Better names.
 	var (
 		emitter, response = cmds.NewChanResponsePair(stopRequest)
 		responseErrs      = make(chan error, 1)
-		execErrs          = make(chan error, 1)
-	)
-
-	go func() {
-		defer close(responseErrs)
-		for {
-			_, err := response.Next()
-			if err != nil {
-				if !errors.Is(err, io.EOF) {
-					responseErrs <- err
+		responseHandler   = func() {
+			defer close(responseErrs)
+			for {
+				if _, err := response.Next(); err != nil {
+					if !errors.Is(err, io.EOF) {
+						responseErrs <- err
+					}
+					return
 				}
-				return
 			}
 		}
-	}()
-
-	go func() {
-		defer close(execErrs)
-		if err := client.Execute(stopRequest, emitter, nil); err != nil {
-			execErrs <- err
+		execErrs    = make(chan error, 1)
+		execHandler = func() {
+			defer close(execErrs)
+			if err := client.Execute(stopRequest, emitter, nil); err != nil {
+				execErrs <- err
+			}
 		}
-	}()
+	)
+	go responseHandler()
+	go execHandler()
 
 	for execErrs != nil ||
 		responseErrs != nil {
@@ -244,7 +390,8 @@ func stopIntstance(t *testing.T,
 				continue
 			}
 		}
-		t.Fatal(err)
+		testCancel()
+		t.Error(err)
 	}
 
 	if err := subCmd.Wait(); err != nil {
@@ -252,19 +399,35 @@ func stopIntstance(t *testing.T,
 	}
 }
 
-func issueRequest(t *testing.T, root *cmds.Command,
-	path []string, optMap cmds.OptMap,
-) (*cmds.Request, cmds.Environment) {
-	ctx := context.Background()
-	request, err := cmds.NewRequest(ctx, path, optMap,
+func newRequest(t *testing.T, reqCtx, envCtx context.Context,
+	root *cmds.Command, path []string, optMap cmds.OptMap,
+) *cmds.Request {
+	t.Helper()
+	request, err := cmds.NewRequest(reqCtx, path, optMap,
 		nil, nil, root)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return request
+}
 
-	serviceEnv, err := environment.MakeEnvironment(ctx, request)
+func newRequestAndEnv(t *testing.T, reqCtx, envCtx context.Context,
+	root *cmds.Command, path []string, optMap cmds.OptMap,
+) (*cmds.Request, cmds.Environment) {
+	t.Helper()
+	request := newRequest(t, reqCtx, envCtx, root, path, optMap)
+	serviceEnv, err := cmdsenv.MakeEnvironment(envCtx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return request, serviceEnv
+}
+
+func newExecAndResponsePair(t *testing.T, env cmds.Environment, request *cmds.Request) (cmds.Executor, cmds.ResponseEmitter, cmds.Response) {
+	exec, err := executor.MakeExecutor(request, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emitter, response := cmds.NewChanResponsePair(request)
+	return exec, emitter, response
 }

@@ -225,11 +225,6 @@ func testOptionsReflectInvalid(t *testing.T) {
 			options.MustMakeCmdsOptions[*settingsUnhandledType],
 			"this Settings interface contains types we don't account for",
 		},
-		{
-			"invalid concrete type",
-			options.MustMakeCmdsOptions[*notAStruct],
-			"this Settings interface is not a pointer",
-		},
 	} {
 		var (
 			testName    = test.name
@@ -242,70 +237,3 @@ func testOptionsReflectInvalid(t *testing.T) {
 		})
 	}
 }
-
-/*
-
-func testOptionsEmbedded(t *testing.T) {
-	t.Parallel()
-	var (
-		settings      = new(embeddedStructSettings)
-		expectedCount = len((*embeddedStructSettings)(nil).Parameters())
-	)
-	opts := parameters.MustMakeCmdsOptions(settings)
-	if optLen := len(opts); expectedCount != optLen {
-		optStrings := make([]string, optLen)
-		for i, opt := range opts {
-			optStrings[i] = opt.Name()
-		}
-		t.Errorf("settings options do not match expected count"+
-			"\n\tgot: {%d}[%s]"+
-			"\n\twant: {%d}[...]",
-			optLen, strings.Join(optStrings, ", "),
-			expectedCount,
-		)
-	}
-}
-
-func testOptionsOptions(t *testing.T) {
-	t.Parallel()
-	var (
-		settings   = new(rootSettings)
-		paramCount = len(settings.Parameters())
-		opts       = parameters.MustMakeCmdsOptions(settings,
-			parameters.WithBuiltin(true),
-		)
-	)
-	if len(opts) <= paramCount {
-		t.Error("built-in cmds options requested but options list returned is <= parameter count")
-	}
-}
-
-func testLiteralsValid(t *testing.T) {
-	t.Parallel()
-	genOpts := func(name string) []parameters.ParameterOption {
-		return []parameters.ParameterOption{
-			parameters.WithName(name),
-			parameters.WithNamespace("testspace"),
-		}
-	}
-	for _, test := range []struct {
-		fn   func(name string)
-		name string
-	}{
-		{
-			func(name string) {
-				func() {
-					parameters.NewParameter("lambda test", genOpts(name)...)
-				}()
-			},
-			"lambda (with options)",
-		},
-	} {
-		name := test.name
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			test.fn(name) // If we don't panic, we're good.
-		})
-	}
-}
-*/

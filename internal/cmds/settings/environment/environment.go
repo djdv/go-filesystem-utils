@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"reflect"
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
@@ -61,31 +60,11 @@ func fromEnv(arg runtime.Argument, parsers ...runtime.TypeParser) (provided bool
 	if !provided {
 		return false, nil
 	}
-
-	typedEnvVar, err := assertEnvValue(arg.ValueReference, envStringValue)
-	if err != nil {
+	if err := runtime.ParseAndAssign(arg, envStringValue, parsers...); err != nil {
 		return false, fmt.Errorf(
-			"failed to parse environment variable `%s`: %w",
-			envKey, err,
-		)
-	}
-	if err := runtime.AssignToArgument(arg, typedEnvVar, parsers...); err != nil {
-		return false, fmt.Errorf(
-			"failed to assign from environment variable `%s` (%v): %w",
-			envKey, typedEnvVar, err,
+			"failed to assign from environment variable `%s:%s`: %w",
+			envKey, envStringValue, err,
 		)
 	}
 	return provided, nil
-}
-
-func assertEnvValue(goValueRef interface{}, envValue string) (interface{}, error) {
-	leftType := reflect.TypeOf(goValueRef).Elem()
-	reflectValue, err := runtime.ParseString(leftType, envValue)
-	if err != nil {
-		err = fmt.Errorf("could not assert value (for reference %T): %w ",
-			goValueRef, err,
-		)
-		return nil, err
-	}
-	return reflectValue.Interface(), nil
 }

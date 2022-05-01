@@ -25,23 +25,25 @@ func filter(components []string, filters ...stringMapperFunc) []string {
 	return components
 }
 
+func isExcludedRune(r rune) bool {
+	return unicode.IsSpace(r) ||
+		r == '=' ||
+		r == '-' ||
+		r == '.'
+	// `.` is allowed in CLI, but I'm not dealing with custom splitting rules.
+	// Anyone else is free to implement this if it's important to have `--args.with.dots`
+}
+
 func filterCli(parameterRune rune) rune {
-	if unicode.IsSpace(parameterRune) ||
-		parameterRune == '=' ||
-		parameterRune == '-' {
+	if isExcludedRune(parameterRune) {
 		return -1
 	}
 	return parameterRune
 }
 
 func filterEnv(keyRune rune) rune {
-	if unicode.IsSpace(keyRune) ||
-		keyRune == '=' ||
-		keyRune == '-' {
+	if isExcludedRune(keyRune) {
 		return -1
-	}
-	if keyRune == '.' {
-		return '_'
 	}
 	return keyRune
 }
