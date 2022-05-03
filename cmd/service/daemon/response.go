@@ -264,6 +264,7 @@ func spliceResultsAndErrs(responses <-chan ResponseResult, errs <-chan error) <-
 	return results
 }
 
+// TODO: Eliminate result types.
 func responsesFromReader(ctx context.Context,
 	stdout io.Reader,
 ) <-chan ResponseResult {

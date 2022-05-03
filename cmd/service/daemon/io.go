@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	. "github.com/djdv/go-filesystem-utils/internal/generic"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -244,7 +244,7 @@ func signalFromReader(ctx context.Context, signal stdioSignal, reader io.Reader)
 		}
 	}()
 
-	return CtxMerge(ctx, scanErrs, errs)
+	return generic.CtxMerge(ctx, scanErrs, errs)
 }
 
 func scanBytes(ctx context.Context, source io.Reader) (<-chan []byte, errCh) {

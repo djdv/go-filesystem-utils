@@ -10,9 +10,8 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
-// TODO: name convention for these; `SetFunc`, `FromEnv`?
-// SettingsFromEnvironment uses the process environment as a source for settings values.
-func SettingsFromEnvironment() runtime.SetFunc {
+// ValueSource uses the process environment as a source for settings values.
+func ValueSource() runtime.SetFunc {
 	return func(ctx context.Context, argsToSet runtime.Arguments,
 		parsers ...runtime.TypeParser,
 	) (runtime.Arguments, <-chan error) {
@@ -23,48 +22,52 @@ func SettingsFromEnvironment() runtime.SetFunc {
 		go func() {
 			defer close(unsetArgs)
 			defer close(errs)
-			fn := func(unsetArg runtime.Argument) (runtime.Argument, error) {
-				provided, err := fromEnv(unsetArg, parsers...)
+			assignOrRelay := func(arg runtime.Argument) error {
+				var (
+					envKeys              = getKeys(arg)
+					provided, key, value = maybeGetValue(envKeys...)
+				)
+				if !provided {
+					select {
+					case unsetArgs <- arg:
+						return nil
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+				parsedArg, err := runtime.ParseStrings(arg, value, parsers...)
 				if err != nil {
-					return unsetArg, err
+					return fmt.Errorf(
+						"failed to assign from environment variable `%s:%s`: %w",
+						key, value, err,
+					)
 				}
-				if provided { // We're going to process this, skip relaying it.
-					return unsetArg, generic.ErrSkip
-				}
-				return unsetArg, nil
+				return runtime.Assign(arg, parsedArg)
 			}
-
-			generic.ProcessResults(ctx, argsToSet, unsetArgs, errs, fn)
+			if err := generic.ForEachOrError(ctx, argsToSet, nil, assignOrRelay); err != nil {
+				select {
+				case errs <- err:
+				case <-ctx.Done():
+				}
+			}
 		}()
 		return unsetArgs, errs
 	}
 }
 
-func fromEnv(arg runtime.Argument, parsers ...runtime.TypeParser) (provided bool, _ error) {
-	var (
-		envKey         string
-		envStringValue string
-		envKeys        = append([]string{
-			arg.Parameter.Name(parameters.Environment),
-		},
-			arg.Parameter.Aliases(parameters.Environment)...,
-		)
+func getKeys(arg runtime.Argument) []string {
+	return append([]string{
+		arg.Name(parameters.Environment),
+	},
+		arg.Aliases(parameters.Environment)...,
 	)
-	for _, key := range envKeys {
-		envStringValue, provided = os.LookupEnv(key)
-		if provided {
-			envKey = key
-			break
+}
+
+func maybeGetValue(keys ...string) (provided bool, key, value string) {
+	for _, key = range keys {
+		if value, provided = os.LookupEnv(key); provided {
+			return
 		}
 	}
-	if !provided {
-		return false, nil
-	}
-	if err := runtime.ParseAndAssign(arg, envStringValue, parsers...); err != nil {
-		return false, fmt.Errorf(
-			"failed to assign from environment variable `%s:%s`: %w",
-			envKey, envStringValue, err,
-		)
-	}
-	return provided, nil
+	return
 }

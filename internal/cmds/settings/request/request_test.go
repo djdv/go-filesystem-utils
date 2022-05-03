@@ -1,4 +1,4 @@
-package arguments_test
+package request_test
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/arguments"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/request"
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
@@ -50,11 +50,11 @@ func noopParse(t *testing.T) {
 	// It's purpose is to make sure `Parse` breaks out early when it can/should.
 	// I.e. When the request has no user-defined settings (cmds-lib native options don't count)
 	var (
-		ctx          = context.Background()
-		request, err = cmds.NewRequest(ctx, nil,
+		ctx      = context.Background()
+		req, err = cmds.NewRequest(ctx, nil,
 			cmds.OptMap{cmds.EncLong: "text"},
 			nil, nil, &cmds.Command{})
-		sources = []runtime.SetFunc{arguments.SettingsFromCmds(request)}
+		sources = []runtime.SetFunc{request.ValueSource(req)}
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -72,10 +72,10 @@ func argsParse(t *testing.T) {
 			TestField:  true,
 			TestField2: 2,
 		}
-		cmdOpts      = settingsToOpts(wantSettings)
-		request, err = cmds.NewRequest(ctx, nil, cmdOpts,
+		cmdOpts  = settingsToOpts(wantSettings)
+		req, err = cmds.NewRequest(ctx, nil, cmdOpts,
 			nil, nil, &cmds.Command{})
-		sources = []runtime.SetFunc{arguments.SettingsFromCmds(request)}
+		sources = []runtime.SetFunc{request.ValueSource(req)}
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +102,7 @@ func cancelParse(t *testing.T) {
 		var (
 			expectedErr             = context.Canceled
 			testContext, testCancel = context.WithCancel(context.Background())
-			request, rErr           = cmds.NewRequest(testContext, nil, nil,
+			req, rErr               = cmds.NewRequest(testContext, nil, nil,
 				nil, nil, &cmds.Command{})
 		)
 		if rErr != nil {
@@ -110,7 +110,7 @@ func cancelParse(t *testing.T) {
 		}
 		testCancel()
 		var (
-			sources = []runtime.SetFunc{arguments.SettingsFromCmds(request)}
+			sources = []runtime.SetFunc{request.ValueSource(req)}
 			_, err  = runtime.Parse[*argSettings](testContext, sources)
 		)
 		if !errors.Is(err, expectedErr) {

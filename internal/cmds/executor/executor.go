@@ -210,6 +210,7 @@ func newServiceCommand(exitInterval time.Duration) (*exec.Cmd, error) {
 		return nil, err
 	}
 
+	// TODO: [maybe] walk cmds.root until subcommand == daemon.Name?
 	execArgs := []string{
 		service.Name, daemon.Name,
 		fmt.Sprintf("--%s=%s",

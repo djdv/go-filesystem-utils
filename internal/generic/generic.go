@@ -1,19 +1,13 @@
+/*
+Package generic provides a set of generic helper functions,
+primarily aimed at common channel operations.
+*/
 package generic
 
 import (
 	"context"
 	"sync"
 )
-
-// skipError is used as a sentinel value
-// passed and inspected by functions to
-// signify some element/phase should be skipped.
-// Similar to `fs.SkipDir`.
-type skipError string
-
-const ErrSkip = skipError("skip")
-
-func (e skipError) Error() string { return string(e) }
 
 func ctxRange[in any](ctx context.Context, input <-chan in) <-chan in {
 	relay := make(chan in, cap(input))
@@ -111,7 +105,7 @@ func CtxTakeAndCancel[in any](ctx context.Context, cancel context.CancelFunc,
 }
 
 func ForEachOrError[in any](ctx context.Context,
-	input <-chan in, errs <-chan error, fn func(in) error,
+	input <-chan in, errs <-chan error, phase func(in) error,
 ) error {
 	for input != nil ||
 		errs != nil {
@@ -121,7 +115,7 @@ func ForEachOrError[in any](ctx context.Context,
 				input = nil
 				continue
 			}
-			if err := fn(element); err != nil {
+			if err := phase(element); err != nil {
 				return err
 			}
 		case err, ok := <-errs:
@@ -144,9 +138,6 @@ func ProcessResults[in, out any](ctx context.Context,
 	for element := range ctxRange(ctx, input) {
 		result, err := phase(element)
 		if err != nil {
-			if err == ErrSkip {
-				continue
-			}
 			select {
 			case errors <- err:
 				continue

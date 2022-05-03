@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/filesystem"
-	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/arguments"
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/environment"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/request"
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
@@ -74,13 +74,13 @@ func AutoExitParam() parameters.Parameter {
 }
 
 func Parse[setIntf runtime.SettingsConstraint[settings], settings any](ctx context.Context,
-	request *cmds.Request,
+	req *cmds.Request,
 ) (*settings, error) {
 	var (
 		typeHandlers = handlers()
 		sources      = []runtime.SetFunc{
-			arguments.SettingsFromCmds(request),
-			environment.SettingsFromEnvironment(),
+			request.ValueSource(req),
+			environment.ValueSource(),
 		}
 	)
 	return runtime.Parse[setIntf](ctx, sources, typeHandlers...)

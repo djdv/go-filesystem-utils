@@ -11,11 +11,31 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
-// TODO: Name. SettingsType?
-type SettingsConstraint[Settings any] interface {
-	*Settings           // Type parameter must be pointer to struct
-	parameters.Settings // which implements the Settings interface.
-}
+type (
+	// SetFunc should attempt to assign to each `Argument.ValueReference` it receives.
+	// (Typically by utilizing the `Argument.Parameter.Name` as a key to a value store.)
+	// SetFunc must send all unassigned `Argument`s (if any) to its output channel.
+	SetFunc func(context.Context, Arguments, ...TypeParser) (unsetArgs Arguments, _ <-chan error)
+
+	// ParseFunc receives a string representation of the data value,
+	// and returns a typed Go value of it.
+	ParseFunc func(argument string) (value interface{}, _ error)
+
+	// TypeParser is the binding of a type with its corresponding parser function.
+	TypeParser struct {
+		reflect.Type
+		ParseFunc
+	}
+
+	// TODO: Name. SettingsType?
+	SettingsConstraint[Settings any] interface {
+		*Settings           // Type parameter must be pointer to struct
+		parameters.Settings // which implements the Settings interface.
+	}
+
+	// TODO: better name?
+	StringsConstraint interface{ string | []string }
+)
 
 var (
 	// TODO: [review] should these be exported? Probably, but double check.
@@ -144,34 +164,6 @@ func parseBuiltin(typ reflect.Type, value string) (interface{}, error) {
 			ErrUnexpectedType, typ, kind,
 		)
 	}
-}
-
-func parseVector(typ reflect.Type, values []string, parsers ...TypeParser) (interface{}, error) {
-	vectorValue, err := makeVector(typ, len(values))
-	if err != nil {
-		return nil, err
-	}
-	var (
-		elemType       = typ.Elem()
-		userParser     = maybeGetParser(elemType, parsers...)
-		haveUserParser = userParser != nil
-		parse          func(s string) (interface{}, error)
-	)
-	if haveUserParser {
-		parse = userParser.ParseFunc
-	} else {
-		parse = func(s string) (interface{}, error) {
-			return parseBuiltin(elemType, s)
-		}
-	}
-	for i, stringValue := range values {
-		goValue, err := parse(stringValue)
-		if err != nil {
-			return nil, err
-		}
-		vectorValue.Index(i).Set(reflect.ValueOf(goValue))
-	}
-	return vectorValue.Interface(), nil
 }
 
 // makeVector takes in an array or slice type and returns a new value for it.

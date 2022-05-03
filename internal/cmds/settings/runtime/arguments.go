@@ -18,21 +18,6 @@ type (
 		ValueReference interface{}
 	}
 	Arguments <-chan Argument
-
-	// SetFunc should attempt to assign to each `Argument.ValueReference` it receives.
-	// (Typically by utilizing the `Argument.Parameter.Name` as a key to a value store.)
-	// SetFunc must send all unassigned `Argument`s (if any) to its output channel.
-	SetFunc func(context.Context, Arguments, ...TypeParser) (unsetArgs Arguments, _ <-chan error)
-
-	// ParseFunc receives a string representation of the data value,
-	// and returns a typed Go value of it.
-	ParseFunc func(argument string) (value interface{}, _ error)
-
-	// TypeParser is the binding of a type with its corresponding parser function.
-	TypeParser struct {
-		reflect.Type
-		ParseFunc
-	}
 )
 
 func maybeGetParser(typ reflect.Type, parsers ...TypeParser) *TypeParser {
@@ -78,4 +63,27 @@ func Parse[setIntf SettingsConstraint[set], set any](ctx context.Context,
 		return nil, fmt.Errorf("Parse encountered an error: %w", err)
 	}
 	return settingsPointer, ctx.Err()
+}
+
+func Assign(arg Argument, value any) error {
+	targetValue := reflect.ValueOf(arg.ValueReference).Elem()
+	if !targetValue.CanSet() {
+		return fmt.Errorf("%w: `reflect.Value.CanSet` returned false for argument reference",
+			ErrUnassignable,
+		)
+	}
+
+	var (
+		targetType   = targetValue.Type()
+		reflectValue = reflect.ValueOf(value)
+		reflectType  = reflectValue.Type()
+	)
+	if !targetType.AssignableTo(reflectType) {
+		err := fmt.Errorf("%w: `%#v` to %v",
+			ErrUnassignable, value, targetType,
+		)
+		return err
+	}
+	targetValue.Set(reflectValue)
+	return nil
 }

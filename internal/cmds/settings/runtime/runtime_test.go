@@ -39,8 +39,8 @@ type (
 		Uint64     uint64
 	}
 	embeddedSettings struct {
-		Extra int
 		settings
+		Extra int
 	}
 )
 
@@ -60,8 +60,8 @@ func (*embeddedSettings) Parameters(ctx context.Context) parameters.Parameters {
 		emptyParams = make([]runtime.CmdsParameter, fieldCount)
 	)
 	return generic.CtxJoin(ctx,
-		runtime.MustMakeParameters[*embeddedSettings](ctx, emptyParams),
 		(*settings).Parameters(nil, ctx),
+		runtime.MustMakeParameters[*embeddedSettings](ctx, emptyParams),
 	)
 }
 
@@ -71,7 +71,7 @@ func testRuntimeValid(t *testing.T) {
 	t.Run("reflect", testReflect)
 	t.Run("assign", testAssign)
 	t.Run("assign vector", testAssignVector)
-	// t.Run("parse string", testParseString) // TODO: [lint] testing formerly exported func
+	t.Run("parse string", testParseString) // TODO: [lint] testing formerly exported func
 	t.Run("parse struct", testParse)
 }
 
@@ -164,7 +164,7 @@ func testAssign(t *testing.T) {
 	t.Parallel()
 	t.Run("builtin", testAssignBuiltin)
 	// t.Run("convert", testAssignConvert)
-	t.Run("user parser", testAssignParser)
+	t.Run("user parser", testParser)
 }
 
 func testAssignBuiltin(t *testing.T) {
@@ -177,7 +177,7 @@ func testAssignBuiltin(t *testing.T) {
 		}
 	)
 
-	if err := runtime.ParseAndAssign(arg, expectedValue); err != nil {
+	if err := runtime.Assign(arg, expectedValue); err != nil {
 		t.Fatal(err)
 	}
 	if goValue != expectedValue {
@@ -212,7 +212,9 @@ func testAssignConvert(t *testing.T) {
 }
 */
 
-func testAssignParser(t *testing.T) {
+// TODO: redundant tests - overlaps with testParseString?
+// Code changed and tests were adapted but this might not be needed anymore.
+func testParser(t *testing.T) {
 	t.Parallel()
 	const stringValue = "1s"
 	expectedValue, err := time.ParseDuration(stringValue)
@@ -232,29 +234,43 @@ func testAssignParser(t *testing.T) {
 		}
 	)
 
-	if err := runtime.ParseAndAssign(arg, stringValue, parser); err != nil {
+	got, err := runtime.ParseStrings(arg, stringValue, parser)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if goValue != expectedValue {
-		t.Errorf("assigned value does not match expected value"+
+	assertedValue, ok := got.(time.Duration)
+	if !ok {
+		t.Errorf("parsed value does not match expected type "+
+			"\n\tgot: %T"+
+			"\n\twant: %T",
+			got, expectedValue)
+	}
+
+	if assertedValue != expectedValue {
+		t.Errorf("parsed value does not match expected value"+
 			"\n\tgot: %#v"+
 			"\n\twant: %#v",
-			goValue, expectedValue)
+			assertedValue, expectedValue)
 	}
 }
 
-// TODO: convert to ParseArg
-/*
 func testParseString(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		input         string
 		expectedValue interface{}
 	}{
-		{
-			"string",
-			"string",
-		},
+		// TODO: when the receiver type is a string, parsing the right hand string is invalid
+		// Except when there is a custom type handler for strings.
+		// We need valid and invalid tests for this case.
+		//{
+		//	"string",
+		//	"string",
+		//},
+		//{
+		//	"1,2,3",
+		//	[]string{"1", "2", "3"},
+		//},
 		{
 			"true",
 			true,
@@ -277,7 +293,7 @@ func testParseString(t *testing.T) {
 		},
 		{
 			"1,2,3",
-			[]string{"1", "2", "3"},
+			[]int{1, 2, 3},
 		},
 	} {
 		var (
@@ -285,17 +301,22 @@ func testParseString(t *testing.T) {
 			expected     = test.expectedValue
 			expectedType = reflect.TypeOf(expected)
 			name         = expectedType.Name()
+			arg          = runtime.Argument{
+				// MAGIC: This function+test only uses the type information.
+				// So we pass in a pointer to nowhere. Use a pointer to the value in real code.
+				ValueReference: reflect.New(reflect.PointerTo(expectedType)).Elem().Interface(),
+			}
 		)
 		if name == "" { // Non-primitives like slices.
 			name = expectedType.Kind().String()
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got, err := runtime.ParseString(expectedType, input)
+			got, err := runtime.ParseStrings(arg, input)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got != expected {
+			if !reflect.DeepEqual(expected, got) {
 				t.Errorf("parsed value does not match expected value"+
 					"\n\tgot: %#v"+
 					"\n\twant: %#v",
@@ -304,7 +325,6 @@ func testParseString(t *testing.T) {
 		})
 	}
 }
-*/
 
 type parseFuncShim func(context.Context, []runtime.SetFunc) (interface{}, error)
 
@@ -336,13 +356,13 @@ func testParse(t *testing.T) {
 		var (
 			name         = test.name
 			wantSettings = test.settings
-			parseFunc    = test.parseFunc
+			parse        = test.parseFunc
 		)
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			var (
 				sources       = []runtime.SetFunc{mockSettingsSource(wantSettings)}
-				settings, err = parseFunc(ctx, sources)
+				settings, err = parse(ctx, sources)
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -446,7 +466,11 @@ func testAssignVector(t *testing.T) {
 					ValueReference: &value,
 				}
 			)
-			if err := runtime.ParseAndAssign(arg, input, parsers...); err != nil {
+			parsedValue, err := runtime.ParseStrings(arg, input, parsers...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := runtime.Assign(arg, parsedValue); err != nil {
 				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(value, expected) {
@@ -543,21 +567,25 @@ func nonzeroValues[set any]() *set {
 	return settings
 }
 
+// mockSettingsSource uses an existing set as a source of values,
+// when trying to assigns to arguments received from argsToSet.
 func mockSettingsSource[set any](existing set) runtime.SetFunc {
 	return func(ctx context.Context, argsToSet runtime.Arguments,
-		parsers ...runtime.TypeParser,
+		_ ...runtime.TypeParser,
 	) (runtime.Arguments, <-chan error) {
 		var (
-			structValue = reflect.ValueOf(existing).Elem()
-			fields      = reflect.VisibleFields(structValue.Type())
-			unsetArgs   = make(chan runtime.Argument, cap(argsToSet))
-			errs        = make(chan error)
+			unsetArgs = make(chan runtime.Argument, cap(argsToSet))
+			errs      = make(chan error)
 		)
 		go func() {
 			defer close(unsetArgs)
 			defer close(errs)
-			var fieldIndex int
-			fn := func(unsetArg runtime.Argument) (arg runtime.Argument, err error) {
+			var (
+				fieldIndex  int
+				structValue = reflect.ValueOf(existing).Elem()
+				fields      = reflect.VisibleFields(structValue.Type())
+			)
+			assignValues := func(unsetArg runtime.Argument) (err error) {
 				defer func() {
 					if r := recover(); r != nil {
 						err = fmt.Errorf("panicked: %s", r)
@@ -567,14 +595,17 @@ func mockSettingsSource[set any](existing set) runtime.SetFunc {
 				field := fields[fieldIndex]
 				fieldIndex++
 				if field.Anonymous {
-					goto skip // HACK: Not expanding fields "properly" just for the test.
+					goto skip
 				}
 				fieldValue := structValue.FieldByIndex(field.Index)
-				runtime.ParseAndAssign(unsetArg, fieldValue.Interface())
-				return unsetArg, generic.ErrSkip // We set the value, don't relay it.
+				return runtime.Assign(unsetArg, fieldValue.Interface())
 			}
-
-			generic.ProcessResults(ctx, argsToSet, unsetArgs, errs, fn)
+			if err := generic.ForEachOrError(ctx, argsToSet, nil, assignValues); err != nil {
+				select {
+				case errs <- err:
+				case <-ctx.Done():
+				}
+			}
 		}()
 		return unsetArgs, errs
 	}
