@@ -1,14 +1,112 @@
 /*
-Package generic provides a set of generic helper functions,
-primarily aimed at common channel operations.
+Package generic provides a set of type agnostic helpers.
 */
 package generic
 
 import (
 	"context"
-	"sync"
+	"fmt"
 )
 
+// Tuple wraps 2 values of any type
+// allowing them to be generically addressed by names `Left` and `Right`.
+type Tuple[t1, t2 any] struct {
+	Left  t1
+	Right t2
+}
+
+// CtxPair receives values from both channels and relays them as a Tuple
+// until both channels are closed or the context is done.
+// An error is sent if one channel is closed while the other is still being sent values.
+func CtxPair[t1, t2 any](ctx context.Context,
+	leftIn <-chan t1, rightIn <-chan t2,
+) (<-chan Tuple[t1, t2], <-chan error) {
+	var (
+		tuples = make(chan Tuple[t1, t2], cap(leftIn))
+		errs   = make(chan error)
+	)
+	go func() {
+		defer close(tuples)
+		defer close(errs)
+		ctxSendErr := func(err error) {
+			select {
+			case errs <- err:
+			case <-ctx.Done():
+			}
+		}
+		for left := range ctxRange(ctx, leftIn) {
+			select {
+			case right, ok := <-rightIn:
+				if !ok {
+					err := fmt.Errorf("t2 closed with t1 open")
+					ctxSendErr(err)
+					return
+				}
+				select {
+				case tuples <- Tuple[t1, t2]{Left: left, Right: right}:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+		select {
+		case _, ok := <-rightIn:
+			if ok {
+				err := fmt.Errorf("t1 closed with t2 open")
+				ctxSendErr(err)
+			}
+		case <-ctx.Done():
+		}
+	}()
+	return tuples, errs
+}
+
+// CtxEither receives from both channels,
+// relaying either the left or right type,
+// until both channels are closed, or the context is done.
+func CtxEither[t1, t2 any](ctx context.Context,
+	leftIn <-chan t1, rightIn <-chan t2,
+) <-chan Tuple[t1, t2] {
+	tuples := make(chan Tuple[t1, t2], cap(leftIn)+cap(rightIn))
+	go func() {
+		defer close(tuples)
+		for leftIn != nil ||
+			rightIn != nil {
+			select {
+			case left, ok := <-leftIn:
+				if !ok {
+					leftIn = nil
+					continue
+				}
+				select {
+				case tuples <- Tuple[t1, t2]{Left: left}:
+				case <-ctx.Done():
+					return
+				}
+			case right, ok := <-rightIn:
+				if !ok {
+					rightIn = nil
+					continue
+				}
+				select {
+				case tuples <- Tuple[t1, t2]{Right: right}:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return tuples
+}
+
+// ctxRange relays values received from `input`
+// until it is closed or the context is done.
+// Intended to be used as a range expression
+// `for element := range ctxRange(ctx, elementChan)`
 func ctxRange[in any](ctx context.Context, input <-chan in) <-chan in {
 	relay := make(chan in, cap(input))
 	go func() {
@@ -30,125 +128,4 @@ func ctxRange[in any](ctx context.Context, input <-chan in) <-chan in {
 		}
 	}()
 	return relay
-}
-
-func totalBuff[in any](inputs []<-chan in) (total int) {
-	for _, ch := range inputs {
-		total += cap(ch)
-	}
-	return
-}
-
-func CtxJoin[in any](ctx context.Context, inputs ...<-chan in) <-chan in {
-	out := make(chan in, totalBuff(inputs))
-	go func() {
-		defer close(out)
-		for _, source := range inputs {
-			for element := range ctxRange(ctx, source) {
-				select {
-				case out <- element:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}
-	}()
-	return out
-}
-
-func CtxMerge[in any](ctx context.Context, sources ...<-chan in) <-chan in {
-	var (
-		mergedWg  sync.WaitGroup
-		mergedCh  = make(chan in, totalBuff(sources))
-		mergeFrom = func(ch <-chan in) {
-			defer mergedWg.Done()
-			for value := range ctxRange(ctx, ch) {
-				select {
-				case mergedCh <- value:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}
-	)
-
-	mergedWg.Add(len(sources))
-	for _, source := range sources {
-		go mergeFrom(source)
-	}
-
-	go func() { mergedWg.Wait(); close(mergedCh) }()
-
-	return mergedCh
-}
-
-func CtxTakeAndCancel[in any](ctx context.Context, cancel context.CancelFunc,
-	inputs <-chan in, count int,
-) <-chan in {
-	relay := make(chan in, count)
-	go func() {
-		defer close(relay)
-		defer cancel()
-		for element := range ctxRange(ctx, inputs) {
-			if count == 0 {
-				return
-			}
-			select {
-			case relay <- element:
-			case <-ctx.Done():
-				return
-			}
-			count--
-		}
-	}()
-	return relay
-}
-
-func ForEachOrError[in any](ctx context.Context,
-	input <-chan in, errs <-chan error, phase func(in) error,
-) error {
-	for input != nil ||
-		errs != nil {
-		select {
-		case element, ok := <-input:
-			if !ok {
-				input = nil
-				continue
-			}
-			if err := phase(element); err != nil {
-				return err
-			}
-		case err, ok := <-errs:
-			if !ok {
-				errs = nil
-				continue
-			}
-			return err
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	return nil
-}
-
-func ProcessResults[in, out any](ctx context.Context,
-	input <-chan in, output chan out, errors chan error,
-	phase func(in) (out, error),
-) {
-	for element := range ctxRange(ctx, input) {
-		result, err := phase(element)
-		if err != nil {
-			select {
-			case errors <- err:
-				continue
-			case <-ctx.Done():
-				return
-			}
-		}
-		select {
-		case output <- result:
-		case <-ctx.Done():
-			return
-		}
-	}
 }
