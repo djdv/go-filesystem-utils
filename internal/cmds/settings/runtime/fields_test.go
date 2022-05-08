@@ -3,12 +3,10 @@ package runtime_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"reflect"
 	"testing"
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
-	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
@@ -54,7 +52,6 @@ func fieldsValid(t *testing.T) {
 func fieldsStruct(t *testing.T) {
 	t.Parallel()
 	t.Run("reflect", fieldsReflectStruct)
-	t.Run("bind", fieldsBindStruct)
 }
 
 func fieldsReflectStruct(t *testing.T) {
@@ -80,30 +77,6 @@ func fieldsReflectStruct(t *testing.T) {
 			"\n\tgot: %#v"+
 			"\n\twant: %#v",
 			gotFields, fieldCount)
-	}
-}
-
-func fieldsBindStruct(t *testing.T) {
-	t.Parallel()
-	var (
-		ctx         = context.Background()
-		pairs, errs = bindFields[*fieldSettings](t, ctx)
-		check       = func(pair runtime.ParamField) error {
-			var (
-				paramElement  = pair.Description()
-				structElement = pair.Type.String()
-			)
-			if paramElement != structElement {
-				return fmt.Errorf("bound elements are not ordered correctly / data mismatch"+
-					"\n\tparam element: %s"+
-					"\n\tstruct element: %s",
-					paramElement, structElement)
-			}
-			return nil
-		}
-	)
-	if err := generic.ForEachOrError(ctx, pairs, errs, check); err != nil {
-		t.Error(err)
 	}
 }
 
@@ -143,8 +116,7 @@ func (fs *fieldsInvalidSettingsFewerFields) Parameters(ctx context.Context) para
 func fieldsInvalid(t *testing.T) {
 	t.Parallel()
 	t.Run("non-struct", fieldsInvalidType)
-	t.Run("extra fields", fieldsInvalidFields)
-	t.Run("extra params", fieldsInvalidParams)
+	t.Run("canceled", canceledFields)
 }
 
 func fieldsInvalidType(t *testing.T) {
@@ -162,42 +134,16 @@ func fieldsInvalidType(t *testing.T) {
 	}
 }
 
-func fieldsInvalidFields(t *testing.T) {
+func canceledFields(t *testing.T) {
 	t.Parallel()
-	var (
-		ctx         = context.Background()
-		pairs, errs = bindFields[*fieldsInvalidSettingsFewerParams](t, ctx)
-		check       = func(pair runtime.ParamField) error { return nil }
-	)
-	if err := generic.ForEachOrError(ctx, pairs, errs, check); err == nil {
-		t.Errorf("did not received error for invalid struct (too many fields)")
-	}
-}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 
-func fieldsInvalidParams(t *testing.T) {
-	t.Parallel()
-	var (
-		ctx         = context.Background()
-		pairs, errs = bindFields[*fieldsInvalidSettingsFewerFields](t, ctx)
-		check       = func(pair runtime.ParamField) error { return nil }
-	)
-	if err := generic.ForEachOrError(ctx, pairs, errs, check); err == nil {
-		t.Errorf("did not received error for invalid method (too many parameters)")
-	}
-}
-
-func bindFields[setPtr runtime.SettingsConstraint[set], set any](
-	t *testing.T,
-	ctx context.Context,
-) (runtime.ParamFields, <-chan error) {
-	t.Helper()
-	var (
-		params      = (setPtr).Parameters(nil, ctx)
-		fields, err = runtime.ReflectFields[setPtr](ctx)
-		pairs, errs = runtime.BindParameterFields(ctx, fields, params)
-	)
+	fields, err := runtime.ReflectFields[*fieldSettings](ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return pairs, errs
+	for field := range fields {
+		t.Errorf("received field (%v) after canceled", field)
+	}
 }
