@@ -16,38 +16,37 @@ func builtinOptions() []cmds.Option {
 	}
 }
 
-func kindToCmdsOptionMaker(kind reflect.Kind) MakeOptionFunc {
+func constructorForKind(kind reflect.Kind) (constructor MakeOptionFunc) {
 	switch kind {
 	case reflect.Bool:
-		return cmds.BoolOption
+		constructor = cmds.BoolOption
 	case reflect.Int,
 		reflect.Int8,
 		reflect.Int16,
 		reflect.Int32:
-		return cmds.IntOption
+		constructor = cmds.IntOption
 	case reflect.Uint,
 		reflect.Uint8,
 		reflect.Uint16,
 		reflect.Uint32:
-		return cmds.UintOption
+		constructor = cmds.UintOption
 	case reflect.Int64:
-		return cmds.Int64Option
+		constructor = cmds.Int64Option
 	case reflect.Uint64:
-		return cmds.Uint64Option
+		constructor = cmds.Uint64Option
 	case reflect.Float32,
 		reflect.Float64:
-		return cmds.FloatOption
+		constructor = cmds.FloatOption
 	case reflect.Complex64,
 		reflect.Complex128:
-		return cmds.StringOption
+		constructor = cmds.StringOption
 	case reflect.String:
-		return cmds.StringOption
+		constructor = cmds.StringOption
 	case reflect.Array,
 		reflect.Slice:
-		return func(optionArgs ...string) cmds.Option {
+		constructor = func(optionArgs ...string) cmds.Option {
 			return cmds.DelimitedStringsOption(",", optionArgs...)
 		}
-	default:
-		return nil
 	}
+	return
 }
