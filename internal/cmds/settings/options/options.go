@@ -29,18 +29,20 @@ type (
 	// ConstructorOption is the functional options interface for `[]cmds.Option` constructors.
 	ConstructorOption  interface{ apply(*cmdsOptionSettings) }
 	cmdsOptionSettings struct {
-		customMakers   []OptionMaker
-		includeBuiltin bool
+		customMakers []OptionMaker
+		withBuiltin  bool
 	}
 
 	cmdsOptionMakerOpt struct{ OptionMaker }
 	cmdsBuiltinOpt     bool
+
+	fieldParam = generic.Tuple[reflect.StructField, parameters.Parameter]
 )
 
 // WithBuiltin sets whether to cmds-lib native options
 // (such as `--help`, `--timeout`, and more) should be constructed.
 func WithBuiltin(b bool) ConstructorOption             { return cmdsBuiltinOpt(b) }
-func (b cmdsBuiltinOpt) apply(set *cmdsOptionSettings) { set.includeBuiltin = bool(b) }
+func (b cmdsBuiltinOpt) apply(set *cmdsOptionSettings) { set.withBuiltin = bool(b) }
 
 // WithMaker appends the OptionMaker to an internal handler list.
 func WithMaker(maker OptionMaker) ConstructorOption { return cmdsOptionMakerOpt{maker} }
@@ -62,34 +64,27 @@ func MustMakeCmdsOptions[setPtr runtime.SettingsConstraint[set],
 		panic(err)
 	}
 	var (
-		params                       = setPtr.Parameters(nil, ctx)
-		reducedFields, reducedParams = skipEmbbedded(ctx, fields, params)
-		fieldParams, errs            = generic.CtxPair(ctx, reducedFields, reducedParams)
-		optionBufferHint             = cap(fieldParams)
-		cmdsOptions,
-		maybeBuiltin []cmds.Option
+		params            = setPtr.Parameters(nil, ctx)
+		fieldParams, errs = skipEmbbedded(ctx, fields, params)
 
-		constructorSettings = parseConstructorOptions(options...)
-		makers              = constructorSettings.customMakers
+		settings = parseConstructorOptions(options...)
+		makers   = settings.customMakers
+
+		paramCount                = cap(params)
+		cmdsOptions, maybeBuiltin = newOptionsSlices(paramCount, settings.withBuiltin)
+
+		panicWith = func(err error) { panic(fmt.Errorf("%T: %w", (setPtr)(nil), err)) }
 	)
-	if constructorSettings.includeBuiltin {
-		maybeBuiltin = builtinOptions()
-		optionBufferHint += len(maybeBuiltin)
-	}
-	cmdsOptions = make([]cmds.Option, 0, optionBufferHint)
-
 	for result := range generic.CtxEither(ctx, fieldParams, errs) {
 		if err := result.Right; err != nil {
-			typ := reflect.TypeOf((*set)(nil)).Elem()
-			panic(fmt.Errorf("%s: %w", typ, err))
+			panicWith(err)
 		}
 		var (
 			pair     = result.Left
 			opt, err = makeCmdsOption(pair.Left, pair.Right, makers)
 		)
 		if err != nil {
-			typ := reflect.TypeOf((*set)(nil)).Elem()
-			panic(fmt.Errorf("%s: %w", typ, err))
+			panicWith(err)
 		}
 		cmdsOptions = append(cmdsOptions, opt)
 	}
@@ -97,39 +92,46 @@ func MustMakeCmdsOptions[setPtr runtime.SettingsConstraint[set],
 	return append(cmdsOptions, maybeBuiltin...)
 }
 
+func parseConstructorOptions(options ...ConstructorOption) (set cmdsOptionSettings) {
+	for _, opt := range options {
+		opt.apply(&set)
+	}
+	return
+}
+
+func newOptionsSlices(userOpts int, withBuiltin bool) (cmdsOptions, builtin []cmds.Option) {
+	if withBuiltin {
+		var (
+			builtin     = builtinOptions()
+			cmdsOptions = make([]cmds.Option, 0, userOpts+len(builtin))
+		)
+		return cmdsOptions, builtin
+	}
+	return make([]cmds.Option, 0, userOpts), nil
+}
+
 func skipEmbbedded(ctx context.Context, fields runtime.StructFields,
 	params parameters.Parameters,
-) (runtime.StructFields, parameters.Parameters) {
+) (<-chan fieldParam, <-chan error) {
 	var (
-		reducedFields = make(chan reflect.StructField, cap(fields))
-		reducedParams = make(chan parameters.Parameter, cap(params))
+		fieldParams = make(chan fieldParam, cap(fields)+cap(params))
+		errs        = make(chan error)
 	)
 	go func() {
-		defer close(reducedFields)
-		defer close(reducedParams)
+		defer close(fieldParams)
+		defer close(errs)
 		for field := range fields {
-			if field.Anonymous &&
-				field.Type.Kind() == reflect.Struct {
-				for skipCount := field.Type.NumField(); skipCount != 0; skipCount-- {
-					select {
-					case <-params:
-					case <-ctx.Done():
-						return
-					}
-				}
+			if isEmbeddedField(field) {
+				skipStruct(ctx, field, params)
 				continue
 			}
-			// TODO: can we simplify this?
-			var param parameters.Parameter
 			select {
-			case param = <-params:
-			case <-ctx.Done():
-				return
-			}
-			select {
-			case reducedFields <- field:
+			case param, ok := <-params:
+				if !ok {
+					return
+				}
 				select {
-				case reducedParams <- param:
+				case fieldParams <- fieldParam{Left: field, Right: param}:
 				case <-ctx.Done():
 					return
 				}
@@ -138,7 +140,21 @@ func skipEmbbedded(ctx context.Context, fields runtime.StructFields,
 			}
 		}
 	}()
-	return reducedFields, reducedParams
+	return fieldParams, errs
+}
+
+func isEmbeddedField(field reflect.StructField) bool {
+	return field.Anonymous && field.Type.Kind() == reflect.Struct
+}
+
+func skipStruct(ctx context.Context, field reflect.StructField, params parameters.Parameters) {
+	for skipCount := field.Type.NumField(); skipCount != 0; skipCount-- {
+		select {
+		case <-params:
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func makeCmdsOption(field reflect.StructField,
@@ -163,7 +179,7 @@ func makeCmdsOption(field reflect.StructField,
 	}
 
 	valKind := typ.Kind()
-	if builtinMaker := kindToCmdsOptionMaker(valKind); builtinMaker != nil {
+	if builtinMaker := constructorForKind(valKind); builtinMaker != nil {
 		return builtinMaker(optionArgs...), nil
 	}
 
