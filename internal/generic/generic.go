@@ -10,6 +10,7 @@ import (
 
 // Tuple wraps 2 values of any type
 // allowing them to be generically addressed by names `Left` and `Right`.
+// Conventionally: `someFunc(left, right) Tuple{leftType, rightType} { ...`.
 type Tuple[t1, t2 any] struct {
 	Left  t1
 	Right t2
