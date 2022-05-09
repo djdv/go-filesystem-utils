@@ -1,3 +1,4 @@
+// Package options provides generic constructors for the cmds-lib Option interface.
 package options
 
 import (
@@ -19,12 +20,13 @@ type (
 	// and the final argument is the description for the option (used in user facing help text).
 	MakeOptionFunc func(...string) cmds.Option
 
-	// OptionMaker is the binding of a type with its corresponding cmds.Option constructor.
+	// OptionMaker is the binding of a type with its corresponding `cmds.Option` constructor.
 	OptionMaker struct {
 		reflect.Type
 		MakeOptionFunc
 	}
 
+	// ConstructorOption is the functional options interface for `[]cmds.Option` constructors.
 	ConstructorOption  interface{ apply(*cmdsOptionSettings) }
 	cmdsOptionSettings struct {
 		customMakers   []OptionMaker
@@ -35,36 +37,20 @@ type (
 	cmdsBuiltinOpt     bool
 )
 
-// WithBuiltin includes the cmds-lib native options (such as `--help`, `--timeout`, and more)
-// in the returned options.
+// WithBuiltin sets whether to cmds-lib native options
+// (such as `--help`, `--timeout`, and more) should be constructed.
 func WithBuiltin(b bool) ConstructorOption             { return cmdsBuiltinOpt(b) }
 func (b cmdsBuiltinOpt) apply(set *cmdsOptionSettings) { set.includeBuiltin = bool(b) }
 
-// WithMaker supplies the Settings parser
-// with a constructor for a non-built-in type.
-// (This option may be provided multiple times for multiple types.)
+// WithMaker appends the OptionMaker to an internal handler list.
 func WithMaker(maker OptionMaker) ConstructorOption { return cmdsOptionMakerOpt{maker} }
 
 func (maker cmdsOptionMakerOpt) apply(set *cmdsOptionSettings) {
 	set.customMakers = append(set.customMakers, maker.OptionMaker)
 }
 
-func parseConstructorOptions(options ...ConstructorOption) cmdsOptionSettings {
-	var set cmdsOptionSettings
-	for _, opt := range options {
-		opt.apply(&set)
-	}
-	return set
-}
-
-// MustMakeCmdsOptions creates cmds-lib options from a Settings interface.
-// It is expected to be called only during process initialization
-// and will panic if the provided type does not conform to the expectations of this library.
-//
-// NOTE: The cmds-lib panics when registering duplicate options.
-// In order to support subcommands, this function
-// skips any embedded (assumed super-)settings structs.
-// (The expectation is that a parent command has already registered them.)
+// MustMakeCmdsOptions creates cmds-lib options from a Settings struct's fields.
+// Skipping any embedded sructs.
 func MustMakeCmdsOptions[setPtr runtime.SettingsConstraint[set],
 	set any](options ...ConstructorOption,
 ) []cmds.Option {
