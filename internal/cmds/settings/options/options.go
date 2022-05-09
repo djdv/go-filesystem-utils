@@ -78,31 +78,34 @@ func MustMakeCmdsOptions[setPtr runtime.SettingsConstraint[set],
 	var (
 		params                       = setPtr.Parameters(nil, ctx)
 		reducedFields, reducedParams = skipEmbbedded(ctx, fields, params)
-		paramFields, errs            = runtime.BindParameterFields(ctx, reducedFields, reducedParams)
-		optionBufferHint             = cap(paramFields)
+		fieldParams, errs            = generic.CtxPair(ctx, reducedFields, reducedParams)
+		optionBufferHint             = cap(fieldParams)
 		cmdsOptions,
 		maybeBuiltin []cmds.Option
 
 		constructorSettings = parseConstructorOptions(options...)
 		makers              = constructorSettings.customMakers
-		makeOpt             = func(paramField runtime.ParamField) error {
-			opt, err := makeCmdsOption(paramField, makers)
-			if err != nil {
-				return err
-			}
-			cmdsOptions = append(cmdsOptions, opt)
-			return nil
-		}
 	)
 	if constructorSettings.includeBuiltin {
 		maybeBuiltin = builtinOptions()
 		optionBufferHint += len(maybeBuiltin)
 	}
-
 	cmdsOptions = make([]cmds.Option, 0, optionBufferHint)
-	if err := generic.ForEachOrError(ctx, paramFields, errs, makeOpt); err != nil {
-		typ := reflect.TypeOf((*set)(nil)).Elem()
-		panic(fmt.Errorf("%s: %w", typ, err))
+
+	for result := range generic.CtxEither(ctx, fieldParams, errs) {
+		if err := result.Right; err != nil {
+			typ := reflect.TypeOf((*set)(nil)).Elem()
+			panic(fmt.Errorf("%s: %w", typ, err))
+		}
+		var (
+			pair     = result.Left
+			opt, err = makeCmdsOption(pair.Left, pair.Right, makers)
+		)
+		if err != nil {
+			typ := reflect.TypeOf((*set)(nil)).Elem()
+			panic(fmt.Errorf("%s: %w", typ, err))
+		}
+		cmdsOptions = append(cmdsOptions, opt)
 	}
 
 	return append(cmdsOptions, maybeBuiltin...)
@@ -118,56 +121,56 @@ func skipEmbbedded(ctx context.Context, fields runtime.StructFields,
 	go func() {
 		defer close(reducedFields)
 		defer close(reducedParams)
-		skipEmbedded := func(field reflect.StructField) error {
+		for field := range fields {
 			if field.Anonymous &&
 				field.Type.Kind() == reflect.Struct {
 				for skipCount := field.Type.NumField(); skipCount != 0; skipCount-- {
 					select {
 					case <-params:
 					case <-ctx.Done():
-						return ctx.Err()
+						return
 					}
 				}
-				return nil
+				continue
 			}
 			// TODO: can we simplify this?
 			var param parameters.Parameter
 			select {
 			case param = <-params:
 			case <-ctx.Done():
-				return ctx.Err()
+				return
 			}
 			select {
 			case reducedFields <- field:
 				select {
 				case reducedParams <- param:
-					return nil
 				case <-ctx.Done():
-					return ctx.Err()
+					return
 				}
 			case <-ctx.Done():
-				return ctx.Err()
+				return
 			}
 		}
-		generic.ForEachOrError(ctx, fields, nil, skipEmbedded)
 	}()
 	return reducedFields, reducedParams
 }
 
-func makeCmdsOption(paramField runtime.ParamField, makers []OptionMaker) (cmds.Option, error) {
-	if !paramField.IsExported() {
+func makeCmdsOption(field reflect.StructField,
+	param parameters.Parameter, makers []OptionMaker,
+) (cmds.Option, error) {
+	if !field.IsExported() {
 		err := fmt.Errorf("%w:"+
 			" refusing to create option for unassignable field"+
 			" - `%s` is not exported",
 			runtime.ErrUnassignable,
-			paramField.StructField.Name,
+			field.Name,
 		)
 		return nil, err
 	}
 
 	var (
-		typ        = paramField.Type
-		optionArgs = parameterToCmdsOptionArgs(paramField.Parameter)
+		typ        = field.Type
+		optionArgs = parameterToCmdsOptionArgs(param)
 	)
 	if customMaker := maybeGetMaker(makers, typ); customMaker != nil {
 		return customMaker.MakeOptionFunc(optionArgs...), nil
@@ -182,7 +185,7 @@ func makeCmdsOption(paramField runtime.ParamField, makers []OptionMaker) (cmds.O
 		" can't determine which option constructor to use for `%s`"+
 		" (type %v with no custom handler)",
 		runtime.ErrUnexpectedType,
-		paramField.StructField.Name,
+		field.Name,
 		typ,
 	)
 	return nil, err
