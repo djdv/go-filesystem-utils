@@ -22,27 +22,25 @@ func CtxEither[t1, t2 any](ctx context.Context,
 		defer close(tuples)
 		for leftIn != nil ||
 			rightIn != nil {
+			var tuple Tuple[t1, t2]
 			select {
 			case left, ok := <-leftIn:
 				if !ok {
 					leftIn = nil
 					continue
 				}
-				select {
-				case tuples <- Tuple[t1, t2]{Left: left}:
-				case <-ctx.Done():
-					return
-				}
+				tuple.Left = left
 			case right, ok := <-rightIn:
 				if !ok {
 					rightIn = nil
 					continue
 				}
-				select {
-				case tuples <- Tuple[t1, t2]{Right: right}:
-				case <-ctx.Done():
-					return
-				}
+				tuple.Right = right
+			case <-ctx.Done():
+				return
+			}
+			select {
+			case tuples <- tuple:
 			case <-ctx.Done():
 				return
 			}
