@@ -3,7 +3,6 @@ package options_test
 import (
 	"context"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/options"
@@ -25,8 +24,7 @@ func testOptionsValid(t *testing.T) {
 }
 
 type (
-	cmdsOptions     []cmds.Option
-	empty           struct{}
+	emptySettings   struct{}
 	builtinSettings struct {
 		Bool       bool
 		Complex64  complex64
@@ -56,20 +54,16 @@ type (
 		NonPrim somethingDifferent
 	}
 
+	embeddedSettings struct {
+		Extra bool
+		compoundSettings
+	}
 	fieldParam struct{ reflect.StructField }
 )
 
 func (sf fieldParam) Name(parameters.SourceID) string      { return sf.StructField.Name }
 func (sf fieldParam) Description() string                  { return sf.Type.String() }
 func (sf fieldParam) Aliases(parameters.SourceID) []string { return nil }
-
-func (opts cmdsOptions) String() string {
-	optNames := make([]string, len(opts))
-	for i, opt := range opts {
-		optNames[i] = opt.Name()
-	}
-	return strings.Join(optNames, ", ")
-}
 
 func generateParams[setPtr runtime.SettingsConstraint[set], set any](ctx context.Context) parameters.Parameters {
 	var (
@@ -88,8 +82,8 @@ func generateParams[setPtr runtime.SettingsConstraint[set], set any](ctx context
 	return params
 }
 
-func (*empty) Parameters(ctx context.Context) parameters.Parameters {
-	return generateParams[*empty](ctx)
+func (*emptySettings) Parameters(ctx context.Context) parameters.Parameters {
+	return generateParams[*emptySettings](ctx)
 }
 
 func (*builtinSettings) Parameters(ctx context.Context) parameters.Parameters {
@@ -104,6 +98,20 @@ func (*compoundSettings) Parameters(ctx context.Context) parameters.Parameters {
 	return generateParams[*compoundSettings](ctx)
 }
 
+func (es *embeddedSettings) Parameters(ctx context.Context) parameters.Parameters {
+	var (
+		localField, _  = reflect.TypeOf(es).Elem().FieldByName("Extra")
+		embeddedFields = generateParams[*compoundSettings](ctx)
+		localParams    = make(chan parameters.Parameter, cap(embeddedFields)+1)
+	)
+	localParams <- fieldParam{localField}
+	for param := range embeddedFields {
+		localParams <- param
+	}
+	close(localParams)
+	return localParams
+}
+
 func testOptionsCmds(t *testing.T) {
 	t.Parallel()
 	var (
@@ -115,7 +123,7 @@ func testOptionsCmds(t *testing.T) {
 			cmds.OptShortHelp,
 		}
 		builtinCount = len(builtinNames)
-		opts         = options.MustMakeCmdsOptions[*empty](options.WithBuiltin(true))
+		opts         = options.MustMakeCmdsOptions[*emptySettings](options.WithBuiltin(true))
 	)
 	if opts == nil {
 		t.Error("nil options returned")
@@ -163,6 +171,16 @@ func testOptionsReflect(t *testing.T) {
 				},
 			)},
 		},
+		{
+			"embedded",
+			options.MustMakeCmdsOptions[*embeddedSettings],
+			[]options.ConstructorOption{options.WithMaker(
+				options.OptionMaker{
+					Type:           reflect.TypeOf((*somethingDifferent)(nil)).Elem(),
+					MakeOptionFunc: cmds.StringOption,
+				},
+			)},
+		},
 	} {
 		var (
 			name            = test.name
@@ -175,7 +193,6 @@ func testOptionsReflect(t *testing.T) {
 			if opts == nil {
 				t.Error("nil options returned")
 			}
-			t.Log("got options:", cmdsOptions(opts))
 		})
 	}
 }
