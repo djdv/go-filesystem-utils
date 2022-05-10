@@ -16,6 +16,7 @@ func TestGeneric(t *testing.T) {
 func ctxEither(t *testing.T) {
 	t.Parallel()
 	t.Run("valid", ctxEitherValid)
+	t.Run("invalid", ctxEitherInvalid)
 }
 
 func ctxEitherValid(t *testing.T) {
@@ -49,6 +50,15 @@ func ctxEitherValid(t *testing.T) {
 			"\n\tgot: %#v %#v"+
 			"\n\twant: %#v %#v",
 			gotLeft, gotRight, leftSlice, rightSlice)
+	}
+}
+
+func ctxEitherInvalid(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	tuples := generic.CtxEither(ctx, buffAndClose(1, 2), buffAndClose("a", "b"))
+	for tuple := range tuples {
 	}
 }
 
