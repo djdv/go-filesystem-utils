@@ -22,34 +22,37 @@ func ctxEither(t *testing.T) {
 func ctxEitherValid(t *testing.T) {
 	t.Parallel()
 	var (
-		ctx        = context.Background()
-		leftSlice  = []int{1, 2}
-		rightSlice = []string{"a", "b"}
-		leftIn     = buffAndClose(leftSlice...)
-		rightIn    = buffAndClose(rightSlice...)
-		tuples     = generic.CtxEither(ctx, leftIn, rightIn)
-		gotLeft    = []int{}
-		gotRight   = []string{}
-	)
+		wantLeft  = []int{1, 2}
+		wantRight = []string{"a", "b"}
+		gotLeft   = make([]int, 0, len(wantLeft))
+		gotRight  = make([]string, 0, len(wantRight))
 
-	for tuple := range tuples {
-		var (
-			t1 = tuple.Left
-			t2 = tuple.Right
-		)
-		if t1 != 0 {
-			gotLeft = append(gotLeft, t1)
+		ctx     = context.Background()
+		leftIn  = buffAndClose(wantLeft...)
+		rightIn = buffAndClose(wantRight...)
+		pairs   = generic.CtxEither(ctx, leftIn, rightIn)
+	)
+	for pair := range pairs {
+		if left := pair.Left; left != 0 {
+			gotLeft = append(gotLeft, left)
+			continue
 		}
-		if t2 != "" {
-			gotRight = append(gotRight, t2)
+		if right := pair.Right; right != "" {
+			gotRight = append(gotRight, right)
 		}
 	}
-	if !reflect.DeepEqual(leftSlice, gotLeft) ||
-		!reflect.DeepEqual(rightSlice, gotRight) {
+	var (
+		leftMatches  = reflect.DeepEqual(wantLeft, gotLeft)
+		rightMatches = reflect.DeepEqual(wantRight, gotRight)
+		mismatch     = !leftMatches || !rightMatches
+	)
+	if mismatch {
 		t.Errorf("Tuple did not match expected data"+
 			"\n\tgot: %#v %#v"+
 			"\n\twant: %#v %#v",
-			gotLeft, gotRight, leftSlice, rightSlice)
+			gotLeft, gotRight,
+			wantLeft, wantRight,
+		)
 	}
 }
 
@@ -57,8 +60,10 @@ func ctxEitherInvalid(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	tuples := generic.CtxEither(ctx, buffAndClose(1, 2), buffAndClose("a", "b"))
-	for tuple := range tuples {
+	for range generic.CtxEither(ctx,
+		buffAndClose(1, 2),
+		buffAndClose("a", "b"),
+	) {
 	}
 }
 
