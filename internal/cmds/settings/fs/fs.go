@@ -1,5 +1,5 @@
 // Package fs provides a `Settings` type and wrappers
-// for the "fs" `Command` tree to use.
+// that "fs" Commands should use to parse them.
 package fs
 
 import (
