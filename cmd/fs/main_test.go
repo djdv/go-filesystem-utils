@@ -12,23 +12,24 @@ func TestMain(m *testing.M) {
 
 func testMain() {
 	var (
-		argv           = os.Args
-		stdout, stderr = os.Stdout, os.Stderr
-		discard        = newDiscard()
-	)
-	defer func() {
-		os.Args = argv
-		os.Stdout = stdout
-		os.Stderr = stderr
+		argv              = os.Args
+		stdout, stderr    = os.Stdout, os.Stderr
+		discardWriter     = newDiscardWriter()
+		restoreProgramEnv = func() {
+			os.Args = argv
+			os.Stdout = stdout
+			os.Stderr = stderr
 
-		if err := discard.Close(); err != nil {
-			panic(err)
+			if err := discardWriter.Close(); err != nil {
+				panic(err)
+			}
 		}
-	}()
+	)
+	defer restoreProgramEnv()
 
 	// Don't output to `go test`'s streams.
-	os.Stdout = discard
-	os.Stderr = discard
+	os.Stdout = discardWriter
+	os.Stderr = discardWriter
 
 	// Check that main doesn't panic.
 	os.Args = []string{os.Args[0]}
@@ -39,8 +40,8 @@ func testMain() {
 	main()
 }
 
-func newDiscard() *os.File {
-	discard, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+func newDiscardWriter() *os.File {
+	discard, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
 		panic(err)
 	}
