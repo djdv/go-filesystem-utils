@@ -1,5 +1,5 @@
 // Package fs provides a `Settings` type and wrappers
-// that "fs" Commands should use to parse them.
+// that subcommands of "fs" must use.
 package fs
 
 import (
@@ -12,7 +12,7 @@ import (
 )
 
 // Settings is the root structure which contains
-// any global settings that subcommands of `fs`
+// any global settings that subcommands of Command "fs"
 // must embed and check for.
 type Settings struct{}
 
