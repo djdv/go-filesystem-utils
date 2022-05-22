@@ -3,9 +3,8 @@ package generic
 
 import "context"
 
-// Couple wraps 2 values of any type
-// allowing them to be generically addressed by names `Left` and `Right`.
-// Conventionally: `someFunc(left, right) Couple{leftType, rightType} { ...`.
+// Couple wraps 2 values (of any type)
+// under the generic names `Left` and `Right`.
 type Couple[left, right any] struct {
 	Left  left
 	Right right
@@ -13,7 +12,7 @@ type Couple[left, right any] struct {
 
 // CtxEither receives from both channels,
 // relaying either the left or right type,
-// until both channels are closed, or the context is done.
+// until both channels are closed or the context is done.
 func CtxEither[left, right any](ctx context.Context,
 	leftIn <-chan left, rightIn <-chan right,
 ) <-chan Couple[left, right] {
