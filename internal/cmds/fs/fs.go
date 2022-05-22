@@ -7,7 +7,7 @@ import (
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
-// Command returns a cmdslib (root) of Command "fs".
+// Command returns a new cmdslib root of Command "fs".
 func Command() *cmds.Command {
 	return &cmds.Command{
 		Options: fs.MustMakeOptions[*fs.Settings](options.WithBuiltin(true)),
