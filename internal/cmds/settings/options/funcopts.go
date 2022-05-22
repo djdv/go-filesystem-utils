@@ -1,7 +1,8 @@
 package options
 
 type (
-	// ConstructorOption is the functional options interface for `cmds.Option` constructors.
+	// ConstructorOption is a functional options interface
+	// for `cmds.Option` constructors.
 	ConstructorOption   interface{ apply(*constructorSettings) }
 	constructorSettings struct {
 		userConstructors []OptionConstructor
