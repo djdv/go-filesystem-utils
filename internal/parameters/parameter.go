@@ -2,9 +2,7 @@
 // and exposes a set of argument sources.
 package parameters
 
-import (
-	"context"
-)
+import "context"
 
 type (
 	// A SourceID represents an argument value source,
