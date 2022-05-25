@@ -22,9 +22,9 @@ type (
 	fieldParam struct{ reflect.StructField }
 )
 
-func (sf fieldParam) Name(parameters.SourceID) string      { return sf.StructField.Name }
+func (sf fieldParam) Name(parameters.Provider) string      { return sf.StructField.Name }
 func (sf fieldParam) Description() string                  { return sf.Type.String() }
-func (sf fieldParam) Aliases(parameters.SourceID) []string { return nil }
+func (sf fieldParam) Aliases(parameters.Provider) []string { return nil }
 
 func (fs *fieldSettings) Parameters(ctx context.Context) parameters.Parameters {
 	var (
