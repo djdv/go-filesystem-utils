@@ -186,7 +186,7 @@ func testOptionsCmds(t *testing.T) {
 func testOptionsReflect(t *testing.T) {
 	t.Parallel()
 	type optionConstructor func(...options.ConstructorOption) ([]cmds.Option, error)
-	typeHandlerOpts := []options.ConstructorOption{options.WithMaker(
+	typeHandlerOpts := []options.ConstructorOption{options.WithConstructor(
 		options.TypeConstructor{
 			Type:          reflect.TypeOf((*somethingDifferent)(nil)).Elem(),
 			NewOptionFunc: cmds.StringOption,

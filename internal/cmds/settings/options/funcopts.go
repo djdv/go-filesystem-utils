@@ -25,9 +25,9 @@ func parseConstructorOptions(options ...ConstructorOption) (settings constructor
 func WithBuiltin(b bool) ConstructorOption             { return builtinOption(b) }
 func (b builtinOption) apply(set *constructorSettings) { set.withBuiltin = bool(b) }
 
-// WithMaker appends the OptionConstructor to an internal handler list.
-func WithMaker(maker TypeConstructor) ConstructorOption { return constructorOption{maker} }
+// WithConstructor appends the OptionConstructor to an internal handler list.
+func WithConstructor(c TypeConstructor) ConstructorOption { return constructorOption{c} }
 
-func (constructor constructorOption) apply(set *constructorSettings) {
-	set.userConstructors = append(set.userConstructors, constructor.TypeConstructor)
+func (c constructorOption) apply(set *constructorSettings) {
+	set.userConstructors = append(set.userConstructors, c.TypeConstructor)
 }
