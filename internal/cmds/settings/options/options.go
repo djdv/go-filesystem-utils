@@ -20,8 +20,9 @@ type (
 	// and the final argument is the description for the option (used in user facing help text).
 	NewOptionFunc func(...string) cmds.Option
 
-	// OptionConstructor is the binding of a type with its corresponding `Option constructor func.
-	OptionConstructor struct {
+	// TypeConstructor is the binding of a type
+	// with its corresponding `Option` constructor.
+	TypeConstructor struct {
 		reflect.Type
 		NewOptionFunc
 	}
@@ -55,7 +56,7 @@ func MakeOptions[setPtr runtime.SettingsType[settings],
 }
 
 func newSettingsOption(field reflect.StructField,
-	param parameters.Parameter, makers []OptionConstructor,
+	param parameters.Parameter, makers []TypeConstructor,
 ) (cmds.Option, error) {
 	if !field.IsExported() {
 		err := fmt.Errorf("%w:"+
@@ -94,7 +95,7 @@ func newSettingsOption(field reflect.StructField,
 	return nil, err
 }
 
-func maybeGetConstructor(constructors []OptionConstructor, typ reflect.Type) NewOptionFunc {
+func maybeGetConstructor(constructors []TypeConstructor, typ reflect.Type) NewOptionFunc {
 	for _, constructor := range constructors {
 		if constructor.Type == typ {
 			return constructor.NewOptionFunc

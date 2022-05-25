@@ -5,11 +5,11 @@ type (
 	// for `cmds.Option` constructors.
 	ConstructorOption   interface{ apply(*constructorSettings) }
 	constructorSettings struct {
-		userConstructors []OptionConstructor
+		userConstructors []TypeConstructor
 		withBuiltin      bool
 	}
 
-	constructorOption struct{ OptionConstructor }
+	constructorOption struct{ TypeConstructor }
 	builtinOption     bool
 )
 
@@ -26,8 +26,8 @@ func WithBuiltin(b bool) ConstructorOption             { return builtinOption(b)
 func (b builtinOption) apply(set *constructorSettings) { set.withBuiltin = bool(b) }
 
 // WithMaker appends the OptionConstructor to an internal handler list.
-func WithMaker(maker OptionConstructor) ConstructorOption { return constructorOption{maker} }
+func WithMaker(maker TypeConstructor) ConstructorOption { return constructorOption{maker} }
 
 func (constructor constructorOption) apply(set *constructorSettings) {
-	set.userConstructors = append(set.userConstructors, constructor.OptionConstructor)
+	set.userConstructors = append(set.userConstructors, constructor.TypeConstructor)
 }

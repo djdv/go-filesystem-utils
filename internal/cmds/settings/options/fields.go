@@ -13,7 +13,7 @@ import (
 type fieldParam = generic.Couple[reflect.StructField, parameters.Parameter]
 
 func accumulateOptions(ctx context.Context, fields runtime.SettingsFields,
-	params parameters.Parameters, makers []OptionConstructor,
+	params parameters.Parameters, makers []TypeConstructor,
 ) ([]cmds.Option, error) {
 	var (
 		subCtx, cancel    = context.WithCancel(ctx)
