@@ -27,20 +27,11 @@ func (invalidSettings) Parameters(context.Context) parameters.Parameters { retur
 
 func testInvalid(t *testing.T) {
 	t.Parallel()
-	var (
-		testPanic = func(t *testing.T, fn func(), failMsg string) {
-			t.Helper()
-			defer func(t *testing.T) {
-				t.Helper()
-				if r := recover(); r == nil {
-					t.Errorf("expected to panic due to \"%s\" but did not", failMsg)
-				} else {
-					t.Log("recovered from (expected) panic:", r)
-				}
-			}(t)
-			fn()
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("expected to panic due to \"%s\" but did not",
+				runtime.ErrUnexpectedType.Error())
 		}
-		wrapper = func() { fs.MustMakeOptions[*invalidSettings](options.WithBuiltin(true)) }
-	)
-	testPanic(t, wrapper, runtime.ErrUnexpectedType.Error())
+	}()
+	fs.MustMakeOptions[*invalidSettings]()
 }
