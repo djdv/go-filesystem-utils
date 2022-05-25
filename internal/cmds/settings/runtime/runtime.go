@@ -3,7 +3,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"reflect"
 
@@ -20,15 +19,20 @@ type (
 	// SettingsFields is a series of struct fields
 	// derived from the `Settings` underlying type.
 	SettingsFields = <-chan reflect.StructField
+
+	constErr string
 )
 
-var (
+func (errStr constErr) Error() string { return string(errStr) }
+
+const (
 	// ErrUnassignable may be returned when assignment to a value references
 	// is not allowed by Go's runtime rules.
-	ErrUnassignable = errors.New("cannot assign")
+	ErrUnassignable constErr = "cannot assign"
+
 	// ErrUnexpectedType may be returned when a type parameter
 	// does not match an expected underlying type (of a `Settings` implementation).
-	ErrUnexpectedType = errors.New("unexpected type")
+	ErrUnexpectedType constErr = "unexpected type"
 )
 
 // ReflectFields accepts a `[*struct]` type-parameter,
