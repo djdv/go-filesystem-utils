@@ -28,14 +28,14 @@ func ExampleParameter() {
 
 type exampleParam struct{}
 
-func (exampleParam) Name(parameters.SourceID) string { return "parameter-name" }
+func (exampleParam) Name(parameters.Provider) string { return "parameter-name" }
 func (exampleParam) Description() string             { return "The port to use for the server." }
-func (exampleParam) Aliases(parameters.SourceID) []string {
+func (exampleParam) Aliases(parameters.Provider) []string {
 	return []string{"p", "former-name", "name-parameter"}
 }
 
 func TestStringer(t *testing.T) {
 	t.Parallel() // If this test doesn't compile `go generate` needs to be run.
 	t.Run("valid", func(t *testing.T) { t.Parallel(); _ = parameters.CommandLine.String() })
-	t.Run("invalid", func(t *testing.T) { t.Parallel(); _ = parameters.SourceID(0).String() })
+	t.Run("invalid", func(t *testing.T) { t.Parallel(); _ = parameters.Provider(0).String() })
 }
