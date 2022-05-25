@@ -12,8 +12,8 @@ import (
 )
 
 type (
-	// NewOptionFunc should follow the same conventions for `Option` constructors
-	// in the cmdslib pkg.
+	// NewOptionFunc should follow the same conventions
+	// as `Option` constructors from the cmdslib pkg.
 	//
 	// I.e. the first argument is the primary name (e.g. `some name` => `--some-name`),
 	// additional arguments are aliases (`n` => `-n`),
@@ -28,8 +28,8 @@ type (
 	}
 )
 
-// MakeOptions creates cmdslib options
-// using underlying type and interface data from [settings].
+// MakeOptions creates cmdslib `Option`s
+// using underlying type and interface data from [*settings].
 func MakeOptions[setPtr runtime.SettingsType[settings],
 	settings any](options ...ConstructorOption,
 ) ([]cmds.Option, error) {
