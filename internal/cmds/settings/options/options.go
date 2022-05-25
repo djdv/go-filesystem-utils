@@ -7,6 +7,7 @@ import (
 	"reflect"
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
@@ -36,55 +37,77 @@ func MakeOptions[setPtr runtime.SettingsType[settings],
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	fields, err := runtime.ReflectFields[setPtr](ctx)
+	fieldParams, errs, err := fieldParamsFromSettings[setPtr](ctx)
 	if err != nil {
 		return nil, err
 	}
 	var (
-		params = setPtr.Parameters(nil, ctx)
-		opts   = parseConstructorOptions(options...)
+		maybeBuiltin       []cmds.Option
+		constructorOptions = parseConstructorOptions(options...)
+		userConstructors   = constructorOptions.userConstructors
 	)
-	cmdsOptions, err := accumulateOptions(ctx, fields, params, opts.userConstructors)
-	if err != nil {
-		return nil, fmt.Errorf("%T: %w", (setPtr)(nil), err)
+	if constructorOptions.withBuiltin {
+		maybeBuiltin = builtinOptions()
 	}
 
-	if opts.withBuiltin {
-		return append(cmdsOptions, builtinOptions()...), nil
+	cmdsOptions := make([]cmds.Option, 0, cap(fieldParams)+len(maybeBuiltin))
+	for pairOrErr := range generic.CtxEither(ctx, fieldParams, errs) {
+		if err := pairOrErr.Right; err != nil {
+			return nil, err
+		}
+		var (
+			fieldAndParam = pairOrErr.Left
+			field         = fieldAndParam.Left
+			param         = fieldAndParam.Right
+			option, err   = newSettingsOption(field, param, userConstructors)
+		)
+		if err != nil {
+			return nil, fmt.Errorf("%T: %w", (setPtr)(nil), err)
+		}
+		cmdsOptions = append(cmdsOptions, option)
 	}
-	return cmdsOptions, nil
+	return append(cmdsOptions, maybeBuiltin...), nil
+}
+
+func fieldsFromSettings[setPtr runtime.SettingsType[settings],
+	settings any](ctx context.Context,
+) (runtime.SettingsFields, <-chan error, error) {
+	fields, err := runtime.ReflectFields[setPtr](ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	validFields, errs := checkFields(ctx, fields)
+	return validFields, errs, nil
+}
+
+func fieldParamsFromSettings[setPtr runtime.SettingsType[settings],
+	settings any](ctx context.Context,
+) (<-chan fieldParam, <-chan error, error) {
+	validFields, errs, err := fieldsFromSettings[setPtr](ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var (
+		params      = setPtr.Parameters(nil, ctx)
+		fieldParams = skipEmbbedded(ctx, validFields, params)
+	)
+	return fieldParams, errs, nil
 }
 
 func newSettingsOption(field reflect.StructField,
-	param parameters.Parameter, makers []TypeConstructor,
+	param parameters.Parameter, constructors []TypeConstructor,
 ) (cmds.Option, error) {
-	if !field.IsExported() {
-		err := fmt.Errorf("%w:"+
-			" refusing to create option for unassignable field"+
-			" - `%s` is not exported",
-			runtime.ErrUnassignable,
-			field.Name,
-		)
-		return nil, err
-	}
-
 	var (
 		constructorArgs = parameterToConstructorArgs(param)
 		typ             = field.Type
-		userConstructor = maybeGetConstructor(makers, typ)
 	)
-	if userConstructor != nil {
+	if userConstructor := maybeGetConstructor(constructors, typ); userConstructor != nil {
 		return userConstructor(constructorArgs...), nil
 	}
-
-	var (
-		valKind            = typ.Kind()
-		builtinConstructor = constructorForKind(valKind)
-	)
-	if builtinConstructor != nil {
+	if builtinConstructor := constructorForKind(typ.Kind()); builtinConstructor != nil {
 		return builtinConstructor(constructorArgs...), nil
 	}
-
 	err := fmt.Errorf("%w:"+
 		" can't determine which option constructor to use for `%s`"+
 		" (type %v with no custom handler)",

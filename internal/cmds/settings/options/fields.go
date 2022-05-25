@@ -2,53 +2,56 @@ package options
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
-	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
 type fieldParam = generic.Couple[reflect.StructField, parameters.Parameter]
 
-func accumulateOptions(ctx context.Context, fields runtime.SettingsFields,
-	params parameters.Parameters, makers []TypeConstructor,
-) ([]cmds.Option, error) {
+func checkFields(ctx context.Context,
+	fields runtime.SettingsFields,
+) (runtime.SettingsFields, <-chan error) {
 	var (
-		subCtx, cancel    = context.WithCancel(ctx)
-		fieldParams, errs = skipEmbbedded(subCtx, fields, params)
-		cmdsOptions       = make([]cmds.Option, 0, cap(params))
+		relay = make(chan reflect.StructField, cap(fields))
+		errs  = make(chan error)
 	)
-	defer cancel()
-	for pairOrErr := range generic.CtxEither(subCtx, fieldParams, errs) {
-		if err := pairOrErr.Right; err != nil {
-			return nil, err
+	go func() {
+		defer close(relay)
+		defer close(errs)
+		for field := range fields {
+			if !field.IsExported() {
+				err := fmt.Errorf("%w:"+
+					" refusing to create option for unassignable field"+
+					" - `%s` is not exported",
+					runtime.ErrUnassignable,
+					field.Name,
+				)
+				select {
+				case errs <- err:
+				case <-ctx.Done():
+				}
+				return
+			}
+			select {
+			case relay <- field:
+			case <-ctx.Done():
+				return
+			}
 		}
-		var (
-			fieldAndParam = pairOrErr.Left
-			field         = fieldAndParam.Left
-			param         = fieldAndParam.Right
-			opt, err      = newSettingsOption(field, param, makers)
-		)
-		if err != nil {
-			return nil, err
-		}
-		cmdsOptions = append(cmdsOptions, opt)
-	}
-	return cmdsOptions, nil
+	}()
+	return relay, errs
 }
 
 func skipEmbbedded(ctx context.Context, fields runtime.SettingsFields,
 	params parameters.Parameters,
-) (<-chan fieldParam, <-chan error) {
-	var (
-		fieldParams = make(chan fieldParam, cap(fields)+cap(params))
-		errs        = make(chan error)
-	)
+) <-chan fieldParam {
+	fieldParams := make(chan fieldParam, cap(fields)+cap(params))
 	go func() {
 		defer close(fieldParams)
-		defer close(errs)
 		for field := range fields {
 			if isEmbeddedField(field) {
 				skipStruct(ctx, field, params)
@@ -69,7 +72,7 @@ func skipEmbbedded(ctx context.Context, fields runtime.SettingsFields,
 			}
 		}
 	}()
-	return fieldParams, errs
+	return fieldParams
 }
 
 func isEmbeddedField(field reflect.StructField) bool {

@@ -51,17 +51,19 @@ type (
 	}
 
 	somethingDifferent struct{}
-	compoundSettings   struct {
+	CompoundSettings   struct {
 		NonPrim somethingDifferent
 	}
 
+	// TODO: we should have a counterpart invalid test which is these but with an unexported
+	// `compountSettings` - this will get refused by the lib since it's unassignable.
 	embeddedSettingsHead struct {
-		compoundSettings
+		CompoundSettings
 		Extra bool
 	}
 	embeddedSettingsTail struct {
 		Extra bool
-		compoundSettings
+		CompoundSettings
 	}
 	fieldParam struct{ reflect.StructField }
 )
@@ -101,8 +103,8 @@ func (*vectorSettings) Parameters(ctx context.Context) parameters.Parameters {
 	return generateParams[*vectorSettings](ctx)
 }
 
-func (*compoundSettings) Parameters(ctx context.Context) parameters.Parameters {
-	return generateParams[*compoundSettings](ctx)
+func (*CompoundSettings) Parameters(ctx context.Context) parameters.Parameters {
+	return generateParams[*CompoundSettings](ctx)
 }
 
 type embeddedOrder = bool
@@ -207,7 +209,7 @@ func testOptionsReflect(t *testing.T) {
 		},
 		{
 			"custom",
-			options.MakeOptions[*compoundSettings],
+			options.MakeOptions[*CompoundSettings],
 			typeHandlerOpts,
 		},
 		{
