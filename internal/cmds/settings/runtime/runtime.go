@@ -20,19 +20,19 @@ type (
 	// derived from the `Settings` underlying type.
 	SettingsFields = <-chan reflect.StructField
 
-	constErr string
+	constError string
 )
 
-func (errStr constErr) Error() string { return string(errStr) }
+func (errStr constError) Error() string { return string(errStr) }
 
 const (
 	// ErrUnassignable may be returned when assignment to a value references
 	// is not allowed by Go's runtime rules.
-	ErrUnassignable constErr = "cannot assign"
+	ErrUnassignable constError = "cannot assign"
 
 	// ErrUnexpectedType may be returned when a type parameter
 	// does not match an expected underlying type (of a `Settings` implementation).
-	ErrUnexpectedType constErr = "unexpected type"
+	ErrUnexpectedType constError = "unexpected type"
 )
 
 // ReflectFields accepts a `[*struct]` type-parameter,
