@@ -1,6 +1,6 @@
-// Package parameters provides an abstraction around program "formal parameters"
+// Package parameter provides an abstraction around program "formal parameters"
 // and exposes a set of argument providers.
-package parameters
+package parameter
 
 import "context"
 
