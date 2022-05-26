@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
-	"github.com/djdv/go-filesystem-utils/internal/parameters"
+	"github.com/djdv/go-filesystem-utils/internal/parameter"
 )
 
 func TestRuntime(t *testing.T) {
@@ -22,14 +22,14 @@ type (
 	fieldParam struct{ reflect.StructField }
 )
 
-func (sf fieldParam) Name(parameters.Provider) string      { return sf.StructField.Name }
-func (sf fieldParam) Description() string                  { return sf.Type.String() }
-func (sf fieldParam) Aliases(parameters.Provider) []string { return nil }
+func (sf fieldParam) Name(parameter.Provider) string      { return sf.StructField.Name }
+func (sf fieldParam) Description() string                 { return sf.Type.String() }
+func (sf fieldParam) Aliases(parameter.Provider) []string { return nil }
 
-func (fs *fieldSettings) Parameters(ctx context.Context) parameters.Parameters {
+func (fs *fieldSettings) Parameters(ctx context.Context) parameter.Parameters {
 	var (
 		fields = reflect.VisibleFields(reflect.TypeOf(fs).Elem())
-		params = make(chan parameters.Parameter, len(fields))
+		params = make(chan parameter.Parameter, len(fields))
 	)
 	go func() {
 		defer close(params)
@@ -95,22 +95,22 @@ type (
 	}
 )
 
-func (fieldsInvalidSettingsBool) Parameters(context.Context) parameters.Parameters { return nil }
+func (fieldsInvalidSettingsBool) Parameters(context.Context) parameter.Parameters { return nil }
 
-func (fs *fieldsInvalidSettingsFewerParams) Parameters(ctx context.Context) parameters.Parameters {
+func (fs *fieldsInvalidSettingsFewerParams) Parameters(ctx context.Context) parameter.Parameters {
 	var (
 		field  = reflect.TypeOf(fs).Elem().Field(0)
-		params = make(chan parameters.Parameter, 1)
+		params = make(chan parameter.Parameter, 1)
 	)
 	defer close(params)
 	params <- fieldParam{field}
 	return params
 }
 
-func (fs *fieldsInvalidSettingsFewerFields) Parameters(ctx context.Context) parameters.Parameters {
+func (fs *fieldsInvalidSettingsFewerFields) Parameters(ctx context.Context) parameter.Parameters {
 	var (
 		field  = reflect.TypeOf(fs).Elem().Field(0)
-		params = make(chan parameters.Parameter, 2)
+		params = make(chan parameter.Parameter, 2)
 	)
 	defer close(params)
 	params <- fieldParam{field}

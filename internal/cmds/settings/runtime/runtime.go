@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/djdv/go-filesystem-utils/internal/parameters"
+	"github.com/djdv/go-filesystem-utils/internal/parameter"
 )
 
 type (
@@ -14,7 +14,7 @@ type (
 	// which implements the Settings interface.
 	SettingsType[Settings any] interface {
 		*Settings
-		parameters.Settings
+		parameter.Settings
 	}
 	// SettingsFields is a series of struct fields
 	// derived from the `Settings` underlying type.
