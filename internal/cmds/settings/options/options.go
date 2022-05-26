@@ -37,7 +37,7 @@ func MakeOptions[setPtr runtime.SettingsType[settings],
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	fieldParams, errs, err := fieldParamsFromSettings[setPtr](ctx)
+	fieldAndParams, errs, err := fieldParamsFromSettings[setPtr](ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -50,8 +50,8 @@ func MakeOptions[setPtr runtime.SettingsType[settings],
 		maybeBuiltin = builtinOptions()
 	}
 
-	cmdsOptions := make([]cmds.Option, 0, cap(fieldParams)+len(maybeBuiltin))
-	for pairOrErr := range generic.CtxEither(ctx, fieldParams, errs) {
+	cmdsOptions := make([]cmds.Option, 0, cap(fieldAndParams)+len(maybeBuiltin))
+	for pairOrErr := range generic.CtxEither(ctx, fieldAndParams, errs) {
 		if err := pairOrErr.Right; err != nil {
 			return nil, err
 		}
@@ -69,34 +69,8 @@ func MakeOptions[setPtr runtime.SettingsType[settings],
 	return append(cmdsOptions, maybeBuiltin...), nil
 }
 
-func fieldsFromSettings[setPtr runtime.SettingsType[settings],
-	settings any](ctx context.Context,
-) (runtime.SettingsFields, <-chan error, error) {
-	fields, err := runtime.ReflectFields[setPtr](ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	validFields, errs := checkFields(ctx, fields)
-	return validFields, errs, nil
-}
-
-func fieldParamsFromSettings[setPtr runtime.SettingsType[settings],
-	settings any](ctx context.Context,
-) (<-chan fieldParam, <-chan error, error) {
-	validFields, errs, err := fieldsFromSettings[setPtr](ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	var (
-		params      = setPtr.Parameters(nil, ctx)
-		fieldParams = skipEmbbedded(ctx, validFields, params)
-	)
-	return fieldParams, errs, nil
-}
-
-func newSettingsOption(field reflect.StructField,
-	param parameters.Parameter, constructors []TypeConstructor,
+func newSettingsOption(field structField, param fieldParameter,
+	constructors []TypeConstructor,
 ) (cmds.Option, error) {
 	var (
 		constructorArgs = parameterToConstructorArgs(param)

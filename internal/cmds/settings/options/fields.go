@@ -10,13 +10,44 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/parameters"
 )
 
-type fieldParam = generic.Couple[reflect.StructField, parameters.Parameter]
+type (
+	structField     = reflect.StructField
+	structFields    = runtime.SettingsFields
+	fieldParameter  = parameters.Parameter
+	fieldParameters = parameters.Parameters
+	fieldAndParam   = generic.Couple[structField, fieldParameter]
+	fieldAndParams  = <-chan fieldAndParam
+	errors          = <-chan error
+)
 
-func checkFields(ctx context.Context,
-	fields runtime.SettingsFields,
-) (runtime.SettingsFields, <-chan error) {
+func fieldsFromSettings[setPtr runtime.SettingsType[settings], settings any](ctx context.Context,
+) (structFields, errors, error) {
+	fields, err := runtime.ReflectFields[setPtr](ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	validFields, errs := checkFields(ctx, fields)
+	return validFields, errs, nil
+}
+
+func fieldParamsFromSettings[setPtr runtime.SettingsType[settings],
+	settings any](ctx context.Context,
+) (fieldAndParams, errors, error) {
+	validFields, errs, err := fieldsFromSettings[setPtr](ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	var (
-		relay = make(chan reflect.StructField, cap(fields))
+		params      = setPtr.Parameters(nil, ctx)
+		fieldParams = skipEmbbedded(ctx, validFields, params)
+	)
+	return fieldParams, errs, nil
+}
+
+func checkFields(ctx context.Context, fields structFields) (structFields, errors) {
+	var (
+		relay = make(chan structField, cap(fields))
 		errs  = make(chan error)
 	)
 	go func() {
@@ -46,10 +77,8 @@ func checkFields(ctx context.Context,
 	return relay, errs
 }
 
-func skipEmbbedded(ctx context.Context, fields runtime.SettingsFields,
-	params parameters.Parameters,
-) <-chan fieldParam {
-	fieldParams := make(chan fieldParam, cap(fields)+cap(params))
+func skipEmbbedded(ctx context.Context, fields structFields, params fieldParameters) fieldAndParams {
+	fieldParams := make(chan fieldAndParam, cap(fields)+cap(params))
 	go func() {
 		defer close(fieldParams)
 		for field := range fields {
@@ -63,7 +92,7 @@ func skipEmbbedded(ctx context.Context, fields runtime.SettingsFields,
 					return
 				}
 				select {
-				case fieldParams <- fieldParam{Left: field, Right: param}:
+				case fieldParams <- fieldAndParam{Left: field, Right: param}:
 				case <-ctx.Done():
 					return
 				}
@@ -75,11 +104,11 @@ func skipEmbbedded(ctx context.Context, fields runtime.SettingsFields,
 	return fieldParams
 }
 
-func isEmbeddedField(field reflect.StructField) bool {
+func isEmbeddedField(field structField) bool {
 	return field.Anonymous && field.Type.Kind() == reflect.Struct
 }
 
-func skipStruct(ctx context.Context, field reflect.StructField, params parameters.Parameters) {
+func skipStruct(ctx context.Context, field structField, params fieldParameters) {
 	for skipCount := field.Type.NumField(); skipCount != 0; skipCount-- {
 		select {
 		case <-params:
