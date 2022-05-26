@@ -1,4 +1,4 @@
-// Package options provides generic constructors for the cmdslib `Option` interface.
+// Package option provides generic constructors for the cmdslib `Option` interface.
 package option
 
 import (
