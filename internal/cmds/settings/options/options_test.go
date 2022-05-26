@@ -8,7 +8,7 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/options"
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
-	"github.com/djdv/go-filesystem-utils/internal/parameters"
+	"github.com/djdv/go-filesystem-utils/internal/parameter"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -68,16 +68,16 @@ type (
 	fieldParam struct{ reflect.StructField }
 )
 
-func (sf fieldParam) Name(parameters.Provider) string      { return sf.StructField.Name }
-func (sf fieldParam) Description() string                  { return sf.Type.String() }
-func (sf fieldParam) Aliases(parameters.Provider) []string { return nil }
+func (sf fieldParam) Name(parameter.Provider) string      { return sf.StructField.Name }
+func (sf fieldParam) Description() string                 { return sf.Type.String() }
+func (sf fieldParam) Aliases(parameter.Provider) []string { return nil }
 
 func generateParams[setPtr runtime.SettingsType[settings],
 	settings any](ctx context.Context,
-) parameters.Parameters {
+) parameter.Parameters {
 	var (
 		fields = reflect.VisibleFields(reflect.TypeOf((setPtr)(nil)).Elem())
-		params = make(chan parameters.Parameter, len(fields))
+		params = make(chan parameter.Parameter, len(fields))
 	)
 	go func() {
 		defer close(params)
@@ -91,19 +91,19 @@ func generateParams[setPtr runtime.SettingsType[settings],
 	return params
 }
 
-func (*emptySettings) Parameters(ctx context.Context) parameters.Parameters {
+func (*emptySettings) Parameters(ctx context.Context) parameter.Parameters {
 	return generateParams[*emptySettings](ctx)
 }
 
-func (*builtinSettings) Parameters(ctx context.Context) parameters.Parameters {
+func (*builtinSettings) Parameters(ctx context.Context) parameter.Parameters {
 	return generateParams[*builtinSettings](ctx)
 }
 
-func (*vectorSettings) Parameters(ctx context.Context) parameters.Parameters {
+func (*vectorSettings) Parameters(ctx context.Context) parameter.Parameters {
 	return generateParams[*vectorSettings](ctx)
 }
 
-func (*CompoundSettings) Parameters(ctx context.Context) parameters.Parameters {
+func (*CompoundSettings) Parameters(ctx context.Context) parameter.Parameters {
 	return generateParams[*CompoundSettings](ctx)
 }
 
@@ -116,7 +116,7 @@ const (
 
 func embeddedSettingsParams[setPtr runtime.SettingsType[settings],
 	settings any](ctx context.Context, order embeddedOrder,
-) parameters.Parameters {
+) parameter.Parameters {
 	localField, hasField := reflect.TypeOf((setPtr)(nil)).Elem().FieldByName("Extra")
 	if !hasField {
 		panic("missing expected `Extra` test field")
@@ -125,7 +125,7 @@ func embeddedSettingsParams[setPtr runtime.SettingsType[settings],
 	var (
 		embeddedParams = generateParams[setPtr](ctx)
 		localParam     = fieldParam{localField}
-		params         = make(chan parameters.Parameter, cap(embeddedParams)+1)
+		params         = make(chan parameter.Parameter, cap(embeddedParams)+1)
 	)
 	defer close(params)
 	if order == embeddedInTail {
@@ -140,11 +140,11 @@ func embeddedSettingsParams[setPtr runtime.SettingsType[settings],
 	return params
 }
 
-func (*embeddedSettingsHead) Parameters(ctx context.Context) parameters.Parameters {
+func (*embeddedSettingsHead) Parameters(ctx context.Context) parameter.Parameters {
 	return embeddedSettingsParams[*embeddedSettingsHead](ctx, embeddedInHead)
 }
 
-func (*embeddedSettingsTail) Parameters(ctx context.Context) parameters.Parameters {
+func (*embeddedSettingsTail) Parameters(ctx context.Context) parameter.Parameters {
 	return embeddedSettingsParams[*embeddedSettingsTail](ctx, embeddedInTail)
 }
 
@@ -252,15 +252,15 @@ type (
 	}
 )
 
-func (*settingsUnassignable) Parameters(ctx context.Context) parameters.Parameters {
+func (*settingsUnassignable) Parameters(ctx context.Context) parameter.Parameters {
 	return generateParams[*settingsUnassignable](ctx)
 }
 
-func (*settingsUnhandledSettingsType) Parameters(ctx context.Context) parameters.Parameters {
+func (*settingsUnhandledSettingsType) Parameters(ctx context.Context) parameter.Parameters {
 	return nil
 }
 
-func (*settingsUnhandledFieldType) Parameters(ctx context.Context) parameters.Parameters {
+func (*settingsUnhandledFieldType) Parameters(ctx context.Context) parameter.Parameters {
 	return generateParams[*settingsUnhandledFieldType](ctx)
 }
 

@@ -8,7 +8,7 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
-	"github.com/djdv/go-filesystem-utils/internal/parameters"
+	"github.com/djdv/go-filesystem-utils/internal/parameter"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -101,14 +101,14 @@ func maybeGetConstructor(constructors []TypeConstructor, typ reflect.Type) NewOp
 	return nil
 }
 
-func parameterToConstructorArgs(parameter parameters.Parameter) []string {
+func parameterToConstructorArgs(param parameter.Parameter) []string {
 	const nameAndDescription = 2
 	var (
-		name        = parameter.Name(parameters.CommandLine)
-		aliases     = parameter.Aliases(parameters.CommandLine)
+		name        = param.Name(parameter.CommandLine)
+		aliases     = param.Aliases(parameter.CommandLine)
 		description = fmt.Sprintf("%s (Env: %s)",
-			parameter.Description(),
-			parameter.Name(parameters.Environment),
+			param.Description(),
+			param.Name(parameter.Environment),
 		)
 
 		optionCount = len(aliases) + nameAndDescription

@@ -7,14 +7,14 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
-	"github.com/djdv/go-filesystem-utils/internal/parameters"
+	"github.com/djdv/go-filesystem-utils/internal/parameter"
 )
 
 type (
 	structField     = reflect.StructField
 	structFields    = runtime.SettingsFields
-	fieldParameter  = parameters.Parameter
-	fieldParameters = parameters.Parameters
+	fieldParameter  = parameter.Parameter
+	fieldParameters = parameter.Parameters
 	fieldAndParam   = generic.Couple[structField, fieldParameter]
 	fieldAndParams  = <-chan fieldAndParam
 	errors          = <-chan error
