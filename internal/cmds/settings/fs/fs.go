@@ -7,7 +7,7 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/options"
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
-	"github.com/djdv/go-filesystem-utils/internal/parameters"
+	"github.com/djdv/go-filesystem-utils/internal/parameter"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
@@ -18,8 +18,8 @@ type Settings struct{}
 
 // Parameters returns the top level parameters for the Command "fs".
 // All subcommands must relay these parameters (in addition to their own).
-func (*Settings) Parameters(ctx context.Context) parameters.Parameters {
-	out := make(chan parameters.Parameter)
+func (*Settings) Parameters(ctx context.Context) parameter.Parameters {
+	out := make(chan parameter.Parameter)
 	defer close(out)
 	return out
 }

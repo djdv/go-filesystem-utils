@@ -7,7 +7,7 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/fs"
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/options"
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
-	"github.com/djdv/go-filesystem-utils/internal/parameters"
+	"github.com/djdv/go-filesystem-utils/internal/parameter"
 )
 
 func TestSettings(t *testing.T) {
@@ -23,7 +23,7 @@ func testValid(t *testing.T) {
 
 type invalidSettings bool
 
-func (invalidSettings) Parameters(context.Context) parameters.Parameters { return nil }
+func (invalidSettings) Parameters(context.Context) parameter.Parameters { return nil }
 
 func testInvalid(t *testing.T) {
 	t.Parallel()
