@@ -5,8 +5,8 @@ package fs
 import (
 	"context"
 
-	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/option"
-	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/setting/option"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/setting/runtime"
 	"github.com/djdv/go-filesystem-utils/internal/parameter"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
