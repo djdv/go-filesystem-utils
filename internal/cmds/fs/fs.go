@@ -2,8 +2,8 @@
 package fs
 
 import (
-	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/fs"
-	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/option"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/setting/fs"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/setting/option"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
