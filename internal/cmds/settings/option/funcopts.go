@@ -1,4 +1,4 @@
-package options
+package option
 
 type (
 	// ConstructorOption is a functional options interface

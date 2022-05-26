@@ -1,13 +1,13 @@
-package options_test
+package option_test
 
 import (
 	"fmt"
 
-	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/options"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/option"
 )
 
 func ExampleConstructorOption() {
-	options, err := options.MakeOptions[*emptySettings](options.WithBuiltin(true))
+	options, err := option.MakeOptions[*emptySettings](option.WithBuiltin(true))
 	if err != nil {
 		// handle(err)
 	}

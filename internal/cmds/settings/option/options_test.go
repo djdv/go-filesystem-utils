@@ -1,4 +1,4 @@
-package options_test
+package option_test
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/options"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/option"
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
 	"github.com/djdv/go-filesystem-utils/internal/parameter"
 	cmds "github.com/ipfs/go-ipfs-cmds"
@@ -159,7 +159,7 @@ func testOptionsCmds(t *testing.T) {
 			cmds.OptShortHelp,
 		}
 		builtinCount = len(builtinNames)
-		opts, err    = options.MakeOptions[*emptySettings](options.WithBuiltin(true))
+		opts, err    = option.MakeOptions[*emptySettings](option.WithBuiltin(true))
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -185,9 +185,9 @@ func testOptionsCmds(t *testing.T) {
 
 func testOptionsReflect(t *testing.T) {
 	t.Parallel()
-	type optionConstructor func(...options.ConstructorOption) ([]cmds.Option, error)
-	typeHandlerOpts := []options.ConstructorOption{options.WithConstructor(
-		options.TypeConstructor{
+	type optionConstructor func(...option.ConstructorOption) ([]cmds.Option, error)
+	typeHandlerOpts := []option.ConstructorOption{option.WithConstructor(
+		option.TypeConstructor{
 			Type:          reflect.TypeOf((*somethingDifferent)(nil)).Elem(),
 			NewOptionFunc: cmds.StringOption,
 		},
@@ -195,31 +195,31 @@ func testOptionsReflect(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		optionConstructor
-		opts []options.ConstructorOption
+		opts []option.ConstructorOption
 	}{
 		{
 			"builtin",
-			options.MakeOptions[*builtinSettings],
+			option.MakeOptions[*builtinSettings],
 			nil,
 		},
 		{
 			"vector",
-			options.MakeOptions[*vectorSettings],
+			option.MakeOptions[*vectorSettings],
 			nil,
 		},
 		{
 			"custom",
-			options.MakeOptions[*CompoundSettings],
+			option.MakeOptions[*CompoundSettings],
 			typeHandlerOpts,
 		},
 		{
 			"embedded before",
-			options.MakeOptions[*embeddedSettingsHead],
+			option.MakeOptions[*embeddedSettingsHead],
 			typeHandlerOpts,
 		},
 		{
 			"embedded after",
-			options.MakeOptions[*embeddedSettingsTail],
+			option.MakeOptions[*embeddedSettingsTail],
 			typeHandlerOpts,
 		},
 	} {
@@ -271,7 +271,7 @@ func testOptionsInvalid(t *testing.T) {
 
 func testOptionsReflectInvalid(t *testing.T) {
 	t.Parallel()
-	type optionConstructor func(...options.ConstructorOption) ([]cmds.Option, error)
+	type optionConstructor func(...option.ConstructorOption) ([]cmds.Option, error)
 	for _, test := range []struct {
 		expectedErr error
 		optionConstructor
@@ -279,17 +279,17 @@ func testOptionsReflectInvalid(t *testing.T) {
 	}{
 		{
 			runtime.ErrUnassignable,
-			options.MakeOptions[*settingsUnassignable],
+			option.MakeOptions[*settingsUnassignable],
 			"unassignable fields",
 		},
 		{
 			runtime.ErrUnexpectedType,
-			options.MakeOptions[*settingsUnhandledSettingsType],
+			option.MakeOptions[*settingsUnhandledSettingsType],
 			"uses unhandled settings type",
 		},
 		{
 			runtime.ErrUnexpectedType,
-			options.MakeOptions[*settingsUnhandledFieldType],
+			option.MakeOptions[*settingsUnhandledFieldType],
 			"uses unhandled field types",
 		},
 	} {

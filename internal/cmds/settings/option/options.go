@@ -1,5 +1,5 @@
 // Package options provides generic constructors for the cmdslib `Option` interface.
-package options
+package option
 
 import (
 	"context"
