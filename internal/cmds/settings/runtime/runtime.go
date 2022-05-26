@@ -10,7 +10,7 @@ import (
 )
 
 type (
-	// SettingsType should be of type pointer to struct,
+	// SettingsType should be a pointer to a struct
 	// which implements the Settings interface.
 	SettingsType[Settings any] interface {
 		*Settings
@@ -75,7 +75,7 @@ func generateFields(ctx context.Context, setTyp reflect.Type) SettingsFields {
 	go func() {
 		defer close(fields)
 		for i := 0; i < fieldCount; i++ {
-			if ctx.Err() != nil {
+			if ctx.Err() != nil { // Buffered channel; explicit check vs `select`.
 				return
 			}
 			fields <- setTyp.Field(i)
