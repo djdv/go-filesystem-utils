@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/fs"
-	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/options"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/option"
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
 	"github.com/djdv/go-filesystem-utils/internal/parameter"
 )
@@ -18,7 +18,7 @@ func TestSettings(t *testing.T) {
 
 func testValid(t *testing.T) {
 	t.Parallel()
-	fs.MustMakeOptions[*fs.Settings](options.WithBuiltin(true))
+	fs.MustMakeOptions[*fs.Settings](option.WithBuiltin(true))
 }
 
 type invalidSettings bool

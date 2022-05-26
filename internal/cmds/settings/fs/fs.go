@@ -5,7 +5,7 @@ package fs
 import (
 	"context"
 
-	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/options"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/option"
 	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
 	"github.com/djdv/go-filesystem-utils/internal/parameter"
 	cmds "github.com/ipfs/go-ipfs-cmds"
@@ -28,9 +28,9 @@ func (*Settings) Parameters(ctx context.Context) parameter.Parameters {
 // with a set of default options for Command "fs"
 // (and its subcommands).
 func MustMakeOptions[setPtr runtime.SettingsType[settings],
-	settings any](opts ...options.ConstructorOption,
+	settings any](opts ...option.ConstructorOption,
 ) []cmds.Option {
-	cmdsOpts, err := options.MakeOptions[setPtr](opts...)
+	cmdsOpts, err := option.MakeOptions[setPtr](opts...)
 	if err != nil {
 		panic(err)
 	}
