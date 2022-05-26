@@ -27,7 +27,8 @@ func (*Settings) Parameters(ctx context.Context) parameters.Parameters {
 // MustMakeOptions wraps MakeOptions,
 // with a set of default options for Command "fs"
 // (and its subcommands).
-func MustMakeOptions[setPtr runtime.SettingsType[settings], settings any](opts ...options.ConstructorOption,
+func MustMakeOptions[setPtr runtime.SettingsType[settings],
+	settings any](opts ...options.ConstructorOption,
 ) []cmds.Option {
 	cmdsOpts, err := options.MakeOptions[setPtr](opts...)
 	if err != nil {
