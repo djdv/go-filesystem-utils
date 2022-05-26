@@ -3,7 +3,7 @@ package option_test
 import (
 	"fmt"
 
-	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/option"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/setting/option"
 )
 
 func ExampleConstructorOption() {

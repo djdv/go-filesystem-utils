@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/djdv/go-filesystem-utils/internal/cmds/settings/runtime"
+	"github.com/djdv/go-filesystem-utils/internal/cmds/setting/runtime"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/go-filesystem-utils/internal/parameter"
 	cmds "github.com/ipfs/go-ipfs-cmds"
