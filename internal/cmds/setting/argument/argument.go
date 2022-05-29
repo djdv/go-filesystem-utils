@@ -34,6 +34,9 @@ type (
 		reflect.Type
 		ParseFunc
 	}
+
+	fieldParams = generic.Couple[reflect.StructField, parameter.Parameter]
+	errors      = <-chan error
 )
 
 func argsFromSettings[
@@ -41,7 +44,7 @@ func argsFromSettings[
 	settings any,
 ](ctx context.Context,
 	set setPtr,
-) (Arguments, <-chan error, error) {
+) (Arguments, errors, error) {
 	baseFields, err := runtime.ReflectFields[setPtr](ctx)
 	if err != nil {
 		return nil, nil, err
@@ -108,7 +111,7 @@ func Parse[setIntf runtime.SettingsType[set], set any](ctx context.Context,
 	const settingsErrsCount = 1
 	var (
 		settingsPointer = new(set)
-		errChans        = make([]<-chan error, 0, len(setFuncs)+settingsErrsCount)
+		errChans        = make([]errors, 0, len(setFuncs)+settingsErrsCount)
 	)
 	unsetArgs, settingsErrs, err := argsFromSettings[setIntf](ctx, settingsPointer)
 	if err != nil {
@@ -117,7 +120,7 @@ func Parse[setIntf runtime.SettingsType[set], set any](ctx context.Context,
 
 	errChans = append(errChans, settingsErrs)
 	for _, setter := range setFuncs {
-		var errChan <-chan error
+		var errChan errors
 		unsetArgs, errChan = setter(ctx, unsetArgs, parsers...)
 		errChans = append(errChans, errChan)
 	}

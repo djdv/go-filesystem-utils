@@ -6,8 +6,6 @@ import (
 	"strconv"
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/setting/runtime"
-	"github.com/djdv/go-filesystem-utils/internal/generic"
-	"github.com/djdv/go-filesystem-utils/internal/parameter"
 )
 
 func referenceFromField(field reflect.StructField, fieldValue reflect.Value) (any, error) {
@@ -103,22 +101,3 @@ func makeVector(typ reflect.Type, elemCount int) (*reflect.Value, error) {
 		return nil, err
 	}
 }
-
-type fieldParams = generic.Couple[reflect.StructField, parameter.Parameter]
-
-/* lint?
-func bindParameterFields[settingsPtr runtime.SettingsType[setting], setting any](ctx context.Context,
-) (<-chan fieldParams, <-chan error, error) {
-	typ, err := checkType[settingsPtr]()
-	if err != nil {
-		return nil, nil, err
-	}
-	var (
-		baseFields      = generateFields(ctx, typ)
-		allFields       = expandEmbedded(ctx, baseFields)
-		params          = settingsPtr.Parameters(nil, ctx)
-		pairs, pairErrs = generic.CtxPair(ctx, allFields, params)
-	)
-	return pairs, pairErrs, nil
-}
-*/

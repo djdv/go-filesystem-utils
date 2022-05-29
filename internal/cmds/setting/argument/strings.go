@@ -2,7 +2,7 @@ package argument
 
 import (
 	"encoding/csv"
-	"errors"
+	goerrors "errors" // TODO: remove
 	"reflect"
 	"strings"
 )
@@ -25,7 +25,7 @@ func ParseStrings[stringish StringsConstraint](arg Argument, value stringish,
 	case []string:
 		return parseStrings(targetType, stringish, parsers...)
 	default:
-		return nil, errors.New("unexpected type") // TODO: real error
+		return nil, goerrors.New("unexpected type") // TODO: real error
 	}
 }
 
