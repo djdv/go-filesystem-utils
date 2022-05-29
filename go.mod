@@ -2,7 +2,10 @@ module github.com/djdv/go-filesystem-utils
 
 go 1.18
 
-require github.com/ipfs/go-ipfs-cmds v0.7.0
+require (
+	github.com/fatih/camelcase v1.0.0
+	github.com/ipfs/go-ipfs-cmds v0.7.0
+)
 
 require (
 	github.com/Kubuxu/go-os-helper v0.0.1 // indirect
