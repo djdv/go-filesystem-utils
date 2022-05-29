@@ -2,7 +2,6 @@
 package runtime
 
 import (
-	"context"
 	"fmt"
 	"reflect"
 
@@ -16,9 +15,6 @@ type (
 		*Settings
 		parameter.Settings
 	}
-	// SettingsFields is a series of struct fields
-	// derived from the `Settings` underlying type.
-	SettingsFields = <-chan reflect.StructField
 
 	constError string
 )
@@ -34,19 +30,6 @@ const (
 	// does not match an expected underlying type (of a `Settings` implementation).
 	ErrUnexpectedType constError = "unexpected type"
 )
-
-// ReflectFields accepts a `[*struct]` type-parameter,
-// that also implements the `Settings` interface.
-//
-// The struct's top-level fields are sent to the output channel.
-func ReflectFields[setPtr SettingsType[settings], settings any](ctx context.Context,
-) (SettingsFields, error) {
-	typ, err := checkType[setPtr]()
-	if err != nil {
-		return nil, err
-	}
-	return generateFields(ctx, typ), nil
-}
 
 func checkType[setPtr SettingsType[settings], settings any]() (reflect.Type, error) {
 	var (
@@ -65,21 +48,4 @@ func checkType[setPtr SettingsType[settings], settings any]() (reflect.Type, err
 		return nil, err
 	}
 	return typ, nil
-}
-
-func generateFields(ctx context.Context, setTyp reflect.Type) SettingsFields {
-	var (
-		fieldCount = setTyp.NumField()
-		fields     = make(chan reflect.StructField, fieldCount)
-	)
-	go func() {
-		defer close(fields)
-		for i := 0; i < fieldCount; i++ {
-			if ctx.Err() != nil { // Buffered channel; explicit check vs `select`.
-				return
-			}
-			fields <- setTyp.Field(i)
-		}
-	}()
-	return fields
 }
