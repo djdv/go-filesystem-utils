@@ -50,10 +50,9 @@ func argsFromSettings[
 		return nil, nil, err
 	}
 	var (
-		allFields = expandEmbedded(ctx, baseFields)
-		params    = setPtr.Parameters(nil, ctx)
-		// fieldParams, errs = generic.CtxPair(ctx, allFields, params)
-		fieldParams, fieldParamErrs = generic.CtxPair(ctx, allFields, params)
+		allFields   = expandEmbedded(ctx, baseFields)
+		params      = setPtr.Parameters(nil, ctx)
+		fieldParams = generic.CtxPair(ctx, allFields, params)
 
 		arguments = make(chan Argument, cap(params))
 		errs      = make(chan error)
@@ -88,7 +87,7 @@ func argsFromSettings[
 		}
 	}()
 
-	return arguments, generic.CtxMerge(ctx, fieldParamErrs, errs), nil
+	return arguments, errs, nil
 }
 
 func maybeGetParser(typ reflect.Type, parsers ...TypeParser) *TypeParser {
