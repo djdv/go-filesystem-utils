@@ -58,16 +58,7 @@ func CtxEither[left, right any](ctx context.Context,
 func CtxPair[left, right any](ctx context.Context,
 	leftIn <-chan left, rightIn <-chan right,
 ) <-chan Couple[left, right] {
-	var (
-		capMax = func() (max int) {
-			rightCap := cap(rightIn)
-			if leftCap := cap(leftIn); leftCap > rightCap {
-				return leftCap
-			}
-			return rightCap
-		}()
-		pairs = make(chan Couple[left, right], capMax)
-	)
+	pairs := make(chan Couple[left, right], max(cap(leftIn), cap(rightIn)))
 	go func() {
 		defer close(pairs)
 		for {
@@ -83,6 +74,13 @@ func CtxPair[left, right any](ctx context.Context,
 		}
 	}()
 	return pairs
+}
+
+func max(x, y int) int {
+	if x > y {
+		return x
+	}
+	return y
 }
 
 func maybeReceivePair[left, right any](ctx context.Context,
