@@ -3,7 +3,6 @@ package generic
 
 import (
 	"context"
-	"fmt"
 	"sync"
 )
 
@@ -53,62 +52,82 @@ func CtxEither[left, right any](ctx context.Context,
 	return eithers
 }
 
-// CtxPair receives values from both channels and relays them as a Couple
-// until both channels are closed or the context is done.
-// An error is sent if one channel is closed while the other is still being sent values.
-func CtxPair[t1, t2 any](ctx context.Context,
-	leftIn <-chan t1, rightIn <-chan t2,
-) (<-chan Couple[t1, t2], <-chan error) {
+// CtxPair receives a value from both channels
+// and relays them as a single Couple,
+// until either channel closes or the context is done.
+func CtxPair[left, right any](ctx context.Context,
+	leftIn <-chan left, rightIn <-chan right,
+) <-chan Couple[left, right] {
 	var (
-		tuples = make(chan Couple[t1, t2], cap(leftIn))
-		errs   = make(chan error)
+		capMax = func() (max int) {
+			rightCap := cap(rightIn)
+			if leftCap := cap(leftIn); leftCap > rightCap {
+				return leftCap
+			}
+			return rightCap
+		}()
+		pairs = make(chan Couple[left, right], capMax)
 	)
 	go func() {
-		defer close(tuples)
-		defer close(errs)
-		ctxSendErr := func(err error) {
-			select {
-			case errs <- err:
-			case <-ctx.Done():
+		defer close(pairs)
+		for {
+			pair, ok := maybeReceivePair(ctx, leftIn, rightIn)
+			if !ok {
+				return
 			}
-		}
-
-		for leftIn != nil {
 			select {
-			case left, ok := <-leftIn:
-				if !ok {
-					leftIn = nil
-					continue
-				}
-				select {
-				case right, ok := <-rightIn:
-					if !ok {
-						err := fmt.Errorf("t2 closed with t1 open")
-						ctxSendErr(err)
-						return
-					}
-					select {
-					case tuples <- Couple[t1, t2]{Left: left, Right: right}:
-					case <-ctx.Done():
-						return
-					}
-				case <-ctx.Done():
-					return
-				}
+			case pairs <- pair:
 			case <-ctx.Done():
 				return
 			}
 		}
-		select {
-		case _, ok := <-rightIn:
-			if ok {
-				err := fmt.Errorf("t1 closed with t2 open")
-				ctxSendErr(err)
-			}
-		case <-ctx.Done():
-		}
 	}()
-	return tuples, errs
+	return pairs
+}
+
+func maybeReceivePair[left, right any](ctx context.Context,
+	leftIn <-chan left, rightIn <-chan right,
+) (pair Couple[left, right], ok bool) {
+	{
+		l, r, setLeft, ok := receiveLeftOrRight(ctx, leftIn, rightIn)
+		if !ok {
+			return pair, ok
+		}
+		if setLeft {
+			leftIn = nil
+		} else {
+			rightIn = nil
+		}
+		assignLeftOrRight(&pair, l, r, setLeft)
+	}
+	l, r, setLeft, ok := receiveLeftOrRight(ctx, leftIn, rightIn)
+	assignLeftOrRight(&pair, l, r, setLeft)
+	return pair, ok
+}
+
+func receiveLeftOrRight[leftType, rightType any](ctx context.Context,
+	leftIn <-chan leftType, rightIn <-chan rightType,
+) (left leftType, right rightType, gotLeft, ok bool) {
+	select {
+	case left, ok = <-leftIn:
+		gotLeft = true
+	case right, ok = <-rightIn:
+	case <-ctx.Done():
+		ok = false
+	}
+	return
+}
+
+func assignLeftOrRight[left, right any](
+	pair *Couple[left, right],
+	l left, r right,
+	setLeft bool,
+) {
+	if setLeft {
+		pair.Left = l
+	} else {
+		pair.Right = r
+	}
 }
 
 func totalBuff[in any](inputs []<-chan in) (total int) {
@@ -122,11 +141,11 @@ func CtxMerge[in any](ctx context.Context, sources ...<-chan in) <-chan in {
 	var (
 		mergedWg  sync.WaitGroup
 		mergedCh  = make(chan in, totalBuff(sources))
-		mergeFrom = func(ch <-chan in) {
+		mergeFrom = func(source <-chan in) {
 			defer mergedWg.Done()
 			for {
 				select {
-				case value, ok := <-ch:
+				case value, ok := <-source:
 					if !ok {
 						return
 					}
