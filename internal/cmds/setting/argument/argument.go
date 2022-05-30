@@ -107,17 +107,16 @@ func maybeGetParser(typ reflect.Type, parsers ...TypeParser) *TypeParser {
 func Parse[setIntf runtime.SettingsType[set], set any](ctx context.Context,
 	setFuncs []SetFunc, parsers ...TypeParser,
 ) (*set, error) {
-	const settingsErrsCount = 1
-	var (
-		settingsPointer = new(set)
-		errChans        = make([]errors, 0, len(setFuncs)+settingsErrsCount)
-	)
+	settingsPointer := new(set)
 	unsetArgs, settingsErrs, err := argsFromSettings[setIntf](ctx, settingsPointer)
 	if err != nil {
 		return nil, err
 	}
 
-	errChans = append(errChans, settingsErrs)
+	errChans := append(
+		make([]errors, 0, len(setFuncs)+1),
+		settingsErrs,
+	)
 	for _, setter := range setFuncs {
 		var errChan errors
 		unsetArgs, errChan = setter(ctx, unsetArgs, parsers...)
