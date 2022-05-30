@@ -35,8 +35,7 @@ type (
 		ParseFunc
 	}
 
-	fieldParams = generic.Couple[reflect.StructField, parameter.Parameter]
-	errors      = <-chan error
+	errors = <-chan error
 )
 
 func argsFromSettings[
