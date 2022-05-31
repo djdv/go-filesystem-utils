@@ -11,7 +11,7 @@ import (
 func TestGeneric(t *testing.T) {
 	t.Parallel()
 	t.Run("CtxEither", ctxEither)
-	t.Run("CtxPair", ctxPair)
+	t.Run("CtxBoth", ctxBoth)
 }
 
 func ctxEither(t *testing.T) {

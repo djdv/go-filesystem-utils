@@ -7,7 +7,7 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 )
 
-func ctxPair(t *testing.T) {
+func ctxBoth(t *testing.T) {
 	t.Parallel()
 	t.Run("valid", testPairValid)
 }
