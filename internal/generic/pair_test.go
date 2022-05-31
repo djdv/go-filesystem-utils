@@ -24,7 +24,7 @@ func testPairValid(t *testing.T) {
 	var (
 		index int
 		ctx   = context.Background()
-		pairs = generic.CtxPair(ctx, ch1, ch2)
+		pairs = generic.CtxBoth(ctx, ch1, ch2)
 	)
 	for pair := range pairs {
 		var (

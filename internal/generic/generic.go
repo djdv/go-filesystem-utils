@@ -52,28 +52,28 @@ func CtxEither[left, right any](ctx context.Context,
 	return eithers
 }
 
-// CtxPair receives a value from both channels
-// and relays them as a single Couple,
+// CtxBoth receives a single value from both channels
+// and binds them as a Couple,
 // until either channel closes or the context is done.
-func CtxPair[left, right any](ctx context.Context,
+func CtxBoth[left, right any](ctx context.Context,
 	leftIn <-chan left, rightIn <-chan right,
 ) <-chan Couple[left, right] {
-	pairs := make(chan Couple[left, right], max(cap(leftIn), cap(rightIn)))
+	boths := make(chan Couple[left, right], max(cap(leftIn), cap(rightIn)))
 	go func() {
-		defer close(pairs)
+		defer close(boths)
 		for {
-			pair, ok := maybeReceivePair(ctx, leftIn, rightIn)
+			both, ok := maybeReceiveBoth(ctx, leftIn, rightIn)
 			if !ok {
 				return
 			}
 			select {
-			case pairs <- pair:
+			case boths <- both:
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
-	return pairs
+	return boths
 }
 
 func max(x, y int) int {
@@ -83,24 +83,24 @@ func max(x, y int) int {
 	return y
 }
 
-func maybeReceivePair[left, right any](ctx context.Context,
+func maybeReceiveBoth[left, right any](ctx context.Context,
 	leftIn <-chan left, rightIn <-chan right,
-) (pair Couple[left, right], ok bool) {
+) (both Couple[left, right], ok bool) {
 	{
 		l, r, setLeft, ok := receiveLeftOrRight(ctx, leftIn, rightIn)
 		if !ok {
-			return pair, ok
+			return both, ok
 		}
 		if setLeft {
 			leftIn = nil
 		} else {
 			rightIn = nil
 		}
-		assignLeftOrRight(&pair, l, r, setLeft)
+		assignLeftOrRight(&both, l, r, setLeft)
 	}
 	l, r, setLeft, ok := receiveLeftOrRight(ctx, leftIn, rightIn)
-	assignLeftOrRight(&pair, l, r, setLeft)
-	return pair, ok
+	assignLeftOrRight(&both, l, r, setLeft)
+	return both, ok
 }
 
 func receiveLeftOrRight[leftType, rightType any](ctx context.Context,
@@ -117,14 +117,14 @@ func receiveLeftOrRight[leftType, rightType any](ctx context.Context,
 }
 
 func assignLeftOrRight[left, right any](
-	pair *Couple[left, right],
+	both *Couple[left, right],
 	l left, r right,
 	setLeft bool,
 ) {
 	if setLeft {
-		pair.Left = l
+		both.Left = l
 	} else {
-		pair.Right = r
+		both.Right = r
 	}
 }
 
