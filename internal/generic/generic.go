@@ -55,19 +55,38 @@ func CtxEither[left, right any](ctx context.Context,
 // CtxBoth receives a single value from both channels
 // and binds them as a Couple,
 // until either channel closes or the context is done.
-func CtxBoth[left, right any](ctx context.Context,
+func CtxBoth[both Couple[left, right], left, right any](ctx context.Context,
 	leftIn <-chan left, rightIn <-chan right,
-) <-chan Couple[left, right] {
-	boths := make(chan Couple[left, right], max(cap(leftIn), cap(rightIn)))
+) <-chan both {
+	boths := make(chan both, max(cap(leftIn), cap(rightIn)))
 	go func() {
 		defer close(boths)
 		for {
-			both, ok := maybeReceiveBoth(ctx, leftIn, rightIn)
-			if !ok {
+			var (
+				leftValue          left
+				rightValue         right
+				leftChan           = leftIn
+				rightChan          = rightIn
+				receiveLeftOrRight = func() (ok bool) {
+					select {
+					case leftValue, ok = <-leftChan:
+						leftChan = nil
+					case rightValue, ok = <-rightChan:
+						rightChan = nil
+					case <-ctx.Done():
+						ok = false
+					}
+					return
+				}
+			)
+			if !receiveLeftOrRight() {
+				return
+			}
+			if !receiveLeftOrRight() {
 				return
 			}
 			select {
-			case boths <- both:
+			case boths <- both{Left: leftValue, Right: rightValue}:
 			case <-ctx.Done():
 				return
 			}
@@ -81,51 +100,6 @@ func max(x, y int) int {
 		return x
 	}
 	return y
-}
-
-func maybeReceiveBoth[left, right any](ctx context.Context,
-	leftIn <-chan left, rightIn <-chan right,
-) (both Couple[left, right], ok bool) {
-	{
-		l, r, setLeft, ok := receiveLeftOrRight(ctx, leftIn, rightIn)
-		if !ok {
-			return both, ok
-		}
-		if setLeft {
-			leftIn = nil
-		} else {
-			rightIn = nil
-		}
-		assignLeftOrRight(&both, l, r, setLeft)
-	}
-	l, r, setLeft, ok := receiveLeftOrRight(ctx, leftIn, rightIn)
-	assignLeftOrRight(&both, l, r, setLeft)
-	return both, ok
-}
-
-func receiveLeftOrRight[leftType, rightType any](ctx context.Context,
-	leftIn <-chan leftType, rightIn <-chan rightType,
-) (left leftType, right rightType, gotLeft, ok bool) {
-	select {
-	case left, ok = <-leftIn:
-		gotLeft = true
-	case right, ok = <-rightIn:
-	case <-ctx.Done():
-		ok = false
-	}
-	return
-}
-
-func assignLeftOrRight[left, right any](
-	both *Couple[left, right],
-	l left, r right,
-	setLeft bool,
-) {
-	if setLeft {
-		both.Left = l
-	} else {
-		both.Right = r
-	}
 }
 
 func totalBuff[in any](inputs []<-chan in) (total int) {
