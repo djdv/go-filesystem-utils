@@ -51,7 +51,7 @@ func argsFromSettings[
 	var (
 		allFields   = expandEmbedded(ctx, baseFields)
 		params      = setPtr.Parameters(nil, ctx)
-		fieldParams = generic.CtxPair(ctx, allFields, params)
+		fieldParams = generic.CtxBoth(ctx, allFields, params)
 
 		arguments = make(chan Argument, cap(params))
 		errs      = make(chan error)
