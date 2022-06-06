@@ -61,7 +61,7 @@ func ValueSource(ctx context.Context, argsToSet argument.Arguments,
 }
 
 func getKeys(arg argument.Argument) []string {
-	param := arg.Left
+	param := arg.Parameter
 	return append([]string{
 		param.Name(parameter.Environment),
 	},
