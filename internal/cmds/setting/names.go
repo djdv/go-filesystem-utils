@@ -88,7 +88,7 @@ func envName(prefix, namespace, name string) string {
 	return envName
 }
 
-func funcNames(instructionPointer uintptr) (namespace, name string) {
+func pkgName(instructionPointer uintptr) (namespace string) {
 	var (
 		// Documentation refers to this as a
 		// "package path-qualified function name".
@@ -97,8 +97,7 @@ func funcNames(instructionPointer uintptr) (namespace, name string) {
 		ppqfn = runtime.FuncForPC(instructionPointer).Name()
 		names = strings.Split(path.Base(ppqfn), ".")
 	)
-	namesEnd := len(names)
-	if namesEnd < 2 {
+	if len(names) < 1 {
 		panic(fmt.Sprintf(
 			"runtime returned non-standard function name"+
 				"\n\tgot: `%s`"+
@@ -106,12 +105,6 @@ func funcNames(instructionPointer uintptr) (namespace, name string) {
 			ppqfn,
 		))
 	}
-	filteredNames := filter([]string{
-		names[0],
-		names[namesEnd-1],
-	}, filterRuntime)
-
-	namespace = filteredNames[0]
-	name = filteredNames[1]
+	namespace = strings.Map(filterRuntime, names[0])
 	return
 }

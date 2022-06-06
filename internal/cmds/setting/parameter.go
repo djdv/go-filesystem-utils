@@ -71,6 +71,7 @@ func MustMakeParameters[setPtr cmdsruntime.SettingsType[settings], settings any]
 	if err != nil {
 		panic(err)
 	}
+
 	var (
 		fieldCount = cap(fields)
 		paramCount = len(partialParams)
@@ -81,37 +82,38 @@ func MustMakeParameters[setPtr cmdsruntime.SettingsType[settings], settings any]
 		panic(err)
 	}
 
-	return populatePartials2(ctx, fields, partialParams)
+	callersLocation, _, _, ok := runtime.Caller(1)
+	if !ok {
+		panic("runtime could not get program counter address of function caller")
+	}
+	return populatePartials(ctx, callersLocation, fields, partialParams)
 }
 
-func populatePartials2(ctx context.Context, fields cmdsruntime.SettingsFields,
-	partialParams []CmdsParameter,
+func populatePartials(ctx context.Context, callersLocation uintptr,
+	fields cmdsruntime.SettingsFields, partialParams []CmdsParameter,
 ) parameter.Parameters {
-	var (
-		params               = make(chan parameter.Parameter, len(partialParams))
-		namespace, envPrefix = programMetadata()
-	)
+	params := make(chan parameter.Parameter, len(partialParams))
 	go func() {
 		defer close(params)
-		fillIn := func(sPtr *string, s string) {
-			if *sPtr == "" {
-				*sPtr = s
-			}
-		}
+		namespace, envPrefix := programMetadata(callersLocation)
 		for _, param := range partialParams {
 			select {
 			case field, ok := <-fields:
 				if !ok {
 					return
 				}
-				fieldName := field.Name
-				fillIn(&param.OptionName, fieldName)
-				fillIn(&param.HelpText, fmt.Sprintf(
-					"Dynamic parameter for %s", // TODO: This might be a bad idea.
-					fieldName,                  // maybe we should leave it blank?
-				))
-				fillIn(&param.Namespace, namespace)
-				param.EnvPrefix = envPrefix
+				for _, pair := range []struct {
+					currentValue *string
+					defaultValue string
+				}{
+					{&param.OptionName, field.Name},
+					{&param.Namespace, namespace},
+					{&param.EnvPrefix, envPrefix},
+				} {
+					if *pair.currentValue == "" {
+						*pair.currentValue = pair.defaultValue
+					}
+				}
 				select {
 				case params <- param:
 				case <-ctx.Done():
@@ -125,19 +127,8 @@ func populatePartials2(ctx context.Context, fields cmdsruntime.SettingsFields,
 	return params
 }
 
-func programMetadata() (namespace, envPrefix string) {
-	funcLocation, _, _, ok := runtime.Caller(2)
-	if !ok {
-		panic("runtime could not get program counter address for function")
-	}
-	namespace, _ = funcNames(funcLocation)
-	// FIXME:
-	// Rather than filtering ourselves, we need a way for the caller to tell us
-	// to just not use a namespace.
-	if namespace == "settings" {
-		namespace = ""
-	}
-
+func programMetadata(funcLocation uintptr) (namespace, envPrefix string) {
+	namespace = pkgName(funcLocation)
 	envPrefix = execName()
 	return
 }
