@@ -112,14 +112,12 @@ func Parse[setIntf runtime.SettingsType[set], set any](ctx context.Context,
 		return nil, err
 	}
 
-	errChans := append(
-		make([]errors, 0, len(setFuncs)+1),
-		settingsErrs,
-	)
-	for _, setter := range setFuncs {
+	errChans := make([]errors, len(setFuncs)+1)
+	errChans[len(errChans)-1] = settingsErrs
+	for i, setter := range setFuncs {
 		var errChan errors
 		unsetArgs, errChan = setter(ctx, unsetArgs, parsers...)
-		errChans = append(errChans, errChan)
+		errChans[i] = errChan
 	}
 
 	const parseErrFmt = "Parse encountered an error: %w"
