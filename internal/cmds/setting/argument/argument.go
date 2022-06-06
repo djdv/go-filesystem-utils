@@ -13,9 +13,12 @@ import (
 type (
 	// TODO: English
 	// Argument is the binding of a Parameter with a Go value.
-	// (The value is typically a pointer to a `Settings` struct member,
-	// but may be any settable value.)
-	Argument  generic.Couple[parameter.Parameter, any]
+	// (The value is typically a pointer to a `Settings` struct field,
+	// but may be any value that's assignable via `reflect`.)
+	Argument struct {
+		parameter.Parameter
+		ValueReference any
+	}
 	Arguments <-chan Argument
 
 	// TODO: rename - SetValue
@@ -72,8 +75,8 @@ func argsFromSettings[setPtr runtime.SettingsType[settings], settings any](
 				return
 			}
 			argument := Argument{
-				Left:  param,
-				Right: valueReference,
+				Parameter:      param,
+				ValueReference: valueReference,
 			}
 			select {
 			case arguments <- argument:
@@ -130,7 +133,7 @@ func Parse[setIntf runtime.SettingsType[set], set any](ctx context.Context,
 }
 
 func Assign(arg Argument, value any) error {
-	targetValue := reflect.ValueOf(arg.Right).Elem()
+	targetValue := reflect.ValueOf(arg.ValueReference).Elem()
 	if !targetValue.CanSet() {
 		return fmt.Errorf("%w: `reflect.Value.CanSet` returned false for argument reference",
 			runtime.ErrUnassignable,
