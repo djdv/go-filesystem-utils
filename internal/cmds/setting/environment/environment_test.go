@@ -41,7 +41,7 @@ func testEnvironmentValid(t *testing.T) {
 	)
 	settingsToEnv(t, wantSettings)
 	var (
-		sources       = []argument.SetFunc{environment.ValueSource()}
+		sources       = []argument.SetFunc{environment.ValueSource}
 		settings, err = argument.Parse[*envSettings](ctx, sources)
 	)
 	if err != nil {
@@ -69,7 +69,7 @@ func badValues(t *testing.T) {
 		)
 	}
 	var (
-		sources       = []argument.SetFunc{environment.ValueSource()}
+		sources       = []argument.SetFunc{environment.ValueSource}
 		settings, err = argument.Parse[*envSettings](ctx, sources)
 	)
 	if err == nil {
@@ -88,7 +88,7 @@ func cancelParse(t *testing.T) {
 		)
 		testCancel()
 		var (
-			sources = []argument.SetFunc{environment.ValueSource()}
+			sources = []argument.SetFunc{environment.ValueSource}
 			_, err  = argument.Parse[*envSettings](testContext, sources)
 		)
 		if !errors.Is(err, expectedErr) {
