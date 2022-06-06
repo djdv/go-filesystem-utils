@@ -14,7 +14,7 @@ type StringsConstraint interface{ string | []string }
 func ParseStrings[stringish StringsConstraint](arg Argument, value stringish,
 	parsers ...TypeParser,
 ) (any, error) {
-	targetType := reflect.TypeOf(arg.Right).Elem()
+	targetType := reflect.TypeOf(arg.ValueReference).Elem()
 	switch stringish := any(value).(type) {
 	case string:
 		userParser := maybeGetParser(targetType, parsers...)
