@@ -60,11 +60,11 @@ func filterRuntime(refRune rune) rune {
 
 func cliName(name string) string {
 	var (
-		splitName = camelcase.Split(name)
-		cleaned   = filter(splitName, filterCli)
-		clName    = strings.ToLower(strings.Join(cleaned, "-"))
+		splitName       = camelcase.Split(name)
+		cleaned         = filter(splitName, filterCli)
+		commandlineName = strings.ToLower(strings.Join(cleaned, "-"))
 	)
-	return clName
+	return commandlineName
 }
 
 func envName(prefix, namespace, name string) string {
