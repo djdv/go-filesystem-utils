@@ -38,11 +38,8 @@ type (
 	errors = <-chan error
 )
 
-func argsFromSettings[
-	setPtr runtime.SettingsType[settings],
-	settings any,
-](ctx context.Context,
-	set setPtr,
+func argsFromSettings[setPtr runtime.SettingsType[settings], settings any](
+	ctx context.Context, set setPtr,
 ) (Arguments, errors, error) {
 	baseFields, err := runtime.ReflectFields[setPtr](ctx)
 	if err != nil {
