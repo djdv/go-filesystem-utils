@@ -32,7 +32,7 @@ func ValueSource(request *cmds.Request) argument.SetFunc {
 				var (
 					// NOTE: The cmds-libs stores values via the option's primary name.
 					// (Meaning we don't need to check keys via aliases.)
-					param             = argument.Left
+					param             = argument.Parameter
 					optionName        = param.Name(parameter.CommandLine)
 					cmdsArg, provided = options[optionName]
 				)
