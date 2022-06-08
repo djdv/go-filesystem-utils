@@ -60,7 +60,7 @@ func handlers() []argument.TypeParser {
 	return []argument.TypeParser{
 		{
 			Type: reflect.TypeOf((*time.Duration)(nil)).Elem(),
-			ParseFunc: func(argument string) (interface{}, error) {
+			ParseFunc: func(argument string) (any, error) {
 				return time.ParseDuration(argument)
 			},
 		},
