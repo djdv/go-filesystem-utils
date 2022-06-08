@@ -31,7 +31,7 @@ func ParseStrings[stringish StringsConstraint](arg Argument, value stringish,
 
 func parseString(targetType reflect.Type, value string,
 	parsers ...TypeParser,
-) (interface{}, error) {
+) (any, error) {
 	if kind := targetType.Kind(); kind == reflect.Slice ||
 		kind == reflect.Array {
 		stringValues, err := csv.NewReader(strings.NewReader(value)).Read()
@@ -43,7 +43,7 @@ func parseString(targetType reflect.Type, value string,
 	return parseBuiltin(targetType, value)
 }
 
-func parseStrings(typ reflect.Type, values []string, parsers ...TypeParser) (interface{}, error) {
+func parseStrings(typ reflect.Type, values []string, parsers ...TypeParser) (any, error) {
 	vectorValue, err := makeVector(typ, len(values))
 	if err != nil {
 		return nil, err
@@ -52,12 +52,12 @@ func parseStrings(typ reflect.Type, values []string, parsers ...TypeParser) (int
 		elemType       = typ.Elem()
 		userParser     = maybeGetParser(elemType, parsers...)
 		haveUserParser = userParser != nil
-		parse          func(s string) (interface{}, error)
+		parse          func(s string) (any, error)
 	)
 	if haveUserParser {
 		parse = userParser.ParseFunc
 	} else {
-		parse = func(s string) (interface{}, error) {
+		parse = func(s string) (any, error) {
 			return parseBuiltin(elemType, s)
 		}
 	}

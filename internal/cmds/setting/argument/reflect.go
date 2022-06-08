@@ -25,7 +25,7 @@ func referenceFromField(field reflect.StructField, fieldValue reflect.Value) (an
 }
 
 // parseBuiltin parses the string value as/to the provided Go type.
-func parseBuiltin(typ reflect.Type, value string) (interface{}, error) {
+func parseBuiltin(typ reflect.Type, value string) (any, error) {
 	switch kind := typ.Kind(); kind {
 	case reflect.Bool:
 		return strconv.ParseBool(value)
