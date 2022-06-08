@@ -248,7 +248,7 @@ type (
 	}
 	settingsUnhandledSettingsType bool
 	settingsUnhandledFieldType    struct {
-		TestField interface{}
+		TestField any
 	}
 )
 
