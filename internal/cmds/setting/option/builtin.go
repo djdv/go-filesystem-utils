@@ -16,9 +16,17 @@ func builtinOptions() []cmds.Option {
 	}
 }
 
+// newCmdsOptionFunc should follow the same conventions
+// as `Option` constructors from the cmdslib pkg.
+//
+// I.e. the first argument is the primary name (e.g. `some name` => `--some-name`),
+// additional arguments are aliases (`n` => `-n`),
+// and the final argument is the description for the option (used in user facing help text).
+type newCmdsOptionFunc func(...string) cmds.Option
+
 // constructorForKind accepts a builtin Go Kind and returns an `Option` constructor
 // (or nil if unexpected Kind).
-func constructorForKind(kind reflect.Kind) (constructor NewOptionFunc) {
+func constructorForKind(kind reflect.Kind) (constructor newCmdsOptionFunc) {
 	switch kind {
 	case reflect.Bool:
 		constructor = cmds.BoolOption

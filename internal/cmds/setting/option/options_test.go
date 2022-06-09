@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/setting/option"
 	"github.com/djdv/go-filesystem-utils/internal/cmds/setting/runtime"
@@ -20,6 +21,7 @@ func TestOptions(t *testing.T) {
 
 func testOptionsValid(t *testing.T) {
 	t.Parallel()
+	t.Run("constructor", testOptionsConstructor)
 	t.Run("cmdslib", testOptionsCmds)
 	t.Run("go", testOptionsReflect)
 }
@@ -186,12 +188,15 @@ func testOptionsCmds(t *testing.T) {
 func testOptionsReflect(t *testing.T) {
 	t.Parallel()
 	type optionConstructor func(...option.ConstructorOption) ([]cmds.Option, error)
-	typeHandlerOpts := []option.ConstructorOption{option.WithConstructor(
-		option.TypeConstructor{
-			Type:          reflect.TypeOf((*somethingDifferent)(nil)).Elem(),
-			NewOptionFunc: cmds.StringOption,
-		},
-	)}
+	var (
+		somethingNoopParser = func(string) (somethingDifferent, error) {
+			return somethingDifferent{}, nil
+		}
+		somethingOptMaker = option.NewOptionConstructor(somethingNoopParser)
+		constructorOpts   = []option.ConstructorOption{
+			option.WithConstructor(somethingOptMaker),
+		}
+	)
 	for _, test := range []struct {
 		name string
 		optionConstructor
@@ -210,17 +215,17 @@ func testOptionsReflect(t *testing.T) {
 		{
 			"custom",
 			option.MakeOptions[*CompoundSettings],
-			typeHandlerOpts,
+			constructorOpts,
 		},
 		{
 			"embedded before",
 			option.MakeOptions[*embeddedSettingsHead],
-			typeHandlerOpts,
+			constructorOpts,
 		},
 		{
 			"embedded after",
 			option.MakeOptions[*embeddedSettingsTail],
-			typeHandlerOpts,
+			constructorOpts,
 		},
 	} {
 		var (
@@ -239,6 +244,71 @@ func testOptionsReflect(t *testing.T) {
 			}
 		})
 	}
+}
+
+func testOptionsConstructor(t *testing.T) {
+	t.Parallel()
+	var (
+		expectedDefault time.Duration = 30
+		name                          = "test"
+		aliases                       = []string{"t"}
+		description                   = "a test option"
+		optMaker                      = option.NewOptionConstructor(time.ParseDuration)
+		baseOpt                       = optMaker.NewOption(name, description, aliases...)
+		opt                           = baseOpt.WithDefault(expectedDefault)
+	)
+	const durationString = "15s"
+	expectedParse, err := time.ParseDuration(durationString)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const fmtString = "option returned unexpected %s:" +
+		"\n\tgot: %v" +
+		"\n\twant: %v"
+
+	if got := opt.Name(); got != name {
+		t.Errorf(fmtString, "name", got, name)
+	}
+	if got := opt.Description(); got != description {
+		t.Errorf(fmtString, "description", got, description)
+	}
+	if gotAliases := opt.Names(); len(gotAliases) < 1 ||
+		!reflect.DeepEqual(gotAliases[1:], aliases) {
+		t.Errorf(fmtString, "aliases", gotAliases, aliases)
+	}
+	if gotDefault := opt.Default(); !reflect.DeepEqual(gotDefault, expectedDefault) {
+		t.Errorf(fmtString, "default value", gotDefault, expectedDefault)
+	}
+
+	expectedKind := reflect.TypeOf(expectedDefault).Kind()
+	if gotKind := opt.Type(); gotKind != expectedKind {
+		t.Errorf(fmtString, "value type", gotKind, expectedKind)
+	}
+
+	gotParsed, err := opt.Parse(durationString)
+	if err != nil {
+		t.Error(err)
+	}
+	if !reflect.DeepEqual(gotParsed, expectedParse) {
+		t.Errorf(fmtString, "parsed value", gotParsed, expectedParse)
+	}
+}
+
+func testOptionsConstructorInvalid(t *testing.T) {
+	t.Parallel()
+	defer func(t *testing.T) {
+		t.Helper()
+		if r := recover(); r == nil {
+			t.Errorf("expected to panic due to mismatched value types, but did not")
+		} else {
+			t.Log("recovered from (expected) panic:", r)
+		}
+	}(t)
+	optMaker := option.NewOptionConstructor(func(string) (struct{}, error) {
+		return struct{}{}, nil
+	})
+	optMaker.NewOption("invalid", "should panic").WithDefault(nil)
 }
 
 type (
@@ -266,6 +336,7 @@ func (*settingsUnhandledFieldType) Parameters(ctx context.Context) parameter.Par
 
 func testOptionsInvalid(t *testing.T) {
 	t.Parallel()
+	t.Run("constructor", testOptionsConstructorInvalid)
 	t.Run("go", testOptionsReflectInvalid)
 }
 

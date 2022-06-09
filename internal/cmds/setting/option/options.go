@@ -12,23 +12,6 @@ import (
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
-type (
-	// NewOptionFunc should follow the same conventions
-	// as `Option` constructors from the cmdslib pkg.
-	//
-	// I.e. the first argument is the primary name (e.g. `some name` => `--some-name`),
-	// additional arguments are aliases (`n` => `-n`),
-	// and the final argument is the description for the option (used in user facing help text).
-	NewOptionFunc func(...string) cmds.Option
-
-	// TypeConstructor is the binding of a type
-	// with its corresponding `Option` constructor.
-	TypeConstructor struct {
-		reflect.Type
-		NewOptionFunc
-	}
-)
-
 // MakeOptions creates cmdslib `Option`s
 // using underlying type and interface data from [*settings].
 func MakeOptions[setPtr runtime.SettingsType[settings],
@@ -59,62 +42,66 @@ func MakeOptions[setPtr runtime.SettingsType[settings],
 			fieldAndParam = pairOrErr.Left
 			field         = fieldAndParam.Left
 			param         = fieldAndParam.Right
-			option, err   = newSettingsOption(field, param, userConstructors)
+			option, err   = optionFromField(field, param, userConstructors)
 		)
 		if err != nil {
-			return nil, fmt.Errorf("%T: %w", (setPtr)(nil), err)
+			return nil, err
 		}
 		cmdsOptions = append(cmdsOptions, option)
 	}
 	return append(cmdsOptions, maybeBuiltin...), nil
 }
 
-func newSettingsOption(field structField, param fieldParameter,
-	constructors []TypeConstructor,
+func optionFromField(field structField, param fieldParameter,
+	constructors []Constructor,
 ) (cmds.Option, error) {
-	var (
-		constructorArgs = parameterToConstructorArgs(param)
-		typ             = field.Type
-	)
+	typ := field.Type
+
 	if userConstructor := maybeGetConstructor(constructors, typ); userConstructor != nil {
-		return userConstructor(constructorArgs...), nil
+		name, desc, aliases := splayParameter(param)
+		return userConstructor.NewOption(name, desc, aliases...), nil
 	}
+
 	if builtinConstructor := constructorForKind(typ.Kind()); builtinConstructor != nil {
+		constructorArgs := parameterToConstructorArgs(param)
 		return builtinConstructor(constructorArgs...), nil
 	}
+
 	err := fmt.Errorf("%w:"+
 		" can't determine which option constructor to use for `%s`"+
 		" (type %v with no custom handler)",
 		runtime.ErrUnexpectedType,
-		field.Name,
-		typ,
+		field.Name, typ,
 	)
 	return nil, err
 }
 
-func maybeGetConstructor(constructors []TypeConstructor, typ reflect.Type) NewOptionFunc {
+func maybeGetConstructor(constructors []Constructor, typ reflect.Type) Constructor {
 	for _, constructor := range constructors {
-		if constructor.Type == typ {
-			return constructor.NewOptionFunc
+		if constructor.Type() == typ {
+			return constructor
 		}
 	}
 	return nil
 }
 
+func splayParameter(param parameter.Parameter) (name, description string, aliases []string) {
+	name = param.Name(parameter.CommandLine)
+	aliases = param.Aliases(parameter.CommandLine)
+	description = fmt.Sprintf("%s (Env: %s)",
+		param.Description(),
+		param.Name(parameter.Environment),
+	)
+	return
+}
+
 func parameterToConstructorArgs(param parameter.Parameter) []string {
 	const nameAndDescription = 2
 	var (
-		name        = param.Name(parameter.CommandLine)
-		aliases     = param.Aliases(parameter.CommandLine)
-		description = fmt.Sprintf("%s (Env: %s)",
-			param.Description(),
-			param.Name(parameter.Environment),
-		)
-
-		optionCount = len(aliases) + nameAndDescription
-		optionArgs  = make([]string, 0, optionCount)
+		name, description, aliases = splayParameter(param)
+		optionCount                = len(aliases) + nameAndDescription
+		optionArgs                 = make([]string, 0, optionCount)
 	)
-
 	// NOTE: cmds lib option constructor determines the purpose of these values by their order.
 	// Name is first, aliases follow, and the last argument is the description.
 	optionArgs = append(optionArgs, name)
