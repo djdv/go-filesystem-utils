@@ -13,17 +13,18 @@ import (
 	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
+// TODO: [all] remove `test` prefix. It's implied and adds nothing when not required.
 func TestOptions(t *testing.T) {
 	t.Parallel()
-	t.Run("valid", testOptionsValid)
-	t.Run("invalid", testOptionsInvalid)
+	t.Run("valid", optionsValid)
+	t.Run("invalid", optionsInvalid)
 }
 
-func testOptionsValid(t *testing.T) {
+func optionsValid(t *testing.T) {
 	t.Parallel()
-	t.Run("constructor", testOptionsConstructor)
-	t.Run("cmdslib", testOptionsCmds)
-	t.Run("go", testOptionsReflect)
+	t.Run("constructor", optionsConstructor)
+	t.Run("cmdslib", optionsCmds)
+	t.Run("go", optionsReflect)
 }
 
 type (
@@ -150,7 +151,7 @@ func (*embeddedSettingsTail) Parameters(ctx context.Context) parameter.Parameter
 	return embeddedSettingsParams[*embeddedSettingsTail](ctx, embeddedInTail)
 }
 
-func testOptionsCmds(t *testing.T) {
+func optionsCmds(t *testing.T) {
 	t.Parallel()
 	var (
 		builtinNames = []string{
@@ -185,7 +186,7 @@ func testOptionsCmds(t *testing.T) {
 	}
 }
 
-func testOptionsReflect(t *testing.T) {
+func optionsReflect(t *testing.T) {
 	t.Parallel()
 	type optionConstructor func(...option.ConstructorOption) ([]cmds.Option, error)
 	var (
@@ -246,7 +247,7 @@ func testOptionsReflect(t *testing.T) {
 	}
 }
 
-func testOptionsConstructor(t *testing.T) {
+func optionsConstructor(t *testing.T) {
 	t.Parallel()
 	var (
 		expectedDefault time.Duration = 30
@@ -295,7 +296,7 @@ func testOptionsConstructor(t *testing.T) {
 	}
 }
 
-func testOptionsConstructorInvalid(t *testing.T) {
+func optionsConstructorInvalid(t *testing.T) {
 	t.Parallel()
 	defer func(t *testing.T) {
 		t.Helper()
@@ -334,13 +335,13 @@ func (*settingsUnhandledFieldType) Parameters(ctx context.Context) parameter.Par
 	return generateParams[*settingsUnhandledFieldType](ctx)
 }
 
-func testOptionsInvalid(t *testing.T) {
+func optionsInvalid(t *testing.T) {
 	t.Parallel()
-	t.Run("constructor", testOptionsConstructorInvalid)
-	t.Run("go", testOptionsReflectInvalid)
+	t.Run("constructor", optionsConstructorInvalid)
+	t.Run("go", optionsReflectInvalid)
 }
 
-func testOptionsReflectInvalid(t *testing.T) {
+func optionsReflectInvalid(t *testing.T) {
 	t.Parallel()
 	type optionConstructor func(...option.ConstructorOption) ([]cmds.Option, error)
 	for _, test := range []struct {
