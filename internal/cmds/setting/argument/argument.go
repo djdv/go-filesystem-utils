@@ -25,18 +25,7 @@ type (
 	// SetFunc should attempt to assign to each `Argument.ValueReference` it receives.
 	// (Typically by utilizing the `Argument.Parameter.Name` as a key to a value store.)
 	// SetFunc must send all unassigned `Argument`s (if any) to its output channel.
-	SetFunc func(context.Context, Arguments, ...TypeParser) (unsetArgs Arguments, _ <-chan error)
-
-	// TODO: rename ParseArgument
-	// ParseFunc receives a string representation of the data value,
-	// and returns a typed Go value of it.
-	ParseFunc func(argument string) (value any, _ error)
-
-	// TypeParser is the binding of a type with its corresponding parse function.
-	TypeParser struct {
-		reflect.Type
-		ParseFunc
-	}
+	SetFunc func(context.Context, Arguments, ...Parser) (unsetArgs Arguments, _ <-chan error)
 
 	errors = <-chan error
 )
@@ -50,7 +39,7 @@ func argsFromSettings[setPtr runtime.SettingsType[settings], settings any](
 	}
 	var (
 		allFields   = expandEmbedded(ctx, baseFields)
-		params      = setPtr.Parameters(nil, ctx)
+		params      = set.Parameters(ctx)
 		fieldParams = generic.CtxBoth(ctx, allFields, params)
 
 		arguments = make(chan Argument, cap(params))
@@ -89,10 +78,12 @@ func argsFromSettings[setPtr runtime.SettingsType[settings], settings any](
 	return arguments, errs, nil
 }
 
-func maybeGetParser(typ reflect.Type, parsers ...TypeParser) *TypeParser {
+func maybeGetParser(typ reflect.Type,
+	parsers ...Parser,
+) func(string) (any, error) {
 	for _, parser := range parsers {
-		if parser.Type == typ {
-			return &parser
+		if typ == parser.Type() {
+			return parser.Parse
 		}
 	}
 	return nil
@@ -103,8 +94,11 @@ func maybeGetParser(typ reflect.Type, parsers ...TypeParser) *TypeParser {
 // Value sources are queried in the same order they're provided.
 // If a setting cannot be set by one source,
 // it's reference is relayed to the next `SetFunc`.
+// func Parse[setIntf runtime.SettingsType[set], set any](ctx context.Context,
+// setFuncs []SetFunc, parsers ...Container,
+// ) (*set, error) {
 func Parse[setIntf runtime.SettingsType[set], set any](ctx context.Context,
-	setFuncs []SetFunc, parsers ...TypeParser,
+	setFuncs []SetFunc, parsers ...Parser,
 ) (*set, error) {
 	settingsPointer := new(set)
 	unsetArgs, settingsErrs, err := argsFromSettings[setIntf](ctx, settingsPointer)
@@ -131,7 +125,10 @@ func Parse[setIntf runtime.SettingsType[set], set any](ctx context.Context,
 }
 
 func Assign(arg Argument, value any) error {
-	targetValue := reflect.ValueOf(arg.ValueReference).Elem()
+	targetValue := reflect.ValueOf(arg.ValueReference)
+	if targetValue.Kind() == reflect.Pointer {
+		targetValue = targetValue.Elem()
+	}
 	if !targetValue.CanSet() {
 		return fmt.Errorf("%w: `reflect.Value.CanSet` returned false for argument reference",
 			runtime.ErrUnassignable,

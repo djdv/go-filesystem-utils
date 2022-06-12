@@ -5,6 +5,7 @@ go 1.18
 require (
 	github.com/fatih/camelcase v1.0.0
 	github.com/ipfs/go-ipfs-cmds v0.7.0
+	golang.org/x/exp v0.0.0-20220609121020-a51bd0440498
 )
 
 require (

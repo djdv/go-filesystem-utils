@@ -4,7 +4,6 @@ package fs
 
 import (
 	"context"
-	"reflect"
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/setting/argument"
@@ -56,13 +55,8 @@ func Parse[setIntf runtime.SettingsType[settings], settings any](ctx context.Con
 }
 
 // TODO: Name.
-func handlers() []argument.TypeParser {
-	return []argument.TypeParser{
-		{
-			Type: reflect.TypeOf((*time.Duration)(nil)).Elem(),
-			ParseFunc: func(argument string) (any, error) {
-				return time.ParseDuration(argument)
-			},
-		},
+func handlers() []argument.Parser {
+	return []argument.Parser{
+		argument.NewParser(time.ParseDuration),
 	}
 }

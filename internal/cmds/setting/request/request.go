@@ -11,44 +11,52 @@ import (
 // ValueSource uses a cmds.Request as a source for settings values.
 func ValueSource(request *cmds.Request) argument.SetFunc {
 	return func(ctx context.Context,
-		argsToSet argument.Arguments, parsers ...argument.TypeParser,
+		argsToSet argument.Arguments, parsers ...argument.Parser,
 	) (argument.Arguments, <-chan error) {
-		options := request.Options
+		var (
+			options = request.Options
+			errs    = make(chan error)
+		)
 		if !hasUserDefinedOptions(options) {
 			// If we have nothing to process,
 			// just relay inputs as outputs.
-			errs := make(chan error)
 			close(errs)
 			return argsToSet, errs
 		}
-		var (
-			unsetArgs = make(chan argument.Argument, cap(argsToSet))
-			errs      = make(chan error)
-		)
+		unsetArgs := make(chan argument.Argument, cap(argsToSet))
 		go func() {
 			defer close(unsetArgs)
 			defer close(errs)
-			for argument := range argsToSet { // TODO: input from public api? needs ctxRange
-				var (
-					// NOTE: The cmds-libs stores values via the option's primary name.
-					// (Meaning we don't need to check keys via aliases.)
-					param             = argument.Parameter
-					optionName        = param.Name(parameter.CommandLine)
-					cmdsArg, provided = options[optionName]
-				)
-				if !provided {
-					select {
-					case unsetArgs <- argument:
-						continue
-					case <-ctx.Done():
+			for {
+				select {
+				case argument, ok := <-argsToSet:
+					if !ok {
 						return
 					}
-				}
-				if err := assignOption(argument, cmdsArg, parsers...); err != nil {
-					select {
-					case errs <- err:
-					case <-ctx.Done():
+					var (
+						// NOTE: The cmdslibs stores values via the option's primary name.
+						// (Meaning we don't need to check keys via aliases.)
+						param             = argument.Parameter
+						optionName        = param.Name(parameter.CommandLine)
+						cmdsArg, provided = options[optionName]
+					)
+					if !provided {
+						select {
+						case unsetArgs <- argument:
+							continue
+						case <-ctx.Done():
+							return
+						}
 					}
+					if err := assignOption(argument, cmdsArg, parsers...); err != nil {
+						select {
+						case errs <- err:
+							continue
+						case <-ctx.Done():
+							return
+						}
+					}
+				case <-ctx.Done():
 					return
 				}
 			}
@@ -57,23 +65,15 @@ func ValueSource(request *cmds.Request) argument.SetFunc {
 	}
 }
 
-func assignOption(arg argument.Argument, cmdsArg any, parsers ...argument.TypeParser) error {
-	switch stringish := cmdsArg.(type) {
-	case string:
-		parsedArg, err := argument.ParseStrings(arg, stringish, parsers...)
+func assignOption(arg argument.Argument, cmdsArg any, parsers ...argument.Parser) error {
+	if stringsArg, ok := cmdsArg.([]string); ok {
+		parsedArg, err := argument.ParseStrings(arg, stringsArg, parsers...)
 		if err != nil {
 			return err
 		}
 		return argument.Assign(arg, parsedArg)
-	case []string:
-		parsedArg, err := argument.ParseStrings(arg, stringish, parsers...)
-		if err != nil {
-			return err
-		}
-		return argument.Assign(arg, parsedArg)
-	default:
-		return argument.Assign(arg, cmdsArg)
 	}
+	return argument.Assign(arg, cmdsArg)
 }
 
 func hasUserDefinedOptions(options cmds.OptMap) bool {

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/internal/cmds/fs"
+	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
 )
 
@@ -22,7 +23,11 @@ func cmdsRun(ctx context.Context) error {
 	return cli.Run(ctx,
 		fs.Command(), cmdsArgs(os.Args),
 		os.Stdin, os.Stdout, os.Stderr,
-		nil, nil,
+		func(ctx context.Context, r *cmds.Request) (cmds.Environment, error) {
+			return struct{}{}, nil
+		}, func(r *cmds.Request, i interface{}) (cmds.Executor, error) {
+			return cmds.NewExecutor(r.Command), nil
+		},
 	)
 }
 

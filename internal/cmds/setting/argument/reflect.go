@@ -8,6 +8,55 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/cmds/setting/runtime"
 )
 
+// ParseStrings interprets a string as/into a Go value
+// or a list of strings into a list of values.
+func ParseStrings[stringish string | []string](arg Argument, value stringish,
+	parsers ...Parser,
+) (any, error) {
+	typ := reflect.TypeOf(arg.ValueReference)
+	if typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+
+	if plural, ok := any(value).([]string); ok {
+		return parseStrings(typ, plural, parsers...)
+	}
+
+	singular := any(value).(string)
+	if parser := maybeGetParser(typ, parsers...); parser != nil {
+		return parser(singular)
+	}
+	return parseBuiltin(typ, singular)
+}
+
+func parseStrings(typ reflect.Type, values []string, parsers ...Parser) (any, error) {
+	vectorValue, err := makeVector(typ, len(values))
+	if err != nil {
+		return nil, err
+	}
+	var (
+		elemType       = typ.Elem()
+		userParser     = maybeGetParser(elemType, parsers...)
+		haveUserParser = userParser != nil
+		parse          func(s string) (any, error)
+	)
+	if haveUserParser {
+		parse = userParser
+	} else {
+		parse = func(s string) (any, error) {
+			return parseBuiltin(elemType, s)
+		}
+	}
+	for i, stringValue := range values {
+		goValue, err := parse(stringValue)
+		if err != nil {
+			return nil, err
+		}
+		vectorValue.Index(i).Set(reflect.ValueOf(goValue))
+	}
+	return vectorValue.Interface(), nil
+}
+
 func referenceFromField(field reflect.StructField, fieldValue reflect.Value) (any, error) {
 	if !fieldValue.CanSet() {
 		err := fmt.Errorf("%w"+
@@ -24,7 +73,7 @@ func referenceFromField(field reflect.StructField, fieldValue reflect.Value) (an
 	return fieldValue.Addr().Interface(), nil
 }
 
-// parseBuiltin parses the string value as/to the provided Go type.
+// parseBuiltin interprets the string as/into the provided Go type.
 func parseBuiltin(typ reflect.Type, value string) (any, error) {
 	switch kind := typ.Kind(); kind {
 	case reflect.Bool:
