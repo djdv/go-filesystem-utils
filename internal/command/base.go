@@ -88,6 +88,7 @@ func MakeCommand[sPtr Settings[sTyp], sTyp any](name, synopsis, usage string,
 		panic(err)
 	}
 	var (
+		flags     sPtr
 		subcommands = settings.subcmds
 		niladic     = settings.niladic
 		output      = settings.usageOutput
@@ -98,6 +99,7 @@ func MakeCommand[sPtr Settings[sTyp], sTyp any](name, synopsis, usage string,
 	if output == nil {
 		output = os.Stderr
 	}
+
 	return &command{
 		name:        name,
 		synopsis:    synopsis,
@@ -105,10 +107,15 @@ func MakeCommand[sPtr Settings[sTyp], sTyp any](name, synopsis, usage string,
 		subcommands: subcommands,
 		niladic:     niladic,
 		execute: func(ctx context.Context, args ...string) error {
-			flags, arguments, err := parseArguments[sPtr](fs, args...)
-			if err != nil {
+			if flags == nil {
+				flags = new(sTyp)
+				flags.BindFlags(fs)
+			}
+			if err := fs.Parse(args); err != nil {
 				return err
 			}
+			arguments := fs.Args()
+
 			if flags.NeedsHelp() {
 				output.WriteString(usageFunc())
 				return ErrUsage
@@ -158,6 +165,7 @@ func printIfUsageErr(output io.StringWriter, err error, usage string) error {
 	return err
 }
 
+/* TODO: lint probably.
 func parseArguments[sPtr Settings[sTyp], sTyp any](fs *flag.FlagSet,
 	args ...string,
 ) (sPtr, []string, error) {
@@ -168,6 +176,7 @@ func parseArguments[sPtr Settings[sTyp], sTyp any](fs *flag.FlagSet,
 	}
 	return flags, fs.Args(), nil
 }
+*/
 
 func handleExecErr(cmd Command, err error) error {
 	if errors.Is(err, ErrUsage) {
