@@ -6,9 +6,9 @@ type (
 	Option func(*commandSettings) error
 
 	commandSettings struct {
-		niladic     bool
-		subcmds     []Command
 		usageOutput io.StringWriter
+		subcmds     []Command
+		niladic     bool
 	}
 )
 
