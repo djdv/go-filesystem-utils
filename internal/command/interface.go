@@ -27,7 +27,7 @@ type (
 		Execute(ctx context.Context, args ...string) error
 	}
 
-	// A FlagBinder should call the relevant `Var` methods of the FlagSet,
+	// A FlagBinder should call the relevant `Var` methods of the [flag.FlagSet],
 	// with each of it's flag variable references.
 	// E.g. a struct would pass pointers to each of its fields,
 	// to `FlagSet.Var(&structABC.fieldXYZ, ...)`.
