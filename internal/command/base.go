@@ -88,50 +88,57 @@ func MakeCommand[sPtr Settings[sTyp], sTyp any](name, synopsis, usage string,
 		panic(err)
 	}
 	var (
-		flags     sPtr
 		subcommands = settings.subcmds
 		niladic     = settings.niladic
 		output      = settings.usageOutput
 
-		fs        = flag.NewFlagSet(name, flag.ContinueOnError)
-		usageFunc = joinFlagAndSubcmds(name, usage, fs, subcommands...)
+		formatUsage = func(flagSet *flag.FlagSet) string {
+			return joinFlagAndSubcmds(name, usage, flagSet, subcommands...)
+		}
+		printUsage = func(flagSet *flag.FlagSet) {
+			if output == nil {
+				output = os.Stderr
+			}
+			output.WriteString(formatUsage(flagSet))
+		}
 	)
-	if output == nil {
-		output = os.Stderr
-	}
 
 	return &command{
-		name:        name,
-		synopsis:    synopsis,
-		usage:       usageFunc,
+		name:     name,
+		synopsis: synopsis,
+		usage: func() string {
+			var (
+				flagSet      = flag.NewFlagSet(name, flag.ContinueOnError)
+				flags   sPtr = new(sTyp)
+			)
+			flags.BindFlags(flagSet)
+			return formatUsage(flagSet)
+		},
 		subcommands: subcommands,
 		niladic:     niladic,
 		execute: func(ctx context.Context, args ...string) error {
-			if flags == nil {
-				flags = new(sTyp)
-				flags.BindFlags(fs)
-			}
-			if err := fs.Parse(args); err != nil {
+			flagSet := flag.NewFlagSet(name, flag.ContinueOnError)
+			flags, arguments, err := parseArguments[sPtr](flagSet, args...)
+			if err != nil {
 				return err
 			}
-			arguments := fs.Args()
 
 			if flags.NeedsHelp() {
-				output.WriteString(usageFunc())
+				printUsage(flagSet)
 				return ErrUsage
 			}
 
 			if len(arguments) == 0 {
 				if err := exec(ctx, flags); err != nil {
 					if errors.Is(err, ErrUsage) {
-						output.WriteString(usageFunc())
+						printUsage(flagSet)
 					}
 					return err
 				}
 				return nil
 			}
 			if niladic {
-				output.WriteString(usageFunc())
+				printUsage(flagSet)
 				return ErrUsage // Arguments provided but command takes none.
 			}
 
@@ -142,7 +149,7 @@ func MakeCommand[sPtr Settings[sTyp], sTyp any](name, synopsis, usage string,
 				}
 			}
 
-			output.WriteString(usageFunc())
+			printUsage(flagSet)
 			return ErrUsage // Subcommand not found.
 			// TODO: ^ we could repeat the input here, maybe we should.
 			// E.g. `prog.exe unexpected` would print something like
@@ -165,7 +172,6 @@ func printIfUsageErr(output io.StringWriter, err error, usage string) error {
 	return err
 }
 
-/* TODO: lint probably.
 func parseArguments[sPtr Settings[sTyp], sTyp any](fs *flag.FlagSet,
 	args ...string,
 ) (sPtr, []string, error) {
@@ -176,7 +182,6 @@ func parseArguments[sPtr Settings[sTyp], sTyp any](fs *flag.FlagSet,
 	}
 	return flags, fs.Args(), nil
 }
-*/
 
 func handleExecErr(cmd Command, err error) error {
 	if errors.Is(err, ErrUsage) {
@@ -185,34 +190,34 @@ func handleExecErr(cmd Command, err error) error {
 	return err
 }
 
-func (base *command) Usage() string { return base.usage() }
+func (base *command) Usage() string {
+	return base.usage()
+}
 
-func joinFlagAndSubcmds(name, usage string, fs *flag.FlagSet, subcmds ...Command) func() string {
-	return func() string {
-		var (
-			flagUsages       = formatFlags(fs)
-			subcommandUsages = formatSubcommands(subcmds...)
-			text             = new(strings.Builder)
-		)
-		fmt.Fprintf(text, "Usage of %s:", name)
-		if flagUsages != "" {
-			text.WriteString(" <flags>")
-			flagUsages = fmt.Sprintf("Flags:\n%s\n", flagUsages)
-		}
-		if subcommandUsages != "" {
-			// TODO: in [formatSubcommands] there is a commented out hack
-			// It's not necessary but would be nice if we also printed out
-			// `<subcommand arguments...>` if /any/ of the subcommands take arguments.
-			// But not if none of them do.
-			// This will likely require modifying the command interface, or something
-			// so that we can inspect that here.
-			text.WriteString(" <subcommand>")
-			subcommandUsages = fmt.Sprintf("Subcommands:\n%s\n", subcommandUsages)
-		}
-		fmt.Fprintf(text, "\n\n%s\n\n", usage)
-		fmt.Fprintf(text, "%s%s", flagUsages, subcommandUsages)
-		return text.String()
+func joinFlagAndSubcmds(name, usage string, fs *flag.FlagSet, subcmds ...Command) string {
+	var (
+		flagUsages       = formatFlags(fs)
+		subcommandUsages = formatSubcommands(subcmds...)
+		text             = new(strings.Builder)
+	)
+	fmt.Fprintf(text, "Usage of %s:", name)
+	if flagUsages != "" {
+		text.WriteString(" <flags>")
+		flagUsages = fmt.Sprintf("Flags:\n%s\n", flagUsages)
 	}
+	if subcommandUsages != "" {
+		// TODO: in [formatSubcommands] there is a commented out hack
+		// It's not necessary but would be nice if we also printed out
+		// `<subcommand arguments...>` if /any/ of the subcommands take arguments.
+		// But not if none of them do.
+		// This will likely require modifying the command interface, or something
+		// so that we can inspect that here.
+		text.WriteString(" <subcommand>")
+		subcommandUsages = fmt.Sprintf("Subcommands:\n%s\n", subcommandUsages)
+	}
+	fmt.Fprintf(text, "\n\n%s\n\n", usage)
+	fmt.Fprintf(text, "%s%s", flagUsages, subcommandUsages)
+	return text.String()
 }
 
 func formatFlags(fs *flag.FlagSet) string {
