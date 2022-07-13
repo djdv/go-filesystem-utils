@@ -194,66 +194,32 @@ func (base *command) Usage() string {
 	return base.usage()
 }
 
-func joinFlagAndSubcmds(name, usage string, fs *flag.FlagSet, subcmds ...Command) string {
+func joinFlagAndSubcmds(name, usage string,
+	fs *flag.FlagSet, subcmds ...Command) string {
 	var (
-		flagUsages       = formatFlags(fs)
-		subcommandUsages = formatSubcommands(subcmds...)
-		text             = new(strings.Builder)
+		sb            = new(strings.Builder)
+		buildFlagHelp = func(sb *strings.Builder, fs *flag.FlagSet) {
+			defer fs.SetOutput(fs.Output())
+			fs.SetOutput(sb)
+			fs.PrintDefaults()
+		}
+		buildSubcmdHelp = func(sb *strings.Builder, subs ...Command) {
+			tw := tabwriter.NewWriter(sb, 0, 0, 0, ' ', 0)
+			for _, sub := range subs {
+				fmt.Fprintf(tw, "  %s\t - %s\n",
+					sub.Name(), sub.Synopsis())
+			}
+			if err := tw.Flush(); err != nil {
+				panic(err)
+			}
+		}
 	)
-	fmt.Fprintf(text, "Usage of %s:", name)
-	if flagUsages != "" {
-		text.WriteString(" <flags>")
-		flagUsages = fmt.Sprintf("Flags:\n%s\n", flagUsages)
-	}
-	if subcommandUsages != "" {
-		// TODO: in [formatSubcommands] there is a commented out hack
-		// It's not necessary but would be nice if we also printed out
-		// `<subcommand arguments...>` if /any/ of the subcommands take arguments.
-		// But not if none of them do.
-		// This will likely require modifying the command interface, or something
-		// so that we can inspect that here.
-		text.WriteString(" <subcommand>")
-		subcommandUsages = fmt.Sprintf("Subcommands:\n%s\n", subcommandUsages)
-	}
-	fmt.Fprintf(text, "\n\n%s\n\n", usage)
-	fmt.Fprintf(text, "%s%s", flagUsages, subcommandUsages)
-	return text.String()
-}
-
-func formatFlags(fs *flag.FlagSet) string {
-	original := fs.Output()
-	defer fs.SetOutput(original)
-
-	textBuf := new(strings.Builder)
-	fs.SetOutput(textBuf)
-	fs.PrintDefaults()
-	return textBuf.String()
-}
-
-func formatSubcommands(subcmds ...Command) string {
-	var (
-		textBuf   = new(strings.Builder)
-		tabWriter = tabwriter.NewWriter(textBuf, 0, 0, 0, ' ', 0)
+	sb.WriteString(
+		"Usage: " + name + " [FLAGS] SUBCOMMAND" +
+			"\n\nFlags:\n",
 	)
-	for _, subcmd := range subcmds {
-		// HACK: should niladic be a method of the interface?
-		// Command.ArgumentCount()? Then we can check for 0 or even more.
-		// ^ I think a boolean is better than a count in this context.
-		// The execute function should care about counts, not us (the formatter).
-		//	if base, ok := subcmd.(*baseCmd); ok {
-		//		if !base.niladic {
-		//			sawArgs = true
-		//		}
-		//	}
-		// NOTE: 2 leading spaces to match Go's default [flag] output.
-		fmt.Fprintf(tabWriter, "  %s\t - %s\n", subcmd.Name(), subcmd.Synopsis())
-	}
-	if err := tabWriter.Flush(); err != nil {
-		panic(err)
-	}
-	return textBuf.String()
-
-	//if sawArgs {
-	//	subcommandTag += " <subcommand args>"
-	//}
+	buildFlagHelp(sb, fs)
+	sb.WriteString("\nSubcommands:\n")
+	buildSubcmdHelp(sb, subcmds...)
+	return sb.String()
 }
