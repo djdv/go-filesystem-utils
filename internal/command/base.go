@@ -149,6 +149,20 @@ func MakeCommand[sPtr Settings[sTyp], sTyp any](name, synopsis, usage string,
 				}
 			}
 
+			// HACK: we need a proper solution for this
+			// invoke exec when command has subcommands but not found
+			// otherwise return usage? idk
+			// Also repetition with head of func.
+			if len(subcommands) == 0 {
+				if err := exec(ctx, flags, arguments...); err != nil {
+					if errors.Is(err, ErrUsage) {
+						printUsage(flagSet)
+					}
+					return err
+				}
+				return nil
+			}
+
 			printUsage(flagSet)
 			return ErrUsage // Subcommand not found.
 			// TODO: ^ we could repeat the input here, maybe we should.
