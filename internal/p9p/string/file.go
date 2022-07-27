@@ -14,7 +14,7 @@ type (
 		Names []string
 		p9.QID
 		p9.Attr
-		Data strings.Builder
+		Data *strings.Builder
 		templatefs.NoopFile
 	}
 )
@@ -34,10 +34,11 @@ func New(names []string, path *atomic.Uint64) (*File, p9.QID) {
 			Mode: p9.ModeRegular,
 			// UID:  p9.NoUID,
 			// GID:  p9.NoGID,
-			UID:  0,
-			GID:  0,
+			UID:  0, // Hardcoded for root.
+			GID:  0, // Hardcoded for root.
 			RDev: placeholderDev,
 		},
+		Data: new(strings.Builder),
 	}
 	return sf, sf.QID
 }
@@ -81,9 +82,15 @@ func (f *File) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
 			curLen     = f.Data.Len()
 			targetSize = int(attr.Size)
 		)
+		if curLen > targetSize {
+			buf := f.Data.String()[:targetSize]
+			f.Data.Reset()
+			f.Data.WriteString(buf)
+		}
 		if curLen < targetSize {
 			f.Data.Grow(targetSize - curLen)
 		}
+		f.Attr.Size = uint64(targetSize)
 	}
 	return nil
 }
