@@ -65,6 +65,9 @@ func checkListAttrs(filled p9.AttrMask, attr p9.Attr) error {
 
 func listFiles(dir p9.File) (_ p9.Dirents, err error) {
 	listDir, err := openList(dir)
+	if err != nil {
+		return nil, err
+	}
 	defer func() {
 		cErr := listDir.Close()
 		if err == nil {
