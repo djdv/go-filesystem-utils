@@ -171,13 +171,17 @@ func (r *Root) makeDevice(name string, instanceType devInstance) (p9.QID, error)
 }
 
 func (r *Root) Walk(names []string) (qids []p9.QID, f p9.File, err error) {
-	qids = []p9.QID{r.QID}
 	switch nameCount := len(names); nameCount {
 	case 0:
 		nr := new(Root)
 		*nr = *r
-		return qids, nr, nil
+		return nil, nr, nil
 	case 1:
+		if names[0] == "." {
+			nr := new(Root)
+			*nr = *r
+			return []p9.QID{nr.QID}, nr, nil
+		}
 		var (
 			name       = names[0]
 			device, ok = r.fileTable[name]
@@ -185,14 +189,11 @@ func (r *Root) Walk(names []string) (qids []p9.QID, f p9.File, err error) {
 		if !ok {
 			return nil, nil, errors.ENOENT
 		}
-		/* TODO: spec? why is this invalid?
-		 q, _, _, err := r.GetAttr(p9.AttrMask{})
+		qid, _, _, err := device.GetAttr(p9.AttrMask{})
 		if err != nil {
 			return nil, nil, err
 		}
-		 qids = append(qids, q)
-		*/
-		return qids, device, nil
+		return []p9.QID{qid}, device, nil
 	default:
 		return nil, nil, fmt.Errorf("dir: depth max is 1 for now")
 	}

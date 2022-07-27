@@ -87,10 +87,10 @@ func (d *directory) Walk(names []string) ([]p9.QID, p9.File, error) {
 	case 0:
 		nd := new(directory)
 		*nd = *d
-		return []p9.QID{nd.QID}, nd, nil
+		return nil, nd, nil
 	case 1:
 		name := names[0]
-		if name == ".." {
+		if name == "." {
 			nd := new(directory)
 			*nd = *d
 			return []p9.QID{nd.QID}, nd, nil

@@ -98,12 +98,21 @@ func (f *File) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
 func (f *File) Walk(names []string) ([]p9.QID, p9.File, error) {
 	// FIXME: we need to support ".." but currently don't.
 	// (constructor needs an optional parent-node we can reference here)
-	if len(names) > 0 {
+	switch len(names) {
+	case 0:
+		nf := new(File)
+		*nf = *f
+		return nil, nf, nil
+	case 1:
+		if names[0] == "." {
+			nf := new(File)
+			*nf = *f
+			return []p9.QID{f.QID}, nf, nil
+		}
+		fallthrough
+	default:
 		return nil, nil, errors.ENOTDIR // TODO: double check what Evalue the spec wants.
 	}
-	nf := new(File)
-	*nf = *f
-	return []p9.QID{nf.QID}, nf, nil
 }
 
 func (f *File) Open(mode p9.OpenFlags) (p9.QID, uint32, error) {
