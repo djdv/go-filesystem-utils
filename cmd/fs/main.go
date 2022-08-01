@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
+	"github.com/djdv/go-filesystem-utils/internal/commands"
 )
 
 type settings struct {
@@ -61,7 +62,9 @@ func execute(context.Context, *settings, ...string) error {
 }
 
 func makeSubcommands() []command.Command {
-	return nil
+	return []command.Command{
+		commands.Daemon(),
+	}
 }
 
 func exitWithErr(err error) {
@@ -75,7 +78,11 @@ func exitWithErr(err error) {
 		code = misuse
 	} else {
 		code = failure
-		os.Stderr.WriteString(err.Error())
+		errStr := err.Error()
+		if !strings.HasSuffix(errStr, "\n") {
+			errStr += "\n"
+		}
+		os.Stderr.WriteString(errStr)
 	}
 	os.Exit(code)
 }
