@@ -79,94 +79,21 @@ func (b *HelpFlag) Set(str string) error {
 }
 
 func MakeCommand[sPtr Settings[sTyp], sTyp any](name, synopsis, usage string,
-	exec ExecuteFunc[sPtr, sTyp], options ...Option) Command {
+	exec ExecuteFunc[sPtr, sTyp], options ...Option,
+) Command {
 	settings, err := parseOptions(options...)
 	if err != nil {
 		panic(err)
 	}
-	var (
-		subcommands = settings.subcmds
-		niladic     = settings.niladic
-		output      = settings.usageOutput
-
-		formatHelpText = func(flagSet *flag.FlagSet) string {
-			return joinFlagAndSubcmds(name, usage, flagSet, subcommands...)
-		}
-		printHelpText = func(flagSet *flag.FlagSet) {
-			if output == nil {
-				output = os.Stderr
-			}
-			output.WriteString(formatHelpText(flagSet))
-		}
-	)
-
-	return &command{
-		name:     name,
-		synopsis: synopsis,
-		usage: func() string {
-			var (
-				flagSet      = flag.NewFlagSet(name, flag.ContinueOnError)
-				flags   sPtr = new(sTyp)
-			)
-			flags.BindFlags(flagSet)
-			return formatHelpText(flagSet)
-		},
-		subcommands: subcommands,
-		niladic:     niladic,
-		execute: func(ctx context.Context, args ...string) error {
-			flagSet := flag.NewFlagSet(name, flag.ContinueOnError)
-			flags, arguments, err := parseArguments[sPtr](flagSet, args...)
-			if err != nil {
-				return err
-			}
-
-			if flags.HelpRequested() {
-				printHelpText(flagSet)
-				return ErrUsage
-			}
-
-			if len(arguments) == 0 {
-				if err := exec(ctx, flags); err != nil {
-					if errors.Is(err, ErrUsage) {
-						printHelpText(flagSet)
-					}
-					return err
-				}
-				return nil
-			}
-			if niladic {
-				printHelpText(flagSet)
-				return ErrUsage // Arguments provided but command takes none.
-			}
-
-			subname := arguments[0]
-			for _, subcmd := range subcommands {
-				if subcmd.Name() == subname {
-					return subcmd.Execute(ctx, arguments[1:]...)
-				}
-			}
-
-			// HACK: we need a proper solution for this
-			// invoke exec when command has subcommands but not found
-			// otherwise return usage? idk
-			// Also repetition with head of func.
-			if len(subcommands) == 0 {
-				if err := exec(ctx, flags, arguments...); err != nil {
-					if errors.Is(err, ErrUsage) {
-						printHelpText(flagSet)
-					}
-					return err
-				}
-				return nil
-			}
-
-			printHelpText(flagSet)
-			return ErrUsage // Subcommand not found.
-			// TODO: ^ we could repeat the input here, maybe we should.
-			// E.g. `prog.exe unexpected` would print something like
-			// "unexpected" is not a subcommand; or whatever.
-		},
+	cmd := &command{
+		name:        name,
+		synopsis:    synopsis,
+		subcommands: settings.subcmds,
+		niladic:     settings.niladic,
 	}
+	cmd.usage = makeUsage[sPtr](cmd, usage)
+	cmd.execute = wrapExecute(cmd, settings.usageOutput, usage, exec)
+	return cmd
 }
 
 func (cmd *command) Name() string           { return cmd.name }
@@ -177,11 +104,155 @@ func (cmd *command) Execute(ctx context.Context, args ...string) error {
 	return cmd.execute(ctx, args...)
 }
 
-func printIfUsageErr(output io.StringWriter, err error, usage string) error {
-	if errors.Is(err, ErrUsage) {
-		output.WriteString(usage)
+// We delay generating the result string,
+// since [Command.Usage] is not likely to be called in the common case.
+func makeUsage[sPtr Settings[sTyp], sTyp any](cmd *command, usage string) func() string {
+	return func() string {
+		var (
+			name         = cmd.name
+			flagSet      = flag.NewFlagSet(name, flag.ContinueOnError)
+			flags   sPtr = new(sTyp)
+		)
+		flags.BindFlags(flagSet)
+		helpText, err := formatHelpText(name, usage, flagSet, cmd.subcommands...)
+		if err != nil {
+			// Unlikely (but not impossible) I/O error.
+			panic(err)
+		}
+		return helpText
 	}
-	return err
+}
+
+func formatHelpText(name, usage string,
+	flagSet *flag.FlagSet, subcommands ...Command,
+) (string, error) {
+	return joinFlagAndSubcmds(name, usage, flagSet, subcommands...)
+}
+
+// joinFlagAndSubcmds constructs `-help` text
+func joinFlagAndSubcmds(name, usage string,
+	fs *flag.FlagSet, subcmds ...Command,
+) (string, error) {
+	sb := new(strings.Builder)
+	sb.WriteString(
+		"Usage: " + name + " [FLAGS] SUBCOMMAND\n\n" +
+			usage + "\n\nFlags:\n",
+	)
+	buildFlagHelp(sb, fs)
+	if len(subcmds) != 0 {
+		sb.WriteString("\nSubcommands:\n")
+		if err := buildSubcmdHelp(sb, subcmds...); err != nil {
+			return "", err
+		}
+	}
+	return sb.String(), nil
+}
+
+// buildFlagHelp prints flagset help text into a string builder.
+func buildFlagHelp(sb *strings.Builder, fs *flag.FlagSet) {
+	defer fs.SetOutput(fs.Output())
+	fs.SetOutput(sb)
+	fs.PrintDefaults()
+}
+
+// buildSubcmdHelp creates list of subcommands formatted as 'name - synopsis`.
+func buildSubcmdHelp(sb *strings.Builder, subs ...Command) error {
+	tw := tabwriter.NewWriter(sb, 0, 0, 0, ' ', 0)
+	for _, sub := range subs {
+		if _, err := fmt.Fprintf(tw, "  %s\t - %s\n",
+			sub.Name(), sub.Synopsis()); err != nil {
+			return err
+		}
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func printHelpText(output io.StringWriter, cmd *command, usage string, flagSet *flag.FlagSet) error {
+	if output == nil {
+		output = os.Stderr
+	}
+	helpText, err := formatHelpText(cmd.name, usage, flagSet, cmd.subcommands...)
+	if err != nil {
+		return err
+	}
+	if _, err := output.WriteString(helpText); err != nil {
+		return err
+	}
+	return nil
+}
+
+func wrapExecute[sPtr Settings[sTyp], sTyp any,
+](cmd *command, usageOutput io.StringWriter, usage string, exec ExecuteFunc[sPtr, sTyp],
+) func(context.Context, ...string) error {
+	return func(ctx context.Context, args ...string) error {
+		flagSet := flag.NewFlagSet(cmd.name, flag.ContinueOnError)
+		flags, arguments, err := parseArguments[sPtr](flagSet, args...)
+		if err != nil {
+			return err
+		}
+
+		if flags.HelpRequested() {
+			if err := printHelpText(usageOutput, cmd, usage, flagSet); err != nil {
+				return err
+			}
+			return ErrUsage
+		}
+
+		if len(arguments) == 0 {
+			if err := exec(ctx, flags); err != nil {
+				if errors.Is(err, ErrUsage) {
+					if err := printHelpText(usageOutput, cmd, usage, flagSet); err != nil {
+						return err
+					}
+				}
+				return err
+			}
+			return nil
+		}
+		if cmd.niladic {
+			if err := printHelpText(usageOutput, cmd, usage, flagSet); err != nil {
+				return err
+			}
+			return ErrUsage // Arguments provided but command takes none.
+		}
+
+		var (
+			subcommands = cmd.subcommands
+			subname     = arguments[0]
+		)
+		for _, subcmd := range subcommands {
+			if subcmd.Name() == subname {
+				return subcmd.Execute(ctx, arguments[1:]...)
+			}
+		}
+
+		// HACK: we need a proper solution for this
+		// invoke exec when command has subcommands but not found
+		// otherwise return usage? idk
+		// Also repetition with head of func.
+		if len(subcommands) == 0 {
+			if err := exec(ctx, flags, arguments...); err != nil {
+				if errors.Is(err, ErrUsage) {
+					if err := printHelpText(usageOutput, cmd, usage, flagSet); err != nil {
+						return err
+					}
+				}
+				return err
+			}
+			return nil
+		}
+
+		if err := printHelpText(usageOutput, cmd, usage, flagSet); err != nil {
+			return err
+		}
+		return ErrUsage // Subcommand not found.
+		// TODO: ^ we could repeat the input here, maybe we should.
+		// E.g. `prog.exe unexpected` would print something like
+		// "unexpected" is not a subcommand; or whatever.
+	}
 }
 
 func parseArguments[sPtr Settings[sTyp], sTyp any](fs *flag.FlagSet,
@@ -193,47 +264,4 @@ func parseArguments[sPtr Settings[sTyp], sTyp any](fs *flag.FlagSet,
 		return nil, nil, err
 	}
 	return flags, fs.Args(), nil
-}
-
-func handleExecErr(cmd Command, err error) error {
-	if errors.Is(err, ErrUsage) {
-		fmt.Fprint(os.Stderr, cmd.Usage())
-	}
-	return err
-}
-
-// Constructs -help text
-func joinFlagAndSubcmds(name, usage string,
-	fs *flag.FlagSet, subcmds ...Command) string {
-	var (
-		sb = new(strings.Builder)
-		// prints flagset help text into a string builder
-		buildFlagHelp = func(sb *strings.Builder, fs *flag.FlagSet) {
-			defer fs.SetOutput(fs.Output())
-			fs.SetOutput(sb)
-			fs.PrintDefaults()
-		}
-		// creates list of subcommands formatted as 'name - synopsis`
-		buildSubcmdHelp = func(sb *strings.Builder, subs ...Command) {
-			tw := tabwriter.NewWriter(sb, 0, 0, 0, ' ', 0)
-			for _, sub := range subs {
-				fmt.Fprintf(tw, "  %s\t - %s\n",
-					sub.Name(), sub.Synopsis())
-			}
-			if err := tw.Flush(); err != nil {
-				panic(err)
-			}
-		}
-	)
-	sb.WriteString(
-		"Usage: " + name + " [FLAGS] SUBCOMMAND\n\n" +
-			usage + "\n\nFlags:\n",
-	)
-	buildFlagHelp(sb, fs)
-	// bw TODO: this feels wrong, maybe subcmd stuff should be a new func
-	if len(subcmds) != 0 {
-		sb.WriteString("\nSubcommands:\n")
-		buildSubcmdHelp(sb, subcmds...)
-	}
-	return sb.String()
 }
