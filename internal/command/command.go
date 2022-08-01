@@ -212,14 +212,13 @@ func wrapExecute[sPtr Settings[sTyp], sTyp any,
 					}
 				}
 			}
-			if err := exec(ctx, flags, arguments...); err != nil {
-				if !errors.Is(err, ErrUsage) {
-					return err
-				}
-				// fallthrough to print help
-			} else {
+			if err := exec(ctx, flags, arguments...); err == nil {
 				return nil
 			}
+			if !errors.Is(err, ErrUsage) {
+				return err
+			}
+			// fallthrough to print help
 		}
 		if err := printHelpText(usageOutput, cmd, usage, flagSet); err != nil {
 			return err
