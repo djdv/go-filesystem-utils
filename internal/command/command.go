@@ -193,65 +193,38 @@ func wrapExecute[sPtr Settings[sTyp], sTyp any,
 		if err != nil {
 			return err
 		}
-
-		if flags.HelpRequested() {
-			if err := printHelpText(usageOutput, cmd, usage, flagSet); err != nil {
-				return err
-			}
-			return ErrUsage
-		}
-
-		if len(arguments) == 0 {
-			if err := exec(ctx, flags); err != nil {
-				if errors.Is(err, ErrUsage) {
-					if err := printHelpText(usageOutput, cmd, usage, flagSet); err != nil {
-						return err
-					}
-				}
-				return err
-			}
-			return nil
-		}
-		if cmd.niladic {
-			if err := printHelpText(usageOutput, cmd, usage, flagSet); err != nil {
-				return err
-			}
-			return ErrUsage // Arguments provided but command takes none.
-		}
-
 		var (
-			subcommands = cmd.subcommands
-			subname     = arguments[0]
+			helpRequested = flags.HelpRequested()
+			haveArgs      = len(arguments) != 0
+			tooManyArgs   = haveArgs && cmd.niladic
+			usageError    = helpRequested || tooManyArgs
 		)
-		for _, subcmd := range subcommands {
-			if subcmd.Name() == subname {
-				return subcmd.Execute(ctx, arguments[1:]...)
-			}
-		}
-
-		// HACK: we need a proper solution for this
-		// invoke exec when command has subcommands but not found
-		// otherwise return usage? idk
-		// Also repetition with head of func.
-		if len(subcommands) == 0 {
-			if err := exec(ctx, flags, arguments...); err != nil {
-				if errors.Is(err, ErrUsage) {
-					if err := printHelpText(usageOutput, cmd, usage, flagSet); err != nil {
-						return err
+		if !usageError {
+			var (
+				subcommands = cmd.subcommands
+				haveSubs    = len(subcommands) != 0
+			)
+			if haveSubs && haveArgs {
+				subname := arguments[0]
+				for _, subcmd := range subcommands {
+					if subcmd.Name() == subname {
+						return subcmd.Execute(ctx, arguments[1:]...)
 					}
 				}
-				return err
 			}
-			return nil
+			if err := exec(ctx, flags, arguments...); err != nil {
+				if !errors.Is(err, ErrUsage) {
+					return err
+				}
+				// fallthrough to print help
+			} else {
+				return nil
+			}
 		}
-
 		if err := printHelpText(usageOutput, cmd, usage, flagSet); err != nil {
 			return err
 		}
-		return ErrUsage // Subcommand not found.
-		// TODO: ^ we could repeat the input here, maybe we should.
-		// E.g. `prog.exe unexpected` would print something like
-		// "unexpected" is not a subcommand; or whatever.
+		return ErrUsage
 	}
 }
 
