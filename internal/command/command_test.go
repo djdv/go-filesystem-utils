@@ -72,7 +72,7 @@ func cMakeCommand(t *testing.T) {
 
 	if err := cmdWithOpts.Execute(ctx, "some", "strings"); !errors.Is(
 		err, want) {
-		helpGotWant(t, "Didn't fail when called with unexpected args", err, want)
+		hlprGotWant(t, "Didn't fail when called with unexpected args", err, want)
 	}
 }
 
@@ -80,7 +80,7 @@ func hfNeedsHelp(t *testing.T) {
 	t.Parallel()
 	hf := new(command.HelpFlag)
 	const want = false
-	helpNeedsHelp(t, hf, want)
+	hlprHelpRequested(t, hf, want)
 }
 
 func hfSet(t *testing.T) {
@@ -90,7 +90,7 @@ func hfSet(t *testing.T) {
 	if err := hf.Set("true"); err != nil {
 		t.Fatal(err)
 	}
-	helpNeedsHelp(t, hf, want)
+	hlprHelpRequested(t, hf, want)
 }
 
 func hfString(t *testing.T) {
@@ -98,18 +98,18 @@ func hfString(t *testing.T) {
 	hf := new(command.HelpFlag)
 	const want = "false"
 	if got := hf.String(); got != want {
-		helpGotWant(t, "String returned unexpected value:", got, want)
+		hlprGotWant(t, "String returned unexpected value:", got, want)
 	}
 }
 
-func helpNeedsHelp(t *testing.T, hf *command.HelpFlag, want bool) {
+func hlprHelpRequested(t *testing.T, hf *command.HelpFlag, want bool) {
 	t.Helper()
-	if got := hf.NeedsHelp(); got != want {
-		helpGotWant(t, "HelpFlag returned unexpected value:", got, want)
+	if got := hf.HelpRequested(); got != want {
+		hlprGotWant(t, "HelpFlag returned unexpected value:", got, want)
 	}
 }
 
-func helpGotWant(t *testing.T, explain string, got, want any) {
+func hlprGotWant(t *testing.T, explain string, got, want any) {
 	t.Helper()
 	t.Errorf(explain+
 		"\n\tgot: %v"+

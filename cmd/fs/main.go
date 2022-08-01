@@ -77,7 +77,6 @@ func makeSubcommands() []command.Command {
 			noop,
 		),
 	}
-	return nil // We don't have any subcommands yet.
 }
 
 func exitWithErr(err error) {

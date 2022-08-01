@@ -12,29 +12,25 @@ import (
 	"text/tabwriter"
 )
 
+// TODO: name and docs
 type (
-	// TODO: docs
 	// Can/must be embedded into any command flag structure.
-	// Automatically implements a check that looks for `--help`
-	// and returns, before even calling the user's provided execute function
-	// for a command.
+	// Automatically implements a check that looks for `-help`
+	// and returns before calling ExecuteFunc
 	HelpFlag bool
 
-	// TODO: docs
 	// Settings is a constraint that permits any reference type
 	// which also implements a [FlagBinder] and the help flag hook method.
 	Settings[settings any] interface {
 		*settings
 		FlagBinder
-		NeedsHelp() bool // TODO: better name? Break out into distinct interface?
+		HelpRequested() bool // TODO: Break out into distinct interface?
 	}
 
-	// TODO: name and docs
 	// the primary expected signature of a command's Execute function/method.
-	ExecuteFunc[settings Settings[sTyp],
-		sTyp any] func(context.Context, settings, ...string) error
+	ExecuteFunc[settings Settings[sTyp], sTyp any] func(
+		context.Context, settings, ...string) error
 
-	// TODO: name and docs
 	// typical signature of [ExecuteFunc] after it's unique types have been elided.
 	wrappedExecuteFunc func(context.Context, ...string) error
 
@@ -50,12 +46,12 @@ type (
 // TODO: lint; not (yet?) allowed by the spec
 // https://github.com/golang/go/issues/48522
 // func Helper[s struct{ HelpFlag }]() { }
-// We have to use dynamic dispatch instead. See use of [NeedsHelp] method.
+// We have to use dynamic dispatch instead. See use of [HelpRequested] method.
 
 // TODO: name + docs
 // This binds the HelpFlag type to a flagset.
 // Currently this is just a bool, but could in theory change later.
-// (E.g. instead of just "help" we can distinguish short `-h` / long `--help` etc. )
+// (E.g. instead of just "help" we can distinguish short `-h` / long `-help` etc. )
 // With a constructor like this caller's won't need to worry about change.
 func NewHelpFlag(fs *flag.FlagSet, b *HelpFlag) {
 	const usage = "Prints out this help text."
@@ -67,22 +63,23 @@ func NewHelpFlag(fs *flag.FlagSet, b *HelpFlag) {
 	// fs.BoolVar((*bool)(b), "h", false, usage)
 }
 
-func (b HelpFlag) NeedsHelp() bool { return bool(b) }
+func (b HelpFlag) HelpRequested() bool { return bool(b) }
 
+// Returns string representation of HelpFlag's boolean value
 func (b *HelpFlag) String() string { return strconv.FormatBool(bool(*b)) }
 
-func (b *HelpFlag) Set(s string) error {
-	v, err := strconv.ParseBool(s)
+// Parse boolean value from string representation and set to HelpFlag
+func (b *HelpFlag) Set(str string) error {
+	val, err := strconv.ParseBool(str)
 	if err != nil {
 		return err
 	}
-	*b = HelpFlag(v)
+	*b = HelpFlag(val)
 	return nil
 }
 
 func MakeCommand[sPtr Settings[sTyp], sTyp any](name, synopsis, usage string,
-	exec ExecuteFunc[sPtr, sTyp], options ...Option,
-) Command {
+	exec ExecuteFunc[sPtr, sTyp], options ...Option) Command {
 	settings, err := parseOptions(options...)
 	if err != nil {
 		panic(err)
@@ -92,14 +89,14 @@ func MakeCommand[sPtr Settings[sTyp], sTyp any](name, synopsis, usage string,
 		niladic     = settings.niladic
 		output      = settings.usageOutput
 
-		formatUsage = func(flagSet *flag.FlagSet) string {
+		formatHelpText = func(flagSet *flag.FlagSet) string {
 			return joinFlagAndSubcmds(name, usage, flagSet, subcommands...)
 		}
-		printUsage = func(flagSet *flag.FlagSet) {
+		printHelpText = func(flagSet *flag.FlagSet) {
 			if output == nil {
 				output = os.Stderr
 			}
-			output.WriteString(formatUsage(flagSet))
+			output.WriteString(formatHelpText(flagSet))
 		}
 	)
 
@@ -112,7 +109,7 @@ func MakeCommand[sPtr Settings[sTyp], sTyp any](name, synopsis, usage string,
 				flags   sPtr = new(sTyp)
 			)
 			flags.BindFlags(flagSet)
-			return formatUsage(flagSet)
+			return formatHelpText(flagSet)
 		},
 		subcommands: subcommands,
 		niladic:     niladic,
@@ -123,22 +120,22 @@ func MakeCommand[sPtr Settings[sTyp], sTyp any](name, synopsis, usage string,
 				return err
 			}
 
-			if flags.NeedsHelp() {
-				printUsage(flagSet)
+			if flags.HelpRequested() {
+				printHelpText(flagSet)
 				return ErrUsage
 			}
 
 			if len(arguments) == 0 {
 				if err := exec(ctx, flags); err != nil {
 					if errors.Is(err, ErrUsage) {
-						printUsage(flagSet)
+						printHelpText(flagSet)
 					}
 					return err
 				}
 				return nil
 			}
 			if niladic {
-				printUsage(flagSet)
+				printHelpText(flagSet)
 				return ErrUsage // Arguments provided but command takes none.
 			}
 
@@ -156,14 +153,14 @@ func MakeCommand[sPtr Settings[sTyp], sTyp any](name, synopsis, usage string,
 			if len(subcommands) == 0 {
 				if err := exec(ctx, flags, arguments...); err != nil {
 					if errors.Is(err, ErrUsage) {
-						printUsage(flagSet)
+						printHelpText(flagSet)
 					}
 					return err
 				}
 				return nil
 			}
 
-			printUsage(flagSet)
+			printHelpText(flagSet)
 			return ErrUsage // Subcommand not found.
 			// TODO: ^ we could repeat the input here, maybe we should.
 			// E.g. `prog.exe unexpected` would print something like
@@ -172,11 +169,12 @@ func MakeCommand[sPtr Settings[sTyp], sTyp any](name, synopsis, usage string,
 	}
 }
 
-func (base *command) Name() string           { return base.name }
-func (base *command) Synopsis() string       { return base.synopsis }
-func (base *command) Subcommands() []Command { return base.subcommands }
-func (base *command) Execute(ctx context.Context, args ...string) error {
-	return base.execute(ctx, args...)
+func (cmd *command) Name() string           { return cmd.name }
+func (cmd *command) Usage() string          { return cmd.usage() }
+func (cmd *command) Synopsis() string       { return cmd.synopsis }
+func (cmd *command) Subcommands() []Command { return cmd.subcommands }
+func (cmd *command) Execute(ctx context.Context, args ...string) error {
+	return cmd.execute(ctx, args...)
 }
 
 func printIfUsageErr(output io.StringWriter, err error, usage string) error {
@@ -204,19 +202,18 @@ func handleExecErr(cmd Command, err error) error {
 	return err
 }
 
-func (base *command) Usage() string {
-	return base.usage()
-}
-
+// Constructs -help text
 func joinFlagAndSubcmds(name, usage string,
 	fs *flag.FlagSet, subcmds ...Command) string {
 	var (
-		sb            = new(strings.Builder)
+		sb = new(strings.Builder)
+		// prints flagset help text into a string builder
 		buildFlagHelp = func(sb *strings.Builder, fs *flag.FlagSet) {
 			defer fs.SetOutput(fs.Output())
 			fs.SetOutput(sb)
 			fs.PrintDefaults()
 		}
+		// creates list of subcommands formatted as 'name - synopsis`
 		buildSubcmdHelp = func(sb *strings.Builder, subs ...Command) {
 			tw := tabwriter.NewWriter(sb, 0, 0, 0, ' ', 0)
 			for _, sub := range subs {
@@ -229,11 +226,14 @@ func joinFlagAndSubcmds(name, usage string,
 		}
 	)
 	sb.WriteString(
-		"Usage: " + name + " [FLAGS] SUBCOMMAND" +
-			"\n\nFlags:\n",
+		"Usage: " + name + " [FLAGS] SUBCOMMAND\n\n" +
+			usage + "\n\nFlags:\n",
 	)
 	buildFlagHelp(sb, fs)
-	sb.WriteString("\nSubcommands:\n")
-	buildSubcmdHelp(sb, subcmds...)
+	// bw TODO: this feels wrong, maybe subcmd stuff should be a new func
+	if len(subcmds) != 0 {
+		sb.WriteString("\nSubcommands:\n")
+		buildSubcmdHelp(sb, subcmds...)
+	}
 	return sb.String()
 }
