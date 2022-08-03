@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
+	"github.com/djdv/go-filesystem-utils/internal/commands"
 )
 
 type settings struct {
@@ -61,21 +62,8 @@ func execute(context.Context, *settings, ...string) error {
 }
 
 func makeSubcommands() []command.Command {
-	// TODO: placeholder lint.
-	noop := func(context.Context, *settings, ...string) error { return nil }
 	return []command.Command{
-		command.MakeCommand("subber",
-			"It's a subcommand.", "You can like call it.",
-			noop,
-		),
-		command.MakeCommand("another",
-			"Another subcommand.", "I can eat glass, it does not hurt me.",
-			noop,
-		),
-		command.MakeCommand("bottom_text",
-			"Lorem generator", "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. ",
-			noop,
-		),
+		commands.Daemon(),
 	}
 }
 
@@ -90,7 +78,11 @@ func exitWithErr(err error) {
 		code = misuse
 	} else {
 		code = failure
-		os.Stderr.WriteString(err.Error())
+		errStr := err.Error()
+		if !strings.HasSuffix(errStr, "\n") {
+			errStr += "\n"
+		}
+		os.Stderr.WriteString(errStr)
 	}
 	os.Exit(code)
 }
