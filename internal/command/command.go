@@ -123,14 +123,8 @@ func makeUsage[sPtr Settings[sTyp], sTyp any](cmd *command, usage string) func()
 	}
 }
 
+// formatHelpText constructs `-help` text
 func formatHelpText(name, usage string,
-	flagSet *flag.FlagSet, subcommands ...Command,
-) (string, error) {
-	return joinFlagAndSubcmds(name, usage, flagSet, subcommands...)
-}
-
-// joinFlagAndSubcmds constructs `-help` text
-func joinFlagAndSubcmds(name, usage string,
 	fs *flag.FlagSet, subcmds ...Command,
 ) (string, error) {
 	sb := new(strings.Builder)
