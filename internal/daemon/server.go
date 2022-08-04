@@ -20,9 +20,14 @@ import (
 )
 
 type (
+	fileAttacher interface {
+		p9.Attacher
+		p9.File
+	}
+
 	Server struct {
 		path   *atomic.Uint64
-		root   *files.Directory
+		root   fileAttacher
 		server *p9.Server
 
 		closer io.Closer
