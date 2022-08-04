@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/djdv/go-filesystem-utils/internal/files"
 	"github.com/hugelgupf/p9/p9"
@@ -26,20 +28,15 @@ type (
 	}
 
 	Server struct {
-		path   *atomic.Uint64
-		root   fileAttacher
-		server *p9.Server
+		path      *atomic.Uint64
+		root      fileAttacher
+		server    *p9.Server
+		closerKey []byte // TODO: This should be per socket not per server.
 
-		closer io.Closer
-		log    ulog.Logger
+		log ulog.Logger
 
 		uid p9.UID
 		gid p9.GID
-		// stopping  bool
-
-		// experimenting:
-		// activeConnsWg []*sync.WaitGroup
-		// shutdown <-chan struct{}
 	}
 
 	closer func() error
@@ -96,9 +93,10 @@ func (srv *Server) ListenAndServe(ctx context.Context, maddr multiaddr.Multiaddr
 func (srv *Server) Serve(ctx context.Context, listener manet.Listener) error {
 	// TODO: close on cancel?
 	var (
-		root   = srv.root
-		server = srv.server
-		path   = srv.path
+		root     = srv.root
+		server   = srv.server
+		path     = srv.path
+		closeKey = srv.closerKey
 	)
 	if root == nil {
 		const permissions = S_IRWXU |
@@ -118,8 +116,18 @@ func (srv *Server) Serve(ctx context.Context, listener manet.Listener) error {
 		srv.root = root
 		srv.server = server
 	}
+	if closeKey == nil {
+		var (
+			seed = rand.NewSource(time.Now().UnixNano())
+			rg   = rand.New(seed)
+		)
+		// Not intended to be secure. Just to prevent wide-open access.
+		// Maybe this will change later.
+		closeKey = make([]byte, 256)
+		rg.Read(closeKey) // TODO: Don't trust the docs, handle check(n)+err in case we swap interfaces.
+	}
 
-	closed, err := storeListener(listener, root, path, srv.uid, srv.gid)
+	closed, err := storeListener(listener, root, path, srv.uid, srv.gid, closeKey)
 	if err != nil {
 		return err
 	}
@@ -176,17 +184,17 @@ func (srv *Server) Serve(ctx context.Context, listener manet.Listener) error {
 // We need this to distinguish between an intentional close
 // and unexpected socket failure.
 func storeListener(listener manet.Listener, root p9.File,
-	path *atomic.Uint64, uid p9.UID, gid p9.GID,
+	path *atomic.Uint64, uid p9.UID, gid p9.GID, key []byte,
 ) (*atomic.Bool, error) {
 	listenersDir, err := getListenerDir(root)
 	if err != nil {
 		return nil, err
 	}
-	return storeListenerFile(listener, listenersDir, path, uid, gid)
+	return storeListenerFile(listener, listenersDir, path, uid, gid, key)
 }
 
 func storeListenerFile(listener manet.Listener, listenersDir p9.File,
-	path *atomic.Uint64, uid p9.UID, gid p9.GID,
+	path *atomic.Uint64, uid p9.UID, gid p9.GID, key []byte,
 ) (*atomic.Bool, error) {
 	var (
 		// TODO: [safety] The prefix trim should be safe by the spec
@@ -218,7 +226,7 @@ func storeListenerFile(listener manet.Listener, listenersDir p9.File,
 			return lErr
 		})
 	)
-	closerFile = makeListenerFile(closeFunc, listenerDir, path, uid, gid)
+	closerFile = makeListenerFile(closeFunc, listenerDir, path, uid, gid, key)
 	if err := listenerDir.Link(closerFile, file); err != nil {
 		return nil, err
 	}
@@ -226,13 +234,14 @@ func storeListenerFile(listener manet.Listener, listenersDir p9.File,
 }
 
 func makeListenerFile(closer io.Closer, parent p9.File,
-	path *atomic.Uint64, uid p9.UID, gid p9.GID,
+	path *atomic.Uint64, uid p9.UID, gid p9.GID, key []byte,
 ) p9.File {
 	closerFile, _ := files.NewCloser(closer,
 		files.WithParent[files.CloserOption](parent),
 		files.WithPath[files.CloserOption](path),
 		files.WithUID[files.CloserOption](uid),
 		files.WithGID[files.CloserOption](gid),
+		files.WithCloserKey(key),
 	)
 	return closerFile
 }

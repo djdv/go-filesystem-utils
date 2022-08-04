@@ -15,8 +15,9 @@ import (
 type daemonSettings struct {
 	serverMaddr multiaddr.Multiaddr
 	commonSettings
-	uid p9.UID
-	gid p9.GID
+	uid       p9.UID
+	gid       p9.GID
+	closerKey []byte
 }
 
 func (set *daemonSettings) BindFlags(fs *flag.FlagSet) {
@@ -26,6 +27,7 @@ func (set *daemonSettings) BindFlags(fs *flag.FlagSet) {
 	// TODO: default should be current user ids on unix, NoUID on NT.
 	uidVar(fs, &set.uid, "uid", p9.NoUID, "file owner's `uid`")
 	gidVar(fs, &set.gid, "gid", p9.NoGID, "file owner's `gid`")
+	closerKeyVar(fs, &set.closerKey, "listenerkey", nil, "`key` required to shutdown listener")
 }
 
 func Daemon() command.Command {
@@ -47,6 +49,10 @@ func daemonExecute(ctx context.Context, set *daemonSettings) error {
 		serverLog := log.New(os.Stdout, "⬆️ server - ", log.Lshortfile)
 		serverOpts = append(serverOpts, daemon.WithLogger[daemon.ServerOption](serverLog))
 	} // TODO: else { log = null logger}
+	if key := set.closerKey; key != nil {
+		set.closerKey = nil
+		serverOpts = append(serverOpts, daemon.WithCloserKey(key))
+	}
 
 	// TODO: signalctx + shutdown on cancel
 

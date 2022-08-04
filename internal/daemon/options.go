@@ -27,3 +27,6 @@ func WithLogger[OT SharedOptions](log ulog.Logger) (option OT) {
 
 func WithUID(uid p9.UID) ServerOption { return func(s *Server) error { s.uid = uid; return nil } }
 func WithGID(gid p9.GID) ServerOption { return func(s *Server) error { s.gid = gid; return nil } }
+func WithCloserKey(key []byte) ServerOption {
+	return func(s *Server) error { s.closerKey = key; return nil }
+}

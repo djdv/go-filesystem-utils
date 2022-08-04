@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"strconv"
@@ -106,4 +107,15 @@ func gidVar(fs *flag.FlagSet, gidPtr *p9.GID,
 	name string, defVal p9.GID, usage string,
 ) {
 	containerVar(fs, gidPtr, name, defVal, usage, parseID[p9.GID])
+}
+
+func closerKeyVar(fs *flag.FlagSet, keyPtr *[]byte,
+	name string, defVal []byte, usage string,
+) {
+	containerVar(fs, keyPtr, name, defVal, usage, func(key string) ([]byte, error) {
+		if *keyPtr != nil {
+			return nil, errors.New("key provided multiple times")
+		}
+		return []byte(key), nil
+	})
 }
