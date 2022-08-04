@@ -107,3 +107,11 @@ func WithRDev[OT SharedOptions](rdev p9.Dev) (option OT) {
 	}
 	return option
 }
+
+// TODO: dumb name, can we do better?
+func WithCloserKey(key []byte) CloserOption {
+	return func(cl *Closer) error {
+		cl.key = key
+		return nil
+	}
+}

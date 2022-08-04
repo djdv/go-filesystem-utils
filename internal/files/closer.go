@@ -33,10 +33,8 @@ type (
 )
 
 func NewCloser(closer io.Closer, options ...CloserOption) (*Closer, p9.QID) {
-	const stopKey = "desino" // TODO: dynamic - from option
 	sf := &Closer{
 		closer: closer,
-		key:    []byte(stopKey),
 		QID:    p9.QID{Type: p9.TypeRegular}, // TODO: this should be configurable; specifically for [p9.TypeTemporary].
 		Attr: p9.Attr{ // TODO: permissions from options (make sure to mask)
 			// Mode: p9.ModeRegular | p9.Write, // TODO: default should be for owner?
@@ -120,10 +118,14 @@ func (cl *Closer) Open(mode p9.OpenFlags) (p9.QID, uint32, error) {
 }
 
 func (cl *Closer) WriteAt(p []byte, offset int64) (int, error) {
+	// FIXME: We don't currently handle partial writes.
+	// Do some kind of buffer on open, delete on close, write-to here.
+	// If the buffer matchers after a write, arm the file.
 	if bytes.Equal(p, cl.key) {
 		cl.armed = true
+		return len(p), nil
 	}
-	return len(p), nil
+	return 0, perrors.EACCES // TODO: consider if this is an appropriate error
 }
 
 func (cl *Closer) UnlinkAt(name string, flags uint32) error {
