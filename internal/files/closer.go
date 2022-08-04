@@ -118,9 +118,30 @@ func (cl *Closer) WriteAt(p []byte, offset int64) (int, error) {
 	return len(p), nil
 }
 
+func (cl *Closer) UnlinkAt(name string, flags uint32) error {
+	// TODO: incomplete impl; for testing
+	if name != selfWName {
+		return perrors.ENOTDIR
+	}
+	return cl.Remove()
+}
+
+func (cl *Closer) Remove() error {
+	// TODO: incomplete impl; for testing
+	if parent := cl.parent; parent != nil {
+		return removeSelf(parent, cl)
+	}
+	return cl.Close()
+}
+
 func (cl *Closer) Close() error {
 	cl.opened = false
 	if cl.armed {
+		// TODO: I think preventing double close is our responsability
+		// not the closers.
+		// Not likely to be a (silent) problem right now,
+		// but needs to be fixed here. And documented in the constructor.
+		// (Tell caller not to worry about double close, we'll prevent it.)
 		return cl.closer.Close()
 	}
 	return nil
