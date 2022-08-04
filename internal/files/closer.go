@@ -21,6 +21,14 @@ type (
 		p9.Attr
 		templatefs.NoopFile
 		opened, armed bool
+		// TODO: We're going to want to keep track of [existent].
+		// For our case, fail all operations post removal.
+		// Remove(5):
+		// If a file has been opened as multiple fids, possibly on different connections,
+		// and one fid is used to remove the file, whether the other fids continue
+		// to provide access to the file is implementation-defined.
+		// ^ .L replaces this with UnlinkAt.
+		// Unless POSIX demands otherwise, use the same semantics for both.
 	}
 )
 
@@ -29,7 +37,7 @@ func NewCloser(closer io.Closer, options ...CloserOption) (*Closer, p9.QID) {
 	sf := &Closer{
 		closer: closer,
 		key:    []byte(stopKey),
-		QID:    p9.QID{Type: p9.TypeRegular},
+		QID:    p9.QID{Type: p9.TypeRegular}, // TODO: this should be configurable; specifically for [p9.TypeTemporary].
 		Attr: p9.Attr{ // TODO: permissions from options (make sure to mask)
 			// Mode: p9.ModeRegular | p9.Write, // TODO: default should be for owner?
 			Mode: p9.ModeRegular | p9.AllPermissions,
