@@ -1,6 +1,6 @@
 module github.com/djdv/go-filesystem-utils
 
-go 1.18
+go 1.19
 
 require (
 	github.com/hugelgupf/p9 v0.2.0
