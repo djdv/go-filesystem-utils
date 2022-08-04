@@ -118,10 +118,12 @@ func (ft *fileTable) to9Ents(offset uint64, count uint32) (p9.Dirents, error) {
 	return ents, nil
 }
 
-func (ft *fileTable) delete(filename string) {
+func (ft *fileTable) delete(filename string) bool {
 	ft.mu.Lock()
 	defer ft.mu.Unlock()
+	_, ok := ft._table[filename]
 	delete(ft._table, filename)
+	return ok
 }
 
 // TODO: we'll probably need to return QID
@@ -144,9 +146,6 @@ func NewDirectory(options ...DirectoryOption) *Directory {
 
 	return dir
 }
-
-// TODO: Remove this method; [45ecbfb2-430b-48e0-847d-a6f78eac7816]
-func (dir *Directory) Path() *atomic.Uint64 { return dir.path }
 
 func (dir *Directory) Attach() (p9.File, error) { return dir, nil }
 
@@ -225,9 +224,16 @@ func (dir *Directory) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, er
 
 func (dir *Directory) Link(file p9.File, name string) error {
 	// TODO: incomplete impl; for testing
-	// needs to check existence first, and other things.
 	if !dir.entries.exclusiveStore(name, file) {
 		return perrors.EEXIST // TODO: spec; evalue
+	}
+	return nil
+}
+
+func (dir *Directory) UnlinkAt(name string, flags uint32) error {
+	// TODO: incomplete impl; for testing
+	if !dir.entries.delete(name) {
+		return perrors.ENOENT // TODO: spec; evalue
 	}
 	return nil
 }
