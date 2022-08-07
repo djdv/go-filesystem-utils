@@ -38,7 +38,7 @@ func (ts *tSettings) BindFlags(fs *flag.FlagSet) {
 	fs.BoolVar(&ts.someField, "sf", false, "Some Flag")
 }
 
-func cExec(ctx context.Context, settings *tSettings, args ...string) error {
+func noop(ctx context.Context, settings *tSettings, args ...string) error {
 	return nil
 }
 
@@ -53,13 +53,13 @@ func cMakeCommand(t *testing.T) {
 		want      = command.ErrUsage
 		sw        = (io.Discard).(io.StringWriter)
 		ctx       = context.Background() // TODO cancel ctx
-		cmdNoOpts = command.MakeCommand(name, synopis, usage, cExec)
+		cmdNoOpts = command.MakeCommand(name, synopis, usage, noop)
 		options   = []command.Option{
 			command.WithoutArguments(true),
 			command.WithUsageOutput(sw),
 			command.WithSubcommands(cmdNoOpts),
 		}
-		cmdWithOpts = command.MakeCommand(name, synopis, usage, cExec, options...)
+		cmdWithOpts = command.MakeCommand(name, synopis, usage, noop, options...)
 	)
 
 	if err := cmdNoOpts.Execute(ctx); err != nil {
@@ -70,7 +70,7 @@ func cMakeCommand(t *testing.T) {
 		t.Error(err)
 	}
 
-	if err := cmdWithOpts.Execute(ctx, "some", "strings"); !errors.Is(
+	if err := cmdWithOpts.Execute(ctx, "unexpected", "arguments"); !errors.Is(
 		err, want) {
 		hlprGotWant(t, "Didn't fail when called with unexpected args", err, want)
 	}
