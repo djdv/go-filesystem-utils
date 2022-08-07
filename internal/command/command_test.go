@@ -80,13 +80,8 @@ func hfNeedsHelp(t *testing.T) {
 		want bool
 		flag command.HelpFlag
 	}{
-		{
-			want: false,
-			flag: command.HelpFlag(false),
-		}, {
-			want: true,
-			flag: command.HelpFlag(true),
-		},
+		{want: false, flag: command.HelpFlag(false)},
+		{want: true, flag: command.HelpFlag(true)},
 	} {
 		var (
 			want = test.want
@@ -107,13 +102,8 @@ func hfSet(t *testing.T) {
 		want bool
 		flag command.HelpFlag
 	}{
-		{
-			want: true,
-			flag: command.HelpFlag(true),
-		}, {
-			want: false,
-			flag: command.HelpFlag(false),
-		},
+		{want: true, flag: command.HelpFlag(true)},
+		{want: false, flag: command.HelpFlag(false)},
 	} {
 		var (
 			want = test.want
@@ -133,10 +123,20 @@ func hfSet(t *testing.T) {
 
 func hfString(t *testing.T) {
 	t.Parallel()
-	hf := new(command.HelpFlag)
-	const want = "false"
-	if got := hf.String(); got != want {
-		hlprGotWant(t, got, want, "String returned unexpected value:")
+	for _, test := range []struct {
+		want bool
+		flag command.HelpFlag
+	}{
+		{want: true, flag: command.HelpFlag(true)},
+		{want: false, flag: command.HelpFlag(false)},
+	} {
+		var (
+			want = test.want
+			hf   = test.flag
+		)
+		if got := hf.String(); got != fmt.Sprint(want) {
+			hlprGotWant(t, got, want, "String returned unexpected value:")
+		}
 	}
 }
 
