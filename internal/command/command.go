@@ -189,14 +189,14 @@ func wrapExecute[sPtr Settings[sTyp], sTyp any,
 		}
 		var (
 			helpRequested = flags.HelpRequested()
-			haveArgs      = len(arguments) != 0
+			haveArgs      = len(arguments) > 0
 			tooManyArgs   = haveArgs && cmd.niladic
 			usageError    = helpRequested || tooManyArgs
 		)
 		if !usageError {
 			var (
 				subcommands = cmd.subcommands
-				haveSubs    = len(subcommands) != 0
+				haveSubs    = len(subcommands) > 0
 			)
 			if haveSubs && haveArgs {
 				subname := arguments[0]
