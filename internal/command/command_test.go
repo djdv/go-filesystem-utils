@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"testing"
 
@@ -38,11 +39,8 @@ func (ts *tSettings) BindFlags(fs *flag.FlagSet) {
 	fs.BoolVar(&ts.someField, "sf", false, "Some Flag")
 }
 
-func noop(ctx context.Context, settings *tSettings, args ...string) error {
-	return nil
-}
-
 func cMakeCommand(t *testing.T) {
+	noop := func(ctx context.Context, settings *tSettings, args ...string) error { return nil }
 	t.Parallel()
 	const (
 		name    = "Name"
@@ -72,25 +70,65 @@ func cMakeCommand(t *testing.T) {
 
 	if err := cmdWithOpts.Execute(ctx, "unexpected", "arguments"); !errors.Is(
 		err, want) {
-		hlprGotWant(t, "Didn't fail when called with unexpected args", err, want)
+		hlprGotWant(t, err, want, "Didn't fail when called with unexpected args")
 	}
 }
 
 func hfNeedsHelp(t *testing.T) {
 	t.Parallel()
-	hf := new(command.HelpFlag)
-	const want = false
-	hlprHelpRequested(t, hf, want)
+	for _, test := range []struct {
+		want bool
+		flag command.HelpFlag
+	}{
+		{
+			want: false,
+			flag: command.HelpFlag(false),
+		}, {
+			want: true,
+			flag: command.HelpFlag(true),
+		},
+	} {
+		var (
+			want = test.want
+			hf   = test.flag
+		)
+		t.Run(fmt.Sprint(want), func(t *testing.T) {
+			t.Parallel()
+			if got := hf.HelpRequested(); got != want {
+				hlprGotWant(t, got, want, "HelpFlag returned unexpected value:")
+			}
+		})
+	}
 }
 
 func hfSet(t *testing.T) {
 	t.Parallel()
-	hf := new(command.HelpFlag)
-	const want = true
-	if err := hf.Set("true"); err != nil {
-		t.Fatal(err)
+	for _, test := range []struct {
+		want bool
+		flag command.HelpFlag
+	}{
+		{
+			want: true,
+			flag: command.HelpFlag(true),
+		}, {
+			want: false,
+			flag: command.HelpFlag(false),
+		},
+	} {
+		var (
+			want = test.want
+			hf   = test.flag
+		)
+		t.Run(fmt.Sprint(want), func(t *testing.T) {
+			t.Parallel()
+			if err := hf.Set(fmt.Sprint(want)); err != nil {
+				t.Fatal(err)
+			}
+			if got := hf.HelpRequested(); got != want {
+				hlprGotWant(t, got, want, "HelpFlag returned unexpected value:")
+			}
+		})
 	}
-	hlprHelpRequested(t, hf, want)
 }
 
 func hfString(t *testing.T) {
@@ -98,18 +136,11 @@ func hfString(t *testing.T) {
 	hf := new(command.HelpFlag)
 	const want = "false"
 	if got := hf.String(); got != want {
-		hlprGotWant(t, "String returned unexpected value:", got, want)
+		hlprGotWant(t, got, want, "String returned unexpected value:")
 	}
 }
 
-func hlprHelpRequested(t *testing.T, hf *command.HelpFlag, want bool) {
-	t.Helper()
-	if got := hf.HelpRequested(); got != want {
-		hlprGotWant(t, "HelpFlag returned unexpected value:", got, want)
-	}
-}
-
-func hlprGotWant(t *testing.T, explain string, got, want any) {
+func hlprGotWant(t *testing.T, got, want any, explain string) {
 	t.Helper()
 	t.Errorf(explain+
 		"\n\tgot: %v"+
