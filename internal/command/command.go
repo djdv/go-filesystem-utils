@@ -4,230 +4,177 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
-	"io"
 	"os"
-	"strconv"
 	"strings"
-	"text/tabwriter"
 )
 
 // TODO: name and docs
 type (
-	// Can/must be embedded into any command flag structure.
-	// Automatically implements a check that looks for `-help`
-	// and returns before calling ExecuteFunc
-	HelpFlag bool
-
 	// Settings is a constraint that permits any reference type
 	// which also implements a [FlagBinder] and the help flag hook method.
-	Settings[settings any] interface {
-		*settings
+	Settings[T any] interface {
+		*T
+		HelpFlag
 		FlagBinder
-		HelpRequested() bool // TODO: Break out into distinct interface?
 	}
 
-	// the primary expected signature of a command's Execute function/method.
-	ExecuteFunc[settings Settings[sTyp], sTyp any] func(
-		context.Context, settings, ...string) error
+	// TODO: docs
+	ExecuteFunc[settings Settings[T], T any] interface {
+		func(context.Context, settings) error
+	}
 
-	// typical signature of [ExecuteFunc] after it's unique types have been elided.
-	wrappedExecuteFunc func(context.Context, ...string) error
+	// TODO: docs
+	// The primary expected signature of a command's Execute function/method.
+	ExecuteFuncArgs[settings Settings[T], T any] interface {
+		func(context.Context, settings, ...string) error
+	}
+
+	CommandFunc[settings Settings[T], T any] interface {
+		ExecuteFunc[settings, T] | ExecuteFuncArgs[settings, T]
+	}
+
+	// TODO: docs
+	// interface level signature of [CommandFunc].
+	commandFunc func(context.Context, ...string) error
+	usageFunc   func(StringWriter, *flag.FlagSet) error
 
 	command struct {
 		name, synopsis string
-		usage          func() string
-		execute        wrappedExecuteFunc
-		subcommands    []Command
-		niladic        bool
+		// usage          func(StringWriter, *flag.FlagSet, settings) error
+		usage       usageFunc
+		execute     commandFunc
+		subcommands []Command
 	}
 )
 
-// TODO: lint; not (yet?) allowed by the spec
-// https://github.com/golang/go/issues/48522
-// func Helper[s struct{ HelpFlag }]() { }
-// We have to use dynamic dispatch instead. See use of [HelpRequested] method.
-
-// TODO: name + docs
-// This binds the HelpFlag type to a flagset.
-// Currently this is just a bool, but could in theory change later.
-// (E.g. instead of just "help" we can distinguish short `-h` / long `-help` etc. )
-// With a constructor like this caller's won't need to worry about change.
-func NewHelpFlag(fs *flag.FlagSet, b *HelpFlag) {
-	const usage = "Prints out this help text."
-	fs.BoolVar((*bool)(b), "help", false, usage)
-	// TODO: consider aliasing this.
-	// With either different behaviour "short help" convention.
-	// or conflated into 1 flag, but this requires special aliasing rules when printing.
-	// (Otherwise it shows up twice since it's 2 distinct flags, aliasing 1 value.)
-	// fs.BoolVar((*bool)(b), "h", false, usage)
-}
-
-func (b HelpFlag) HelpRequested() bool { return bool(b) }
-
-// Returns string representation of HelpFlag's boolean value
-func (b *HelpFlag) String() string { return strconv.FormatBool(bool(*b)) }
-
-// Parse boolean value from string representation and set to HelpFlag
-func (b *HelpFlag) Set(str string) error {
-	val, err := strconv.ParseBool(str)
-	if err != nil {
-		return err
-	}
-	*b = HelpFlag(val)
-	return nil
-}
-
-func MakeCommand[sPtr Settings[sTyp], sTyp any](name, synopsis, usage string,
-	exec ExecuteFunc[sPtr, sTyp], options ...Option,
+func MakeCommand[settings Settings[T],
+	T any,
+	execFunc CommandFunc[settings, T],
+](
+	name, synopsis, usage string,
+	exec execFunc, options ...Option,
 ) Command {
-	settings, err := parseOptions(options...)
+	constructorSettings, err := parseOptions(options...)
 	if err != nil {
 		panic(err)
 	}
 	cmd := &command{
 		name:        name,
 		synopsis:    synopsis,
-		subcommands: settings.subcmds,
-		niladic:     settings.niladic,
+		subcommands: constructorSettings.subcommands,
 	}
-	cmd.usage = makeUsage[sPtr](cmd, usage)
-	cmd.execute = wrapExecute(cmd, settings.usageOutput, usage, exec)
+	cmd.usage = wrapUsage[settings](cmd, usage)
+	cmd.execute = wrapExecute[settings](constructorSettings.usageOutput, cmd, exec)
 	return cmd
 }
 
-func (cmd *command) Name() string           { return cmd.name }
-func (cmd *command) Usage() string          { return cmd.usage() }
+func (cmd *command) Name() string { return cmd.name }
+func (cmd *command) Usage() string {
+	output := new(strings.Builder)
+	if err := cmd.usage(output, nil); err != nil {
+		panic(err)
+	}
+	return output.String()
+}
 func (cmd *command) Synopsis() string       { return cmd.synopsis }
 func (cmd *command) Subcommands() []Command { return cmd.subcommands }
 func (cmd *command) Execute(ctx context.Context, args ...string) error {
 	return cmd.execute(ctx, args...)
 }
 
-// We delay generating the result string,
-// since [Command.Usage] is not likely to be called in the common case.
-func makeUsage[sPtr Settings[sTyp], sTyp any](cmd *command, usage string) func() string {
-	return func() string {
-		var (
-			name         = cmd.name
-			flagSet      = flag.NewFlagSet(name, flag.ContinueOnError)
-			flags   sPtr = new(sTyp)
-		)
-		flags.BindFlags(flagSet)
-		helpText, err := formatHelpText(name, usage, flagSet, cmd.subcommands...)
-		if err != nil {
-			// Unlikely (but not impossible) I/O error.
-			panic(err)
-		}
-		return helpText
-	}
-}
-
-// formatHelpText constructs `-help` text
-func formatHelpText(name, usage string,
-	fs *flag.FlagSet, subcmds ...Command,
-) (string, error) {
-	sb := new(strings.Builder)
-	sb.WriteString(
-		"Usage: " + name + " [FLAGS] SUBCOMMAND\n\n" +
-			usage + "\n\nFlags:\n",
+func wrapUsage[settings Settings[T], T any](cmd *command,
+	usage string,
+) func(StringWriter, *flag.FlagSet) error {
+	var (
+		name        = cmd.name
+		subcommands = cmd.subcommands
 	)
-	buildFlagHelp(sb, fs)
-	if len(subcmds) != 0 {
-		sb.WriteString("\nSubcommands:\n")
-		if err := buildSubcmdHelp(sb, subcmds...); err != nil {
-			return "", err
+	return func(output StringWriter, flagSet *flag.FlagSet) error {
+		if output == nil {
+			output = os.Stderr
 		}
-	}
-	return sb.String(), nil
-}
-
-// buildFlagHelp prints flagset help text into a string builder.
-func buildFlagHelp(sb *strings.Builder, fs *flag.FlagSet) {
-	defer fs.SetOutput(fs.Output())
-	fs.SetOutput(sb)
-	fs.PrintDefaults()
-}
-
-// buildSubcmdHelp creates list of subcommands formatted as 'name - synopsis`.
-func buildSubcmdHelp(sb *strings.Builder, subs ...Command) error {
-	tw := tabwriter.NewWriter(sb, 0, 0, 0, ' ', 0)
-	for _, sub := range subs {
-		if _, err := fmt.Fprintf(tw, "  %s\t - %s\n",
-			sub.Name(), sub.Synopsis()); err != nil {
-			return err
+		if flagSet == nil {
+			flagSet = flag.NewFlagSet(name, flag.ContinueOnError)
+			(settings)(new(T)).BindFlags(flagSet)
 		}
+		return printHelpText(output, name, usage, flagSet, subcommands...)
 	}
-	if err := tw.Flush(); err != nil {
-		return err
-	}
-	return nil
 }
 
-func printHelpText(output io.StringWriter, cmd *command, usage string, flagSet *flag.FlagSet) error {
-	if output == nil {
-		output = os.Stderr
-	}
-	helpText, err := formatHelpText(cmd.name, usage, flagSet, cmd.subcommands...)
-	if err != nil {
-		return err
-	}
-	if _, err := output.WriteString(helpText); err != nil {
-		return err
-	}
-	return nil
-}
-
-func wrapExecute[sPtr Settings[sTyp], sTyp any,
-](cmd *command, usageOutput io.StringWriter, usage string, exec ExecuteFunc[sPtr, sTyp],
+func wrapExecute[settings Settings[T], T any,
+	execFunc CommandFunc[settings, T],
+](usageOutput StringWriter, cmd *command, execFn execFunc,
 ) func(context.Context, ...string) error {
 	return func(ctx context.Context, args ...string) error {
-		flagSet := flag.NewFlagSet(cmd.name, flag.ContinueOnError)
-		flags, arguments, err := parseArguments[sPtr](flagSet, args...)
+		flagSet, set, err := parseArgs[settings](cmd, usageOutput, args...)
 		if err != nil {
 			return err
 		}
 		var (
-			helpRequested = flags.HelpRequested()
-			haveArgs      = len(arguments) > 0
-			tooManyArgs   = haveArgs && cmd.niladic
-			usageError    = helpRequested || tooManyArgs
+			subcommands = cmd.subcommands
+			haveSubs    = len(subcommands) > 0
+			arguments   = flagSet.Args()
+			haveArgs    = len(arguments) > 0
 		)
-		if !usageError {
-			var (
-				subcommands = cmd.subcommands
-				haveSubs    = len(subcommands) > 0
-			)
-			if haveSubs && haveArgs {
-				subname := arguments[0]
-				for _, subcmd := range subcommands {
-					if subcmd.Name() == subname {
-						return subcmd.Execute(ctx, arguments[1:]...)
-					}
-				}
-			}
-			if err := exec(ctx, flags, arguments...); err == nil {
-				return nil
-			}
-			if !errors.Is(err, ErrUsage) {
+		if haveSubs && haveArgs {
+			if ran, err := execSub(ctx, subcommands, arguments); ran {
 				return err
 			}
-			// fallthrough to print help
 		}
-		if err := printHelpText(usageOutput, cmd, usage, flagSet); err != nil {
-			return err
+
+		var execErr error
+		switch execFn := any(execFn).(type) {
+		case func(context.Context, settings) error:
+			if haveArgs {
+				return ErrUsage
+			}
+			execErr = execFn(ctx, set)
+		case func(context.Context, settings, ...string) error:
+			execErr = execFn(ctx, set, arguments...)
 		}
-		return ErrUsage
+		if errors.Is(execErr, ErrUsage) {
+			if err := cmd.usage(usageOutput, flagSet); err != nil {
+				return err
+			}
+		}
+		return execErr
 	}
 }
 
-func parseArguments[sPtr Settings[sTyp], sTyp any](fs *flag.FlagSet,
-	args ...string,
-) (sPtr, []string, error) {
-	var flags sPtr = new(sTyp)
-	flags.BindFlags(fs)
-	if err := fs.Parse(args); err != nil {
+func parseArgs[settings Settings[T], T any](cmd *command, output StringWriter, args ...string,
+) (*flag.FlagSet, settings, error) {
+	flagSet, set, err := parseFlags[settings](cmd.name, args...)
+	if err != nil {
 		return nil, nil, err
 	}
-	return flags, fs.Args(), nil
+	if set.HelpRequested() {
+		if err := cmd.usage(nil, flagSet); err != nil {
+			return nil, nil, err
+		}
+		return nil, nil, ErrUsage
+	}
+	return flagSet, set, nil
+}
+
+func parseFlags[settings Settings[T], T any](name string, args ...string,
+) (*flag.FlagSet, settings, error) {
+	var (
+		flagSet          = flag.NewFlagSet(name, flag.ContinueOnError)
+		set     settings = new(T)
+	)
+	set.BindFlags(flagSet)
+	if err := flagSet.Parse(args); err != nil {
+		return nil, nil, err
+	}
+	return flagSet, set, nil
+}
+
+func execSub(ctx context.Context, subcommands []Command, arguments []string) (bool, error) {
+	subname := arguments[0]
+	for _, subcmd := range subcommands {
+		if subcmd.Name() == subname {
+			return true, subcmd.Execute(ctx, arguments[1:]...)
+		}
+	}
+	return false, nil
 }
