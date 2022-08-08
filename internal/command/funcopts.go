@@ -1,20 +1,17 @@
 package command
 
-import "io"
-
 type (
 	Option func(*commandSettings) error
 
 	commandSettings struct {
-		usageOutput io.StringWriter
-		subcmds     []Command
-		niladic     bool
+		usageOutput StringWriter
+		subcommands []Command
 	}
 )
 
 func WithSubcommands(subcommands ...Command) Option {
 	return func(settings *commandSettings) error {
-		settings.subcmds = subcommands
+		settings.subcommands = subcommands
 		return nil
 	}
 }
@@ -23,16 +20,9 @@ func WithSubcommands(subcommands ...Command) Option {
 // when args are not what execute() expects for the command.
 // Note that we're going to resolve nil to stderr
 // so make the user aware of this.
-func WithUsageOutput(output io.StringWriter) Option {
+func WithUsageOutput(output StringWriter) Option {
 	return func(settings *commandSettings) error {
 		settings.usageOutput = output
-		return nil
-	}
-}
-
-func WithoutArguments(niladic bool) Option {
-	return func(settings *commandSettings) error {
-		settings.niladic = niladic
 		return nil
 	}
 }

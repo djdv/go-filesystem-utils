@@ -13,12 +13,12 @@ import (
 )
 
 type settings struct {
-	command.HelpFlag
+	command.HelpArg
 	somethingDifferent int
 }
 
 func (set *settings) BindFlags(fs *flag.FlagSet) {
-	command.NewHelpFlag(fs, &set.HelpFlag)
+	set.HelpArg.BindFlags(fs)
 }
 
 func main() {
@@ -31,7 +31,7 @@ func main() {
 		cmdName     = commandName()
 		cmdArgs     = os.Args[1:]
 		subcommands = makeSubcommands()
-		cmd         = command.MakeCommand(
+		cmd         = command.MakeCommand[*settings](
 			cmdName, synopsis, usage,
 			execute,
 			command.WithSubcommands(subcommands...),
@@ -64,15 +64,15 @@ func makeSubcommands() []command.Command {
 	// TODO: placeholder lint.
 	noop := func(context.Context, *settings, ...string) error { return nil }
 	return []command.Command{
-		command.MakeCommand("subber",
+		command.MakeCommand[*settings]("subber",
 			"It's a subcommand.", "You can like call it.",
 			noop,
 		),
-		command.MakeCommand("another",
+		command.MakeCommand[*settings]("another",
 			"Another subcommand.", "I can eat glass, it does not hurt me.",
 			noop,
 		),
-		command.MakeCommand("bottom_text",
+		command.MakeCommand[*settings]("bottom_text",
 			"Lorem generator", "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. ",
 			noop,
 		),
