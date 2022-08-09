@@ -106,9 +106,19 @@ func wrapExecute[settings Settings[T], T any,
 ](usageOutput StringWriter, cmd *command, execFn execFunc,
 ) func(context.Context, ...string) error {
 	return func(ctx context.Context, args ...string) error {
-		flagSet, set, err := parseArgs[settings](cmd, usageOutput, args...)
+		var (
+			flagSet, set, err = parseArgs[settings](cmd, args...)
+			maybePrintUsage   = func(err error) error {
+				if errors.Is(err, ErrUsage) {
+					if printErr := cmd.usage(usageOutput, flagSet); printErr != nil {
+						return printErr
+					}
+				}
+				return err
+			}
+		)
 		if err != nil {
-			return err
+			return maybePrintUsage(err)
 		}
 		var (
 			subcommands = cmd.subcommands
@@ -121,36 +131,28 @@ func wrapExecute[settings Settings[T], T any,
 				return err
 			}
 		}
-
 		var execErr error
 		switch execFn := any(execFn).(type) {
 		case func(context.Context, settings) error:
 			if haveArgs {
-				return ErrUsage
+				execErr = ErrUsage
+			} else {
+				execErr = execFn(ctx, set)
 			}
-			execErr = execFn(ctx, set)
 		case func(context.Context, settings, ...string) error:
 			execErr = execFn(ctx, set, arguments...)
 		}
-		if errors.Is(execErr, ErrUsage) {
-			if err := cmd.usage(usageOutput, flagSet); err != nil {
-				return err
-			}
-		}
-		return execErr
+		return maybePrintUsage(execErr)
 	}
 }
 
-func parseArgs[settings Settings[T], T any](cmd *command, output StringWriter, args ...string,
+func parseArgs[settings Settings[T], T any](cmd *command, args ...string,
 ) (*flag.FlagSet, settings, error) {
 	flagSet, set, err := parseFlags[settings](cmd.name, args...)
 	if err != nil {
 		return nil, nil, err
 	}
 	if set.HelpRequested() {
-		if err := cmd.usage(nil, flagSet); err != nil {
-			return nil, nil, err
-		}
 		return nil, nil, ErrUsage
 	}
 	return flagSet, set, nil
