@@ -13,219 +13,217 @@ import (
 
 func TestCommand(t *testing.T) {
 	t.Parallel()
-	t.Run("HelpFlag", tHelpFlag)
-	t.Run("Command", tCommand)
+	t.Run("HelpFlag", HelpFlag)
+	t.Run("Command", Command)
 }
 
-func tHelpFlag(t *testing.T) {
+func HelpFlag(t *testing.T) {
 	t.Parallel()
-	t.Run("NeedsHelp", hfNeedsHelp)
-	t.Run("Set", hfSet)
-	t.Run("String", hfString)
+	t.Run("HelpArg", HelpArg)
 }
 
-func tCommand(t *testing.T) {
-	t.Parallel()
-	t.Run("MakeCommand", cMakeCommand)
-	t.Run("Usage", cmdUsage)
-	t.Run("Exec", cmdExecute)
-}
-
-type tSettings struct {
-	command.HelpArg
-	someField bool
-}
-
-func (ts *tSettings) BindFlags(fs *flag.FlagSet) {
-	ts.HelpArg.BindFlags(fs)
-	fs.BoolVar(&ts.someField, "sf", false, "Some Flag")
-}
-
-func noopArgs(ctx context.Context, settings *tSettings, args ...string) error {
-	return nil
-}
-
-func noopNoArgs(ctx context.Context, settings *tSettings) error {
-	return nil
-}
-
-func cMakeCommand(t *testing.T) {
-	t.Parallel()
-	const (
-		name    = "Name"
-		synopis = "Synopis"
-		usage   = "Usage"
-	)
-
-	var (
-		wantErr      = command.ErrUsage
-		stringWriter = (io.Discard).(command.StringWriter)
-		ctx          = context.Background() // TODO cancel ctx
-		cmdNoOpts    = command.MakeCommand[*tSettings](name, synopis, usage, noopArgs)
-
-		options = []command.Option{
-			command.WithUsageOutput(stringWriter),
-			command.WithSubcommands(cmdNoOpts),
-		}
-		cmdWithOpts = command.MakeCommand[*tSettings](name, synopis, usage, noopNoArgs, options...)
-	)
-
-	if err := cmdNoOpts.Execute(ctx); err != nil {
-		t.Error(err)
-	}
-
-	if err := cmdWithOpts.Execute(ctx); err != nil {
-		t.Error(err)
-	}
-
-	if err := cmdWithOpts.Execute(ctx, "unexpected", "arguments"); !errors.Is(
-		err, wantErr) {
-		hlprGotWant(t, err, wantErr, "Didn't fail when called with unexpected args")
-	}
-}
-
-func cmdUsage(t *testing.T) {
-	t.Parallel()
-	const (
-		synopis = "Synopis"
-		usage   = "Usage"
-	)
-	// TODO: output to buffer, translate test into an Example.
-	// Compare via [Output:] comment.
-	//
-	// For now, if we don't panic, test will trace / cover.
-
-	for _, test := range []struct {
-		name    string
-		exec    any
-		options []command.Option
-	}{
-		{
-			"nil",
-			noopNoArgs,
-			nil,
-		},
-		{
-			"args",
-			noopArgs,
-			nil,
-		},
-		{
-			"subs",
-			noopArgs,
-			[]command.Option{
-				command.WithSubcommands(
-					command.MakeCommand[*tSettings]("sub", synopis, usage, noopNoArgs),
-				),
-			},
-		},
-	} {
-		var (
-			name    = test.name
-			exec    = test.exec
-			options = test.options
-		)
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			switch execFn := exec.(type) {
-			case func(context.Context, *tSettings, ...string) error:
-				command.MakeCommand[*tSettings](name, synopis, usage, execFn, options...).Usage()
-			case func(context.Context, *tSettings) error:
-				command.MakeCommand[*tSettings](name, synopis, usage, execFn, options...).Usage()
-			default:
-				// TODO: real message
-				t.Errorf("bad case: %#v", execFn)
-			}
-		})
-	}
-}
-
-func cmdExecute(t *testing.T) {
-	t.Skip("NIY")
-}
-
-func hfNeedsHelp(t *testing.T) {
-	t.Parallel()
-	for _, test := range []struct {
-		want bool
-		flag command.HelpArg
-	}{
-		{
-			want: false,
-			flag: command.HelpArg(false),
-		}, {
-			want: true,
-			flag: command.HelpArg(true),
-		},
-	} {
-		var (
-			want = test.want
-			hf   = test.flag
-		)
-		t.Run(fmt.Sprint(want), func(t *testing.T) {
-			t.Parallel()
-			if got := hf.HelpRequested(); got != want {
-				hlprGotWant(t, got, want, "HelpFlag returned unexpected value:")
-			}
-		})
-	}
-}
-
-func hfSet(t *testing.T) {
+func HelpArg(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		want bool
 	}{
-		{
-			want: true,
-		}, {
-			want: false,
-		},
+		{true},
+		{false},
 	} {
 		want := test.want
 		t.Run(fmt.Sprint(want), func(t *testing.T) {
 			t.Parallel()
-			hf := new(command.HelpArg)
-			if err := hf.Set(fmt.Sprint(want)); err != nil {
+			var (
+				helpArg    = new(command.HelpArg)
+				stringWant = fmt.Sprint(want)
+			)
+			if err := helpArg.Set(stringWant); err != nil {
 				t.Fatal(err)
 			}
-			if got := hf.HelpRequested(); got != want {
-				hlprGotWant(t, got, want, "HelpFlag returned unexpected value:")
+			if got := helpArg.HelpRequested(); got != want {
+				t.Errorf("helpflag mismatch"+
+					"\n\tgot: %t"+
+					"\n\twant: %t",
+					got, want,
+				)
+			}
+			if got := helpArg.String(); got != stringWant {
+				t.Errorf("helpflag format mismatch"+
+					"\n\tgot: %s"+
+					"\n\twant: %s",
+					got, stringWant,
+				)
 			}
 		})
 	}
 }
 
-func hfString(t *testing.T) {
+func Command(t *testing.T) {
 	t.Parallel()
-	for _, test := range []struct {
-		want bool
-		flag command.HelpArg
-	}{
-		{
-			want: true,
-			flag: command.HelpArg(true),
-		},
-		{
-			want: false,
-			flag: command.HelpArg(false),
-		},
-	} {
-		var (
-			want = test.want
-			hf   = test.flag
-		)
-		if got := hf.String(); got != fmt.Sprint(want) {
-			hlprGotWant(t, got, want, "String returned unexpected value:")
-		}
+	t.Run("MakeCommand", cmdMake)
+	t.Run("Execute", cmdExecute)
+}
+
+func cmdMake(t *testing.T) {
+	cmd := command.MakeCommand[*settings](
+		noopName, noopSynopsis, noopUsage, noop,
+		command.WithSubcommands(testCommands[noopName]),
+		command.WithUsageOutput(io.Discard.(command.StringWriter)),
+	)
+	if usage := cmd.Usage(); usage == "" {
+		t.Errorf("usage string for command \"%s\", is empty", noopName)
 	}
 }
 
-func hlprGotWant(t *testing.T, got, want any, explain string) {
-	t.Helper()
-	t.Errorf(explain+
-		"\n\tgot: %v"+
-		"\n\twant: %v",
-		got, want,
+func cmdExecute(t *testing.T) {
+	t.Parallel()
+	t.Run("valid", exeValid)
+	t.Run("invalid", exeInvalid)
+}
+
+type settings struct {
+	command.HelpArg
+	someField bool
+}
+
+func (ts *settings) BindFlags(fs *flag.FlagSet) {
+	ts.HelpArg.BindFlags(fs)
+	fs.BoolVar(&ts.someField, "sf", false, "Some Flag")
+}
+
+const (
+	synopisSuffix = " Synopis"
+	usageSuffix   = " Usage"
+
+	noopName     = "noop"
+	noopSynopsis = noopName + synopisSuffix
+	noopUsage    = noopName + usageSuffix
+
+	noopArgsName     = "noopArgs"
+	noopArgsSynopsis = noopArgsName + synopisSuffix
+	noopArgsUsage    = noopArgsName + usageSuffix
+)
+
+type cmdMap map[string]command.Command
+
+var testCommands = cmdMap{
+	noopName: command.MakeCommand[*settings](
+		noopName, noopSynopsis, noopUsage, noop,
+	),
+	noopArgsName: command.MakeCommand[*settings](
+		noopArgsName, noopArgsSynopsis, noopArgsUsage, noopArgs,
+	),
+}
+
+func copyCmds(cmds cmdMap) cmdMap {
+	clone := make(cmdMap, len(cmds))
+	for key, cmd := range testCommands {
+		clone[key] = cmd
+	}
+	return clone
+}
+
+func noop(ctx context.Context, set *settings) error {
+	return nil
+}
+
+func noopArgs(ctx context.Context, set *settings, args ...string) error {
+	return nil
+}
+
+func exeValid(t *testing.T) {
+	t.Parallel()
+	const (
+		subsName     = "subcommands"
+		subsSynopsis = subsName + synopisSuffix
+		subsUsage    = subsName + usageSuffix
+
+		subName     = "subcommand"
+		subSynopsis = subName + synopisSuffix
+		subUsage    = subName + usageSuffix
 	)
+
+	cmds := copyCmds(testCommands)
+	cmds[subsName] = command.MakeCommand[*settings](
+		subsName, subsSynopsis, subsUsage, noopArgs,
+		command.WithSubcommands(
+			command.MakeCommand[*settings](
+				subName, subSynopsis, subUsage, noop,
+			),
+		),
+	)
+	for _, test := range []struct {
+		name string
+		args []string
+	}{
+		{
+			noopName,
+			nil,
+		},
+		{
+			noopArgsName,
+			[]string{"arg1", "arg2"},
+		},
+		{
+			subsName,
+			[]string{subName},
+		},
+	} {
+		var (
+			name = test.name
+			args = test.args
+		)
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if err := cmds[name].Execute(ctx, args...); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+}
+
+func exeInvalid(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name     string
+		args     []string
+		expected error
+		reason   string
+	}{
+		{
+			noopName,
+			[]string{"arg1", "arg2"},
+			command.ErrUsage,
+			"niladic function called with args",
+		},
+		{
+			noopName,
+			[]string{"-help"},
+			command.ErrUsage,
+			"function called with help flag",
+		},
+	} {
+		var (
+			name     = test.name
+			args     = test.args
+			expected = test.expected
+			reason   = test.reason
+		)
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			err := testCommands[name].Execute(ctx, args...)
+			if !errors.Is(err, expected) {
+				t.Errorf("did not receive expected error"+
+					"\n\tgot: %s"+
+					"\n\twant: %s"+
+					"\n\twhy: %s",
+					err, expected, reason,
+				)
+			}
+		})
+	}
 }

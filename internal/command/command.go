@@ -40,10 +40,9 @@ type (
 
 	command struct {
 		name, synopsis string
-		// usage          func(StringWriter, *flag.FlagSet, settings) error
-		usage       usageFunc
-		execute     commandFunc
-		subcommands []Command
+		usage          usageFunc
+		execute        commandFunc
+		subcommands    []Command
 	}
 )
 
