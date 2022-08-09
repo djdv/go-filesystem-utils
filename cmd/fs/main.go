@@ -61,22 +61,7 @@ func execute(context.Context, *settings, ...string) error {
 }
 
 func makeSubcommands() []command.Command {
-	// TODO: placeholder lint.
-	noop := func(context.Context, *settings, ...string) error { return nil }
-	return []command.Command{
-		command.MakeCommand[*settings]("subber",
-			"It's a subcommand.", "You can like call it.",
-			noop,
-		),
-		command.MakeCommand[*settings]("another",
-			"Another subcommand.", "I can eat glass, it does not hurt me.",
-			noop,
-		),
-		command.MakeCommand[*settings]("bottom_text",
-			"Lorem generator", "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. ",
-			noop,
-		),
-	}
+	return nil
 }
 
 func exitWithErr(err error) {
