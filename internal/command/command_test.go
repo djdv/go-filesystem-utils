@@ -68,7 +68,6 @@ func cmdMake(t *testing.T) {
 	cmd := command.MakeCommand[*settings](
 		noopName, noopSynopsis, noopUsage, noop,
 		command.WithSubcommands(testCommands[noopName]),
-		command.WithUsageOutput(io.Discard.(command.StringWriter)),
 	)
 	if usage := cmd.Usage(); usage == "" {
 		t.Errorf("usage string for command \"%s\", is empty", noopName)
@@ -186,6 +185,19 @@ func exeValid(t *testing.T) {
 
 func exeInvalid(t *testing.T) {
 	t.Parallel()
+	var (
+		discard = io.Discard.(command.StringWriter)
+		cmds    = cmdMap{
+			noopName: command.MakeCommand[*settings](
+				noopName, noopSynopsis, noopUsage, noop,
+				command.WithUsageOutput(discard),
+			),
+			noopArgsName: command.MakeCommand[*settings](
+				noopArgsName, noopArgsSynopsis, noopArgsUsage, noopArgs,
+				command.WithUsageOutput(discard),
+			),
+		}
+	)
 	for _, test := range []struct {
 		name     string
 		args     []string
@@ -215,7 +227,7 @@ func exeInvalid(t *testing.T) {
 			t.Parallel()
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			err := testCommands[name].Execute(ctx, args...)
+			err := cmds[name].Execute(ctx, args...)
 			if !errors.Is(err, expected) {
 				t.Errorf("did not receive expected error"+
 					"\n\tgot: %s"+
