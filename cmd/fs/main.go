@@ -71,8 +71,8 @@ func makeSubcommands() []command.Command {
 func exitWithErr(err error) {
 	const (
 		success = iota
-		misuse
 		failure
+		misuse
 	)
 	var code int
 	if errors.Is(err, command.ErrUsage) {
