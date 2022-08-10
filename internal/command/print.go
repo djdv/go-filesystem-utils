@@ -35,7 +35,8 @@ func printHelpText(output StringWriter,
 }
 
 // printUsage formats the command's usage string.
-func printUsage(output io.StringWriter,
+// i.e. Usage: name [FLAGS] | Usage: name [FLAG] SUBCOMMAND
+func printUsage(output StringWriter,
 	name, usage string, haveFlags, haveSubs bool,
 ) error {
 	if _, err := output.WriteString("Usage: " + name); err != nil {
