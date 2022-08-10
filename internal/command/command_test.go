@@ -93,7 +93,6 @@ func TestCommand(t *testing.T) {
 	t.Run("Execute", cmdExecute)
 }
 
-// cmdMake implements a NOP command
 func cmdMake(t *testing.T) {
 	cmd := command.MakeCommand[*settings](
 		noopName, noopSynopsis, noopUsage, noop,
