@@ -13,10 +13,10 @@ import (
 )
 
 type settings struct {
-	command.HelpArg
-	somethingDifferent int
+	command.HelpArg // true if `-help` flag passed
 }
 
+// BindFlags creates the set of valid flags (e.g. -help)
 func (set *settings) BindFlags(fs *flag.FlagSet) {
 	set.HelpArg.BindFlags(fs)
 }
@@ -54,21 +54,25 @@ func commandName() string {
 	)
 }
 
+// execute is the default `commandFunc`, which returns a usage error
+// in lieu of some other function
 func execute(context.Context, *settings, ...string) error {
 	// The root command only holds subcommands
 	// and has no functionality on its own.
 	return command.ErrUsage
 }
 
+// makeSubcommands returns the set of valid subcommands
 func makeSubcommands() []command.Command {
 	return nil
 }
 
+// exitWithErr exits the program with a relevant status code
 func exitWithErr(err error) {
 	const (
 		success = iota
-		failure
 		misuse
+		failure
 	)
 	var code int
 	if errors.Is(err, command.ErrUsage) {
