@@ -40,7 +40,6 @@ type (
 		someField bool
 	}
 
-	// cmdMap maps the name of commands to their respective objects
 	cmdMap map[string]command.Command
 )
 
