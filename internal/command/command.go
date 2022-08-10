@@ -100,6 +100,12 @@ func wrapUsage[settings Settings[T], T any](cmd *command,
 	}
 }
 
+// wrapExecute
+//   - parses arguments
+//   - checks [command.HelpFlag]
+//   - checks argc against func arity.
+//   - may call [command.CommandFunc]
+//   - may print [command.Usage]
 func wrapExecute[settings Settings[T], T any,
 	execFunc CommandFunc[settings, T],
 ](usageOutput StringWriter, cmd *command, execFn execFunc,
