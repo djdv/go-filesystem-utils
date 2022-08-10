@@ -16,7 +16,7 @@ type settings struct {
 	command.HelpArg
 }
 
-// BindFlags creates the set of valid flags (e.g. -help)
+// BindFlags defines settings flags in the [flag.FlagSet].
 func (set *settings) BindFlags(fs *flag.FlagSet) {
 	set.HelpArg.BindFlags(fs)
 }
@@ -44,7 +44,7 @@ func main() {
 	}
 }
 
-// commandName will normalize argv[0] to the program's name (only).
+// commandName will normalize argv[0] to the program's name.
 // (No absolute path, no binary file extension, etc.)
 func commandName() string {
 	execName := filepath.Base(os.Args[0])
@@ -54,20 +54,18 @@ func commandName() string {
 	)
 }
 
-// execute is the default `commandFunc`, which returns a usage error
-// in lieu of some other function
+// execute is the root [command.CommandFunc]
+// and expects to be called with subcommand args.
 func execute(context.Context, *settings, ...string) error {
-	// The root command only holds subcommands
-	// and has no functionality on its own.
 	return command.ErrUsage
 }
 
-// makeSubcommands returns the set of valid subcommands
+// makeSubcommands returns a set of subcommands.
 func makeSubcommands() []command.Command {
 	return nil
 }
 
-// exitWithErr exits the program with a relevant status code
+// exitWithErr exits the program with a relevant status code.
 func exitWithErr(err error) {
 	const (
 		success = iota
