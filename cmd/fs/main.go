@@ -26,7 +26,6 @@ func main() {
 		synopsis = "File system service utility."
 		usage    = "Currently doesn't do much."
 	)
-
 	var (
 		cmdName     = commandName()
 		cmdArgs     = os.Args[1:]
@@ -38,9 +37,17 @@ func main() {
 		)
 		ctx = context.Background()
 	)
-
 	if err := cmd.Execute(ctx, cmdArgs...); err != nil {
-		exitWithErr(err)
+		const (
+			success = iota
+			failure
+			misuse
+		)
+		if errors.Is(err, command.ErrUsage) {
+			os.Exit(misuse)
+		}
+		os.Stderr.WriteString(err.Error())
+		os.Exit(failure)
 	}
 }
 
@@ -63,21 +70,4 @@ func execute(context.Context, *settings, ...string) error {
 // makeSubcommands returns a set of subcommands.
 func makeSubcommands() []command.Command {
 	return nil
-}
-
-// exitWithErr exits the program with a relevant status code.
-func exitWithErr(err error) {
-	const (
-		success = iota
-		failure
-		misuse
-	)
-	var code int
-	if errors.Is(err, command.ErrUsage) {
-		code = misuse
-	} else {
-		code = failure
-		os.Stderr.WriteString(err.Error())
-	}
-	os.Exit(code)
 }
