@@ -151,7 +151,7 @@ func parseArgs[settings Settings[T], T any](cmd *command, args ...string,
 	if err != nil {
 		return nil, nil, err
 	}
-	if set.HelpRequested() {
+	if set.Help() {
 		return nil, nil, ErrUsage
 	}
 	return flagSet, set, nil
