@@ -12,6 +12,12 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/command"
 )
 
+const (
+	success = iota
+	failure
+	misuse
+)
+
 type settings struct {
 	command.HelpArg
 }
@@ -38,11 +44,6 @@ func main() {
 		ctx = context.Background()
 	)
 	if err := cmd.Execute(ctx, cmdArgs...); err != nil {
-		const (
-			success = iota
-			failure
-			misuse
-		)
 		if errors.Is(err, command.ErrUsage) {
 			os.Exit(misuse)
 		}
