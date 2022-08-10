@@ -32,7 +32,7 @@ func HelpArg(t *testing.T) {
 			if err := helpArg.Set(stringWant); err != nil {
 				t.Fatal(err)
 			}
-			if got := helpArg.HelpRequested(); got != want {
+			if got := helpArg.Help(); got != want {
 				t.Errorf("helpflag mismatch"+
 					"\n\tgot: %t"+
 					"\n\twant: %t",
