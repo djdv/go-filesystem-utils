@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"testing"
 
@@ -15,23 +16,7 @@ const (
 	usageSuffix   = " Usage"
 
 	noopName     = "noop"
-	noopSynopsis = noopName + synopisSuffix
-	noopUsage    = noopName + usageSuffix
-
-	noopArgsName     = "noopArgs"
-	noopArgsSynopsis = noopArgsName + synopisSuffix
-	noopArgsUsage    = noopArgsName + usageSuffix
-
-	subsName     = "subcommands"
-	subsSynopsis = subsName + synopisSuffix
-	subsUsage    = subsName + usageSuffix
-
-	noopSubName = "subcommand"
-	subSynopsis = noopSubName + synopisSuffix
-	subUsage    = noopSubName + usageSuffix
-
-	noopDiscardName     = "noopDiscardName"
-	noopDiscardArgsName = "noopDiscardArgsName"
+	noopArgsName = "noopArgs"
 )
 
 type (
@@ -43,39 +28,27 @@ type (
 	cmdMap map[string]command.Command
 )
 
-var (
-	testCommands = cmdMap{
+func noopCmds() cmdMap {
+	const (
+		noopSynopsis = noopName + synopisSuffix
+		noopUsage    = noopName + usageSuffix
+
+		noopArgsSynopsis = noopArgsName + synopisSuffix
+		noopArgsUsage    = noopArgsName + usageSuffix
+	)
+	return cmdMap{
 		noopName: command.MakeCommand[*settings](
 			noopName, noopSynopsis, noopUsage, noop,
 		),
 		noopArgsName: command.MakeCommand[*settings](
 			noopArgsName, noopArgsSynopsis, noopArgsUsage, noopArgs,
 		),
-		noopSubName: command.MakeCommand[*settings](
-			noopSubName, subSynopsis, subUsage, noop,
-		),
 	}
+}
 
-	discard = io.Discard.(command.StringWriter)
-
-	testInvalidCommands = cmdMap{
-		noopDiscardName: command.MakeCommand[*settings](
-			noopDiscardName, noopSynopsis, noopUsage, noop,
-			command.WithUsageOutput(discard),
-		),
-		noopDiscardArgsName: command.MakeCommand[*settings](
-			noopDiscardArgsName, noopArgsSynopsis, noopArgsUsage, noopArgs,
-			command.WithUsageOutput(discard),
-		),
-	}
-)
-
-func copyCmds(cmds cmdMap) cmdMap {
-	clone := make(cmdMap, len(cmds))
-	for key, cmd := range testCommands {
-		clone[key] = cmd
-	}
-	return clone
+func (ts *settings) BindFlags(fs *flag.FlagSet) {
+	ts.HelpArg.BindFlags(fs)
+	fs.BoolVar(&ts.someField, "sf", false, "Some Flag")
 }
 
 func noop(ctx context.Context, set *settings) error {
@@ -93,9 +66,19 @@ func TestCommand(t *testing.T) {
 }
 
 func cmdMake(t *testing.T) {
-	cmd := command.MakeCommand[*settings](
-		noopName, noopSynopsis, noopUsage, noop,
-		command.WithSubcommands(testCommands[noopName]),
+	const (
+		name     = "subcommands"
+		synopsis = name + synopisSuffix
+		usage    = name + usageSuffix
+	)
+	var (
+		noopCmds = noopCmds()
+		execFn   = noop
+		cmd      = command.MakeCommand[*settings](
+			name, synopsis, usage, execFn,
+			command.WithSubcommands(noopCmds[noopName]),
+			command.WithSubcommands(noopCmds[noopArgsName]),
+		)
 	)
 	if usage := cmd.Usage(); usage == "" {
 		t.Errorf("usage string for command \"%s\", is empty", noopName)
@@ -108,21 +91,26 @@ func cmdExecute(t *testing.T) {
 	t.Run("invalid", exeInvalid)
 }
 
-func (ts *settings) BindFlags(fs *flag.FlagSet) {
-	ts.HelpArg.BindFlags(fs)
-	fs.BoolVar(&ts.someField, "sf", false, "Some Flag")
-}
-
 func exeValid(t *testing.T) {
 	t.Parallel()
+	const (
+		subsName     = "subcommands"
+		subsSynopsis = subsName + synopisSuffix
+		subsUsage    = subsName + usageSuffix
 
-	cmds := copyCmds(testCommands)
-
-	cmds[subsName] = command.MakeCommand[*settings](
-		subsName, subsSynopsis, subsUsage, noopArgs,
-		command.WithSubcommands(testCommands[noopSubName]),
+		subName     = "subcommand"
+		subSynopsis = subName + synopisSuffix
+		subUsage    = subName + usageSuffix
 	)
-
+	cmds := noopCmds()
+	cmds[subsName] = command.MakeCommand[*settings](
+		subsName, subsSynopsis, subsUsage, noop,
+		command.WithSubcommands(
+			command.MakeCommand[*settings](
+				subName, subSynopsis, subUsage, noop,
+			),
+		),
+	)
 	for _, test := range []struct {
 		name string
 		args []string
@@ -137,14 +125,18 @@ func exeValid(t *testing.T) {
 		},
 		{
 			subsName,
-			[]string{noopSubName},
+			[]string{subName},
+		},
+		{
+			noopName,
+			[]string{"-sf=true"},
 		},
 	} {
 		var (
 			name = test.name
 			args = test.args
 		)
-		t.Run(name, func(t *testing.T) {
+		t.Run(fmt.Sprint(name, args), func(t *testing.T) {
 			t.Parallel()
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -157,9 +149,21 @@ func exeValid(t *testing.T) {
 
 func exeInvalid(t *testing.T) {
 	t.Parallel()
-
-	cmds := copyCmds(testInvalidCommands)
-
+	const (
+		name     = "testcmd"
+		synopsis = name + synopisSuffix
+		usage    = name + usageSuffix
+	)
+	var (
+		discard = io.Discard.(command.StringWriter)
+		execFn  = noop
+		cmds    = cmdMap{
+			name: command.MakeCommand[*settings](
+				name, synopsis, usage, execFn,
+				command.WithUsageOutput(discard),
+			),
+		}
+	)
 	for _, test := range []struct {
 		name     string
 		args     []string
@@ -167,13 +171,13 @@ func exeInvalid(t *testing.T) {
 		reason   string
 	}{
 		{
-			noopName,
+			name,
 			[]string{"arg1", "arg2"},
 			command.ErrUsage,
 			"niladic function called with args",
 		},
 		{
-			noopName,
+			name,
 			[]string{"-help"},
 			command.ErrUsage,
 			"function called with help flag",
