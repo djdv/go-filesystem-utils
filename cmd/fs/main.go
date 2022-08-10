@@ -13,7 +13,7 @@ import (
 )
 
 type settings struct {
-	command.HelpArg // true if `-help` flag passed
+	command.HelpArg
 }
 
 // BindFlags creates the set of valid flags (e.g. -help)
