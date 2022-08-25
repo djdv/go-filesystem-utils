@@ -76,13 +76,20 @@ func printSubcommandHelp(output StringWriter, subs ...Command) error {
 	if _, err := output.WriteString("Subcommands:\n"); err != nil {
 		return err
 	}
-	tabWriter := tabwriter.NewWriter(output, 0, 0, 0, ' ', 0)
-	for _, sub := range subs {
+	var (
+		tabWriter = tabwriter.NewWriter(output, 0, 0, 0, ' ', 0)
+		subTail   = len(subs) - 1
+	)
+
+	for i, sub := range subs {
 		if _, err := fmt.Fprintf(tabWriter,
 			"  %s\t - %s\n",
 			sub.Name(), sub.Synopsis(),
 		); err != nil {
 			return err
+		}
+		if i == subTail {
+			fmt.Fprintln(tabWriter)
 		}
 	}
 	if err := tabWriter.Flush(); err != nil {
