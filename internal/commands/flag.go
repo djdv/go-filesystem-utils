@@ -1,13 +1,14 @@
 package commands
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
 	"github.com/djdv/go-filesystem-utils/internal/daemon"
+	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	"github.com/hugelgupf/p9/p9"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -18,7 +19,7 @@ type (
 		verbose bool
 	}
 	clientSettings struct {
-		serverMaddr multiaddr.Multiaddr
+		serviceMaddr multiaddr.Multiaddr
 		commonSettings
 	}
 
@@ -26,7 +27,28 @@ type (
 		tPtr  *t
 		parse func(string) (t, error)
 	}
+
+	// TODO: [31f421d5-cb4c-464e-9d0f-41963d0956d1]
+	// We should formalize this into the command package.
+	// So lazy flags can be defined easily, and initialized
+	// as late as possible. (Right before calling execute.)
+	// Exec function itself shouldn't need to do this.
+	lazyFlag[T any]    interface{ get() T }
+	defaultServerMaddr struct{ multiaddr.Multiaddr }
 )
+
+func (dm defaultServerMaddr) get() multiaddr.Multiaddr {
+	if maddr := dm.Multiaddr; maddr != nil {
+		return maddr
+	}
+	userMaddrs, err := daemon.UserServiceMaddrs()
+	if err != nil {
+		panic(err)
+	}
+	defaultMaddr := userMaddrs[0]
+	dm.Multiaddr = defaultMaddr
+	return defaultMaddr
+}
 
 func (set *commonSettings) BindFlags(fs *flag.FlagSet) {
 	set.HelpArg.BindFlags(fs)
@@ -36,8 +58,28 @@ func (set *commonSettings) BindFlags(fs *flag.FlagSet) {
 
 func (set *clientSettings) BindFlags(fs *flag.FlagSet) {
 	set.commonSettings.BindFlags(fs)
-	multiaddrVar(fs, &set.serverMaddr, "maddr",
-		multiaddr.StringCast(daemon.ServiceMaddr), "Server `maddr`.")
+	// TODO: Can we format these nicely?
+	// Multiple UDS paths are long when right justified in `-help`.
+	// One way could be to truncate duplicate string prefixes:
+	// `/unix/C:\Users\...`; \dirA\1.sock dirB\2.sock`
+	// Another as a tree:
+	// /unix/
+	//   /fullPath1
+	//   /fullPath2
+	// ??
+	serviceMaddrs, err := daemon.AllServiceMaddrs()
+	if err != nil {
+		panic(err)
+	}
+	serviceMaddrStrings := make([]string, len(serviceMaddrs))
+	for i, maddr := range serviceMaddrs {
+		serviceMaddrStrings[i] = maddr.String()
+	}
+	multiaddrVar(fs, &set.serviceMaddr, daemon.ServerName,
+		nil, fmt.Sprintf(
+			"File system service `maddr`. (default: %s)",
+			strings.Join(serviceMaddrStrings, ", "),
+		))
 }
 
 func containerVar[t any, parser func(string) (t, error)](fs *flag.FlagSet, tPtr *t,
@@ -51,24 +93,32 @@ func containerVar[t any, parser func(string) (t, error)](fs *flag.FlagSet, tPtr 
 	}, name, usage)
 }
 
-func (vc valueContainer[t]) String() string {
-	if vc.tPtr != nil {
-		tVal := *vc.tPtr
-		// Special cases.
-		const invalidID = "nobody"
-		switch id := any(tVal).(type) {
-		case p9.UID:
-			if !id.Ok() {
-				return invalidID
-			}
-		case p9.GID:
-			if !id.Ok() {
-				return invalidID
-			}
-		}
-		return fmt.Sprint(tVal)
+func (vc valueContainer[T]) String() string {
+	tPtr := vc.tPtr
+	if tPtr == nil {
+		return ""
 	}
-	return ""
+
+	tVal := *tPtr
+	if lazy, ok := any(tVal).(lazyFlag[T]); ok {
+		tVal = lazy.get() // TODO: [31f421d5-cb4c-464e-9d0f-41963d0956d1]
+	}
+
+	// XXX: Special cases.
+	// TODO Handle this better. Optional `defaultString` in the constructor?
+	const invalidID = "nobody"
+	switch valType := any(tVal).(type) {
+	case p9.UID:
+		if !valType.Ok() {
+			return invalidID
+		}
+	case p9.GID:
+		if !valType.Ok() {
+			return invalidID
+		}
+	}
+	// Regular.
+	return fmt.Sprint(tVal)
 }
 
 func (vc valueContainer[t]) Set(arg string) error {
@@ -90,7 +140,8 @@ func multiaddrVar(fs *flag.FlagSet, maddrPtr *multiaddr.Multiaddr,
 }
 
 func parseID[id p9.UID | p9.GID](arg string) (id, error) {
-	num, err := strconv.ParseUint(arg, 0, 32)
+	const idSize = 32
+	num, err := strconv.ParseUint(arg, 0, idSize)
 	if err != nil {
 		return 0, err
 	}
@@ -109,13 +160,14 @@ func gidVar(fs *flag.FlagSet, gidPtr *p9.GID,
 	containerVar(fs, gidPtr, name, defVal, usage, parseID[p9.GID])
 }
 
-func closerKeyVar(fs *flag.FlagSet, keyPtr *[]byte,
-	name string, defVal []byte, usage string,
+func fsIDVar(fs *flag.FlagSet, fsidPtr *filesystem.ID,
+	name string, defVal filesystem.ID, usage string,
 ) {
-	containerVar(fs, keyPtr, name, defVal, usage, func(key string) ([]byte, error) {
-		if *keyPtr != nil {
-			return nil, errors.New("key provided multiple times")
-		}
-		return []byte(key), nil
-	})
+	containerVar(fs, fsidPtr, name, defVal, usage, filesystem.ParseID)
+}
+
+func fsAPIVar(fs *flag.FlagSet, fsAPIPtr *filesystem.API,
+	name string, defVal filesystem.API, usage string,
+) {
+	containerVar(fs, fsAPIPtr, name, defVal, usage, filesystem.ParseAPI)
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,6 +41,8 @@ func main() {
 		ctx = context.Background()
 	)
 
+	log.SetFlags(log.Lshortfile)
+
 	if err := cmd.Execute(ctx, cmdArgs...); err != nil {
 		exitWithErr(err)
 	}
@@ -64,6 +67,10 @@ func execute(context.Context, *settings, ...string) error {
 func makeSubcommands() []command.Command {
 	return []command.Command{
 		commands.Daemon(),
+		commands.Shutdown(),
+		commands.Mount(
+		// commands.WithLauncher([]{"daemon"}])
+		),
 	}
 }
 
@@ -73,16 +80,25 @@ func exitWithErr(err error) {
 		failure
 		misuse
 	)
-	var code int
+	var (
+		code     int
+		printErr = func() {
+			errStr := err.Error()
+			if !strings.HasSuffix(errStr, "\n") {
+				errStr += "\n"
+			}
+			os.Stderr.WriteString(errStr)
+		}
+	)
 	if errors.Is(err, command.ErrUsage) {
 		code = misuse
+		// Only print these errors if they've been wrapped.
+		if errors.Unwrap(err) != nil {
+			printErr()
+		}
 	} else {
 		code = failure
-		errStr := err.Error()
-		if !strings.HasSuffix(errStr, "\n") {
-			errStr += "\n"
-		}
-		os.Stderr.WriteString(errStr)
+		printErr()
 	}
 	os.Exit(code)
 }

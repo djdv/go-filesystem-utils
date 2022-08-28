@@ -1,123 +1,138 @@
 package files
 
 import (
-	"math"
-
 	"github.com/hugelgupf/p9/p9"
 	"github.com/hugelgupf/p9/perrors"
-	"golang.org/x/exp/constraints"
 )
 
-type (
-	cloneQid bool
-
-	devClass    = uint32
-	devInstance = uint32
-)
-
-const apiDev devClass = iota
+// TODO: sort and move code in this file to more appropriate places.
 
 const (
-	shutdownInst devInstance = iota
-	motdInst
-)
-
-const (
-	withoutQid cloneQid = false
-	withQid    cloneQid = true
-
 	selfWName   = "."
 	parentWName = ".."
 )
 
-// TODO: is this in the standard somewhere yet?
-func max[T constraints.Ordered](x, y T) T {
-	if x > y {
-		return x
-	}
-	return y
+type walker[F p9.File] interface {
+	fidOpened() bool
+	clone(withQid bool) ([]p9.QID, F)
+	parent() p9.File // TODO: we only need *parent + parent.QID
+	files() fileTable
 }
 
-// TODO: is this in the standard somewhere yet?
-func min[T constraints.Ordered](x, y T) T {
-	if x < y {
-		return x
+func walk[F p9.File](file walker[F], names ...string) ([]p9.QID, p9.File, error) {
+	if file.fidOpened() {
+		return nil, nil, perrors.EINVAL // TODO: [spec] correct evalue?
 	}
-	return y
+	switch nameCount := len(names); nameCount {
+	case 0:
+		const withQID = false
+		_, nf := file.clone(withQID)
+		return nil, nf, nil
+	case 1:
+		switch names[0] {
+		case parentWName:
+			if parent := file.parent(); parent != nil {
+				qid, _, _, err := parent.GetAttr(p9.AttrMask{})
+				return []p9.QID{qid}, parent, err
+			}
+			fallthrough // Root's `..` is itself.
+		case selfWName:
+			const withQID = true
+			qids, nf := file.clone(withQID)
+			return qids, nf, nil
+		}
+	}
+	if entries := file.files(); entries != nil {
+		return walkRecur(entries, names...)
+	}
+	return nil, nil, perrors.ENOTDIR
 }
 
-func removeSelf(parent, self p9.File) error {
-	names, err := ReadDir(parent)
+func walkRecur(files fileTable, names ...string) ([]p9.QID, p9.File, error) {
+	file, ok := files.load(names[0])
+	if !ok {
+		return nil, nil, perrors.ENOENT
+	}
+
+	qids := make([]p9.QID, 1, len(names))
+	qid, _, _, err := file.GetAttr(p9.AttrMask{})
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	// TODO: we can trade lookups for memory and short circuit here
-	// if that's sensible.
-	// if self.Namer; return parent.UnlinkAt(self.Name())
-	// Otherwise we have to find ourself within our parent directory.
-	// They're the ones storing link/name-data.
+	if qids[0] = qid; len(qids) == cap(qids) {
+		return qids, file, nil
+	}
 
+	subNames := names[1:]
+	subQids, subFile, err := file.Walk(subNames)
+	if err != nil {
+		return nil, nil, err
+	}
+	return append(qids, subQids...), subFile, nil
+}
+
+func mkdirMask(permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.SetAttrMask, p9.SetAttr) {
+	return attrToSetAttr(&p9.Attr{
+		Mode: (permissions &^ S_LINMSK) & S_IRWXA,
+		UID:  uid,
+		GID:  gid,
+	})
+}
+
+func mknodMask(permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.SetAttrMask, p9.SetAttr) {
+	return attrToSetAttr(&p9.Attr{
+		Mode: permissions &^ S_LINMSK,
+		UID:  uid,
+		GID:  gid,
+	})
+}
+
+// XXX this whole thang is likely more nasty than it has to be.
+// If anything fails in here we're likely going to get zombie files that might ruin things.
+// Likely fine for empty directories, but not endpoints. That shouldn't happen though.
+// "shouldn't"
+// TODO: name needs to imply reverse order, or take an order param
+func removeEmpties(root p9.File, dirs []string) error {
 	var (
-		sawError bool
+		cur      = root
+		nwname   = len(dirs)
+		dirFiles = make([]p9.File, nwname)
+
 		// TODO: micro-opt; is this faster than allocating in the loop?
 		wname = make([]string, 1)
 	)
-	for _, dirent := range names {
-		name := dirent.Name
+	for i, name := range dirs {
 		wname[0] = name
-		_, file, err := parent.Walk(wname)
+		_, dir, err := cur.Walk(wname)
 		if err != nil {
-			sawError = true // Might not be us, take note
-			continue        // but ignore it.
+			return err
 		}
-		// TODO: closes should be handled properly,
-		// and especially not deferred within the loop.
-		// Only slightly better than relying on the finalizer.
-		defer file.Close()
-		if file == self {
-			return parent.UnlinkAt(name, 0)
-		}
+		cur = dir
+		dirFiles[i] = cur
 	}
-	if sawError {
-		// Walk errors could have been for us,
-		// no way to know so bail hard(er).
-		return perrors.EIO
-	}
-	return perrors.ENOENT
-}
-
-// TODO: export this? But where? What name? ReaddirAll?
-// *We're using the same name as [os] (new canon)
-// and [fs] (newer canon) for now, make sure this causes no issues.
-func ReadDir(dir p9.File) (_ p9.Dirents, err error) {
-	_, dirClone, err := dir.Walk(nil)
-	if err != nil {
-		return nil, err
-	}
-	if _, _, err := dirClone.Open(p9.ReadOnly); err != nil {
-		return nil, err
-	}
-	defer func() {
-		cErr := dirClone.Close()
-		if err == nil {
-			err = cErr
-		}
-	}()
-	var (
-		offset uint64
-		ents   p9.Dirents
-	)
-	for { // TODO: [Ame] double check correctness (offsets and that)
-		entBuf, err := dirClone.Readdir(offset, math.MaxUint32)
+	for i := nwname - 1; i >= 0; i-- {
+		cur := dirFiles[i]
+		ents, err := ReadDir(cur)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		bufferedEnts := len(entBuf)
-		if bufferedEnts == 0 {
-			break
+		if len(ents) == 0 {
+			// XXX: we're avoiding `Walk(..)` here
+			// but it's hacky and gross. Our indexing should be better,
+			// or we should just do the walk.
+			var (
+				parent p9.File
+				name   = dirs[i]
+			)
+			if i == 0 {
+				parent = root
+			} else {
+				parent = dirFiles[i-1]
+			}
+			if err := parent.UnlinkAt(name, 0); err != nil {
+				return err
+			}
 		}
-		offset = entBuf[bufferedEnts-1].Offset
-		ents = append(ents, entBuf...)
 	}
-	return ents, nil
+	return nil
 }

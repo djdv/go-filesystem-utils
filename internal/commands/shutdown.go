@@ -30,12 +30,14 @@ func shutdownExecute(ctx context.Context, set *shutdownSettings, _ ...string) er
 
 	// TODO: signalctx + shutdown on cancel
 
-	client, err := daemon.Connect(set.serverMaddr, clientOpts...)
+	serviceMaddr := set.serviceMaddr
+
+	client, err := daemon.Connect(serviceMaddr, clientOpts...)
 	if err != nil {
 		return err
 	}
 
-	if err := client.Shutdown(); err != nil {
+	if err := client.Shutdown(serviceMaddr); err != nil {
 		return err
 	}
 

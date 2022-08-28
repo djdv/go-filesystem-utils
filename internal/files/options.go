@@ -4,6 +4,7 @@ import (
 	"sync/atomic"
 
 	"github.com/hugelgupf/p9/p9"
+	"github.com/multiformats/go-multiaddr"
 )
 
 // TODO: some way to provide statfs for files that are themselves,
@@ -20,7 +21,10 @@ import (
 
 type (
 	DirectoryOption func(*Directory) error
-	CloserOption    func(*Closer) error
+
+	ListenerOption   func(*Listener) error
+	listenerOption   func(*listenerFile) error
+	ipfsTargetOption func(*ipfsTarget) error
 
 	// NOTE: [go/issues/48522] is on the milestone for 1.20,
 	// but was punted from 1.19 so maybe|maybe-not.
@@ -31,7 +35,13 @@ type (
 	// TODO better name
 	// We can unexport this too but it's kind of rude and ugly for the decls that need it.
 	SharedOptions interface {
-		DirectoryOption | CloserOption
+		DirectoryOptions | FileOptions
+	}
+	DirectoryOptions interface {
+		DirectoryOption | ListenerOption
+	}
+	FileOptions interface {
+		listenerOption | ipfsTargetOption
 	}
 )
 
@@ -39,31 +49,12 @@ func WithPath[OT SharedOptions](path *atomic.Uint64) (option OT) {
 	switch fnPtrPtr := any(&option).(type) {
 	case *DirectoryOption:
 		*fnPtrPtr = func(dir *Directory) error { dir.path = path; return nil }
-	case *CloserOption:
-		*fnPtrPtr = func(cl *Closer) error { cl.path = path; return nil }
-	}
-	return option
-}
-
-// TODO: this option may be removed or changed
-// We may want to take in and apply a mask.
-// It may make more sense to have OrMode instead that can be called multiple times
-// with multiple values.
-//
-// TODO: document that this is literally permissions, not mode.Set,
-// higher bits are filtered explicitly.
-func WithPermissions[OT SharedOptions](permissions p9.FileMode) (option OT) {
-	switch fnPtrPtr := any(&option).(type) {
-	case *DirectoryOption:
-		*fnPtrPtr = func(dir *Directory) error {
-			dir.Mode |= permissions.Permissions()
-			return nil
-		}
-	case *CloserOption:
-		*fnPtrPtr = func(cl *Closer) error {
-			cl.Mode |= permissions.Permissions()
-			return nil
-		}
+	case *ListenerOption:
+		*fnPtrPtr = func(ld *Listener) error { ld.path = path; return nil }
+	case *listenerOption:
+		*fnPtrPtr = func(lf *listenerFile) error { lf.path = path; return nil }
+	case *ipfsTargetOption:
+		*fnPtrPtr = func(it *ipfsTarget) error { it.path = path; return nil }
 	}
 	return option
 }
@@ -71,47 +62,25 @@ func WithPermissions[OT SharedOptions](permissions p9.FileMode) (option OT) {
 func WithParent[OT SharedOptions](parent p9.File) (option OT) {
 	switch fnPtrPtr := any(&option).(type) {
 	case *DirectoryOption:
-		*fnPtrPtr = func(dir *Directory) error { dir.parent = parent; return nil }
-	case *CloserOption:
-		*fnPtrPtr = func(cl *Closer) error { cl.parent = parent; return nil }
+		*fnPtrPtr = func(dir *Directory) error { dir.parentFile = parent; return nil }
+	case *ListenerOption:
+		*fnPtrPtr = func(ld *Listener) error { ld.parentFile = parent; return nil }
+	case *listenerOption:
+		*fnPtrPtr = func(lf *listenerFile) error { lf.parentFile = parent; return nil }
+	case *ipfsTargetOption:
+		*fnPtrPtr = func(it *ipfsTarget) error { it.parentFile = parent; return nil }
 	}
 	return option
 }
 
-func WithUID[OT SharedOptions](uid p9.UID) (option OT) {
-	switch fnPtrPtr := any(&option).(type) {
-	case *DirectoryOption:
-		*fnPtrPtr = func(dir *Directory) error { dir.UID = uid; return nil }
-	case *CloserOption:
-		*fnPtrPtr = func(cl *Closer) error { cl.Attr.UID = uid; return nil }
-	}
-	return option
+// TODO: name: WithMknodCallback?
+func WithCallback(cb ListenerCallback) ListenerOption {
+	return func(l *Listener) error { l.mknodCallback = cb; return nil }
 }
 
-func WithGID[OT SharedOptions](gid p9.GID) (option OT) {
-	switch fnPtrPtr := any(&option).(type) {
-	case *DirectoryOption:
-		*fnPtrPtr = func(dir *Directory) error { dir.GID = gid; return nil }
-	case *CloserOption:
-		*fnPtrPtr = func(cl *Closer) error { cl.Attr.GID = gid; return nil }
-	}
-	return option
+func withPrefix(prefix multiaddr.Multiaddr) ListenerOption {
+	return func(l *Listener) error { l.prefix = prefix; return nil }
 }
-
-func WithRDev[OT SharedOptions](rdev p9.Dev) (option OT) {
-	switch fnPtrPtr := any(&option).(type) {
-	case *DirectoryOption:
-		*fnPtrPtr = func(dir *Directory) error { dir.Attr.RDev = rdev; return nil }
-	case *CloserOption:
-		*fnPtrPtr = func(cl *Closer) error { cl.Attr.RDev = rdev; return nil }
-	}
-	return option
-}
-
-// TODO: dumb name, can we do better?
-func WithCloserKey(key []byte) CloserOption {
-	return func(cl *Closer) error {
-		cl.key = key
-		return nil
-	}
+func withProtocol(protocol string) ListenerOption {
+	return func(l *Listener) error { l.protocol = protocol; return nil }
 }
