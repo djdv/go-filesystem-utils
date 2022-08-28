@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
+	"github.com/djdv/go-filesystem-utils/internal/commands"
 )
 
 const (
@@ -44,11 +45,7 @@ func main() {
 		ctx = context.Background()
 	)
 	if err := cmd.Execute(ctx, cmdArgs...); err != nil {
-		if errors.Is(err, command.ErrUsage) {
-			os.Exit(misuse)
-		}
-		os.Stderr.WriteString(err.Error())
-		os.Exit(failure)
+		exitWithErr(err)
 	}
 }
 
@@ -70,5 +67,40 @@ func execute(context.Context, *settings, ...string) error {
 
 // makeSubcommands returns a set of subcommands.
 func makeSubcommands() []command.Command {
-	return nil
+	return []command.Command{
+		commands.Daemon(),
+		commands.Shutdown(),
+		commands.Mount(
+		// commands.WithLauncher([]{"daemon"}])
+		),
+	}
+}
+
+func exitWithErr(err error) {
+	const (
+		success = iota
+		failure
+		misuse
+	)
+	var (
+		code     int
+		printErr = func() {
+			errStr := err.Error()
+			if !strings.HasSuffix(errStr, "\n") {
+				errStr += "\n"
+			}
+			os.Stderr.WriteString(errStr)
+		}
+	)
+	if errors.Is(err, command.ErrUsage) {
+		code = misuse
+		// Only print these errors if they've been wrapped.
+		if errors.Unwrap(err) != nil {
+			printErr()
+		}
+	} else {
+		code = failure
+		printErr()
+	}
+	os.Exit(code)
 }
