@@ -9,7 +9,6 @@ import (
 )
 
 type (
-	// fileTable = *fileMap // TODO: fileTable interface{ add(), delete(), ... }
 	// TODO: [audit] We probably don't need all these table methods. This is what we had already.
 	fileTable interface {
 		store(name string, file p9.File)
@@ -22,32 +21,30 @@ type (
 		delete(name string) bool
 		pop(name string) p9.File
 	}
-	fileMap struct {
+	tableSync struct {
 		mu    sync.RWMutex
-		table map[string]p9.File
-		// TODO: ^should we use maphash on the names or is map[string] effectively the same? fnv?
+		table mapTable
 	}
+	mapTable map[string]p9.File
 )
 
 // TODO: alloc hint? Lots of device directories will have single to few entries.
 // Some user dirs may store their element count so it is known ahead of time.
-func newFileTable() fileTable {
-	return &fileMap{table: make(map[string]p9.File)}
-}
+func newFileTable() *tableSync { return &tableSync{table: make(mapTable)} }
 
-func (ft *fileMap) store(name string, file p9.File) {
+func (ft *tableSync) store(name string, file p9.File) {
 	ft.mu.Lock()
 	defer ft.mu.Unlock()
 	ft.table[name] = file
 }
 
-func (ft *fileMap) upsert(name string, file p9.File) {
+func (ft *tableSync) upsert(name string, file p9.File) {
 	ft.mu.Lock()
 	defer ft.mu.Unlock()
 	ft.table[name] = file
 }
 
-func (ft *fileMap) exclusiveStore(name string, file p9.File) bool {
+func (ft *tableSync) exclusiveStore(name string, file p9.File) bool {
 	ft.mu.Lock()
 	defer ft.mu.Unlock()
 	if _, ok := ft.table[name]; ok {
@@ -57,20 +54,20 @@ func (ft *fileMap) exclusiveStore(name string, file p9.File) bool {
 	return true
 }
 
-func (ft *fileMap) load(name string) (p9.File, bool) {
+func (ft *tableSync) load(name string) (p9.File, bool) {
 	ft.mu.RLock()
 	defer ft.mu.RUnlock()
 	file, ok := ft.table[name]
 	return file, ok
 }
 
-func (ft *fileMap) length() int {
+func (ft *tableSync) length() int {
 	ft.mu.RLock()
 	defer ft.mu.RUnlock()
 	return len(ft.table)
 }
 
-func (ft *fileMap) flatten(offset uint64, count uint32) ([]string, []p9.File) {
+func (ft *tableSync) flatten(offset uint64, count uint32) ([]string, []p9.File) {
 	ft.mu.RLock()
 	defer ft.mu.RUnlock()
 	var (
@@ -92,7 +89,7 @@ func (ft *fileMap) flatten(offset uint64, count uint32) ([]string, []p9.File) {
 	return names, files
 }
 
-func (ft *fileMap) to9Ents(offset uint64, count uint32) (p9.Dirents, error) {
+func (ft *tableSync) to9Ents(offset uint64, count uint32) (p9.Dirents, error) {
 	// TODO: This is (currently) safe but that might not be true forever.
 	// We shouldn't acquire the read lock recursively.
 	ft.mu.RLock()
@@ -120,7 +117,7 @@ func (ft *fileMap) to9Ents(offset uint64, count uint32) (p9.Dirents, error) {
 	return ents, nil
 }
 
-func (ft *fileMap) delete(name string) bool {
+func (ft *tableSync) delete(name string) bool {
 	ft.mu.Lock()
 	defer ft.mu.Unlock()
 	_, ok := ft.table[name]
@@ -128,7 +125,7 @@ func (ft *fileMap) delete(name string) bool {
 	return ok
 }
 
-func (ft *fileMap) pop(name string) p9.File {
+func (ft *tableSync) pop(name string) p9.File {
 	ft.mu.Lock()
 	defer ft.mu.Unlock()
 	f := ft.table[name]

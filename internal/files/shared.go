@@ -1,6 +1,8 @@
 package files
 
 import (
+	"fmt"
+
 	"github.com/hugelgupf/p9/p9"
 	"github.com/hugelgupf/p9/perrors"
 )
@@ -12,38 +14,36 @@ const (
 	parentWName = ".."
 )
 
-type walker[F p9.File] interface {
-	fidOpened() bool
-	clone(withQid bool) ([]p9.QID, F)
-	parent() p9.File // TODO: we only need *parent + parent.QID
-	files() fileTable
-}
+type (
+	fileWalker[F p9.File] interface {
+		fidOpened() bool
+		clone(withQid bool) ([]p9.QID, F, error)
+	}
+	dirWalker[F p9.File] interface {
+		fileWalker[F]
+		files() fileTable
+	}
+)
 
-func walk[F p9.File](file walker[F], names ...string) ([]p9.QID, p9.File, error) {
+func walk[F p9.File](file fileWalker[F], names ...string) ([]p9.QID, p9.File, error) {
+	fmt.Printf("walkan:\n\t%v\n\tfrom: %#v\n", names, file)
 	if file.fidOpened() {
 		return nil, nil, perrors.EINVAL // TODO: [spec] correct evalue?
 	}
+	const (
+		withoutQID = false
+		withQID    = true
+	)
 	switch nameCount := len(names); nameCount {
 	case 0:
-		const withQID = false
-		_, nf := file.clone(withQID)
-		return nil, nf, nil
+		return file.clone(withoutQID)
 	case 1:
-		switch names[0] {
-		case parentWName:
-			if parent := file.parent(); parent != nil {
-				qid, _, _, err := parent.GetAttr(p9.AttrMask{})
-				return []p9.QID{qid}, parent, err
-			}
-			fallthrough // Root's `..` is itself.
-		case selfWName:
-			const withQID = true
-			qids, nf := file.clone(withQID)
-			return qids, nf, nil
+		if names[0] == selfWName {
+			return file.clone(withQID)
 		}
 	}
-	if entries := file.files(); entries != nil {
-		return walkRecur(entries, names...)
+	if dir, ok := file.(dirWalker[F]); ok {
+		return walkRecur(dir.files(), names...)
 	}
 	return nil, nil, perrors.ENOTDIR
 }
@@ -52,6 +52,10 @@ func walkRecur(files fileTable, names ...string) ([]p9.QID, p9.File, error) {
 	file, ok := files.load(names[0])
 	if !ok {
 		return nil, nil, perrors.ENOENT
+	}
+
+	if linked, ok := file.(*linkedFile); ok {
+		file = linked.File
 	}
 
 	qids := make([]p9.QID, 1, len(names))
@@ -69,22 +73,6 @@ func walkRecur(files fileTable, names ...string) ([]p9.QID, p9.File, error) {
 		return nil, nil, err
 	}
 	return append(qids, subQids...), subFile, nil
-}
-
-func mkdirMask(permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.SetAttrMask, p9.SetAttr) {
-	return attrToSetAttr(&p9.Attr{
-		Mode: (permissions &^ S_LINMSK) & S_IRWXA,
-		UID:  uid,
-		GID:  gid,
-	})
-}
-
-func mknodMask(permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.SetAttrMask, p9.SetAttr) {
-	return attrToSetAttr(&p9.Attr{
-		Mode: permissions &^ S_LINMSK,
-		UID:  uid,
-		GID:  gid,
-	})
 }
 
 // XXX this whole thang is likely more nasty than it has to be.
@@ -135,4 +123,12 @@ func removeEmpties(root p9.File, dirs []string) error {
 		}
 	}
 	return nil
+}
+
+func attrErr(got, want p9.AttrMask) error {
+	return fmt.Errorf("did not receive expected attributes"+
+		"\n\tgot: %s"+
+		"\n\twant: %s",
+		got, want,
+	)
 }

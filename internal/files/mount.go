@@ -13,8 +13,11 @@ const MounterName = "mounts"
 
 type mounter struct{ *Directory }
 
-func NewMounter(options ...DirectoryOption) *mounter {
-	mounter := &mounter{Directory: NewDirectory(options...)}
+func NewMounter(options ...MetaOption) *mounter {
+	var (
+		_, dir  = NewDirectory(options...)
+		mounter = &mounter{Directory: dir}
+	)
 	return mounter
 }
 
@@ -23,19 +26,17 @@ func (dir *mounter) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9
 	if err != nil {
 		return p9.QID{}, err
 	}
-	if _, exists := dir.entries.load(name); exists {
+	if _, exists := dir.fileTable.load(name); exists {
 		return p9.QID{}, perrors.EEXIST
 	}
-	dirOptions := []DirectoryOption{
-		WithParent[DirectoryOption](dir),
-		WithPath[DirectoryOption](dir.Directory.path),
-	}
+	dirOptions := []MetaOption{WithPath(dir.Directory.path)}
 	switch hostAPI {
 	case filesystem.Fuse:
 		hostAPIDir := NewFuseDir(dirOptions...)
 		if err := hostAPIDir.SetAttr(mkdirMask(permissions, dir.UID, gid)); err != nil {
 			return *hostAPIDir.QID, err
 		}
+
 		return *hostAPIDir.QID, dir.Link(hostAPIDir, name)
 	default:
 		return p9.QID{}, errors.New("unexpected host") // TODO: msg

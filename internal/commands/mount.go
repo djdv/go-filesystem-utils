@@ -157,6 +157,7 @@ func ipfsExecute(ctx context.Context, host filesystem.API, fsid filesystem.ID,
 		clientLog := log.New(os.Stdout, "⬇️ client - ", log.Lshortfile)
 		clientOpts = append(clientOpts, daemon.WithLogger[daemon.ClientOption](clientLog))
 	}
+
 	if serviceMadder != nil {
 		client, err = daemon.Connect(serviceMadder, clientOpts...)
 	} else {

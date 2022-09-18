@@ -104,8 +104,7 @@ func ReadAll(file p9.File) (_ []byte, err error) {
 		return nil, err
 	}
 	if !valid.Contains(want) {
-		// TODO: format [want] into the message.
-		return nil, errors.New("missing size attribute")
+		return nil, attrErr(valid, want)
 	}
 
 	if _, _, err := fileClone.Open(p9.ReadOnly); err != nil {

@@ -19,10 +19,19 @@ import (
 type (
 	ListenerCallback = func(manet.Listener)
 	Listener         struct {
+		templatefs.NoopFile
+
+		// uid  p9.UID
+		path *atomic.Uint64
+
+		// path *atomic.Uint64
+		// directory *Directory // FIXME: this needs to become an interface?
+		// or a generic type [Directory|EphemeralDir]
+		// ^^ can this just be [fileTable]?
+		directory     p9.File
 		mknodCallback ListenerCallback
 		prefix        multiaddr.Multiaddr
-		*Directory
-		protocol string
+		protocol      string
 
 		// TODO: stopped *atomic.Bool
 		// when true, mkdir+mknod returns an error; no callbacks are called.
@@ -32,14 +41,15 @@ type (
 		// so server handle loop can distinguish if
 		// shutdown-error value was expected or not.
 	}
+	listenerDir interface {
+		p9.File
+		fileTable
+	}
 	listenerFile struct {
 		templatefs.NoopFile
-		parentFile  p9.File
+		metadata
 		Listener    manet.Listener
 		maddrReader *bytes.Reader
-		path        *atomic.Uint64
-		*p9.Attr
-		*p9.QID
 	}
 	listenerUDSWrapper struct {
 		manet.Listener
@@ -47,57 +57,65 @@ type (
 	}
 )
 
-func (udl *listenerUDSWrapper) Close() error {
-	var (
-		lErr = udl.Listener.Close()
-		cErr = udl.closeFunc()
-	)
-	if cErr == nil {
-		return lErr
-	}
-	return cErr
+func (ld *Listener) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
+	return ld.directory.SetAttr(valid, attr)
 }
 
-func NewListener(options ...ListenerOption) *Listener {
-	var (
-		qid, attr = newMeta(p9.TypeDir)
-		listener  = &Listener{
-			Directory: &Directory{
-				QID:     qid,
-				Attr:    attr,
-				entries: newFileTable(),
-			},
-		}
-	)
-	for _, setFunc := range options {
-		if err := setFunc(listener); err != nil {
-			panic(err)
-		}
-	}
-	setupOrUsePather(&listener.QID.Path, &listener.path)
-	return listener
+func (ld *Listener) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
+	return ld.directory.GetAttr(req)
 }
 
-func newListenerDir(callback ListenerCallback, prefix multiaddr.Multiaddr, protocol string,
-	options ...DirectoryOption,
-) *Listener {
+// TODO: this has to be changed? Require the callbacks for mknod and unlink?
+// accept metadata options.
+func NewListener(callback ListenerCallback, options ...MetaOption) *Listener {
+	_, root := NewDirectory(options...)
+	/*
+		return &Listener{
+			path:          listeners.path,
+			directory:     listeners,
+			mknodCallback: callback,
+		}
+	*/
+	return newListener(callback, root, root.path)
+}
+
+func newListener(callback ListenerCallback, directory p9.File, path *atomic.Uint64) *Listener {
 	return &Listener{
+		path:          path,
+		directory:     directory,
 		mknodCallback: callback,
-		prefix:        prefix,
-		protocol:      protocol,
-		Directory:     NewDirectory(options...),
 	}
 }
 
-func (ld *Listener) clone(withQID bool) ([]p9.QID, *Listener) {
-	qids, dirClone := ld.Directory.clone(withQID)
+func (ld *Listener) fidOpened() bool { return false } // TODO need to store state or read &.dir's
+func (ld *Listener) files() fileTable {
+	// XXX: We need to change something to eliminate this switch.
+	switch t := ld.directory.(type) {
+	case *Directory:
+		return t.fileTable
+	case *ephemeralDir:
+		return t.fileTable
+	default:
+		return nil
+	}
+}
+
+func (ld *Listener) clone(withQID bool) ([]p9.QID, *Listener, error) {
+	var wnames []string
+	if withQID {
+		wnames = []string{selfWName}
+	}
+	qids, dirClone, err := ld.directory.Walk(wnames)
+	if err != nil {
+		return nil, nil, err
+	}
 	newDir := &Listener{
 		mknodCallback: ld.mknodCallback,
 		prefix:        ld.prefix,
-		Directory:     dirClone,
+		directory:     dirClone,
 		protocol:      ld.protocol,
 	}
-	return qids, newDir
+	return qids, newDir, nil
 }
 
 func (ld *Listener) Walk(names []string) ([]p9.QID, p9.File, error) {
@@ -105,9 +123,6 @@ func (ld *Listener) Walk(names []string) ([]p9.QID, p9.File, error) {
 }
 
 func (ld *Listener) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9.GID) (p9.QID, error) {
-	if _, exists := ld.entries.load(name); exists {
-		return p9.QID{}, perrors.EEXIST
-	}
 	var (
 		prefix       = ld.prefix
 		protocolName = ld.protocol
@@ -127,28 +142,37 @@ func (ld *Listener) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9
 		protocolName = ""
 	}
 	var (
-		// TODO: callback / channel / emitter needs a way to associate the listener
-		// with the [Unlink] call, that that `rm sock` can somehow signal the server
-		// "listener X was shutdown intentionally" i.e. disregard server-closed errors.
-		// ^ simple atomic bool like we had before,
-		// but pass to to callback and use it during unlink
-		//
-		// TODO: [4da77693-f66f-4384-9629-8dd79cd52d40] Wrap the closer sent to the callback
-		// so it will unlink itself here, on Close in caller.
-		// Counterpart to calling `rm sock` from OS rather than Go.
-		callback = ld.mknodCallback
-		newDir   = NewListener(
-			WithParent[ListenerOption](ld),
-			WithCallback(callback),
-			withPrefix(prefix),
-			withProtocol(protocolName),
-		)
-		uid = ld.UID
+		want                = p9.AttrMask{UID: true}
+		_, valid, attr, err = ld.directory.GetAttr(want)
+
+		qid, eDir = newEphemeralDir(ld, name, WithPath(ld.path))
+		newDir    = &Listener{
+			path:          eDir.path,
+			directory:     eDir,
+			mknodCallback: ld.mknodCallback,
+			prefix:        prefix,
+			protocol:      protocolName,
+		}
+
+		validSet, setAttr = attrToSetAttr(&p9.Attr{
+			Mode: (permissions.Permissions() &^ S_LINMSK) & S_IRWXA,
+			UID:  attr.UID,
+			GID:  gid,
+		})
 	)
-	if err := newDir.SetAttr(mkdirMask(permissions, uid, gid)); err != nil {
-		return *newDir.QID, err
+	validSet.ATime = true
+	validSet.MTime = true
+	validSet.CTime = true
+	if err != nil {
+		return p9.QID{}, err
 	}
-	return *newDir.QID, ld.Link(newDir, name)
+	if !valid.Contains(want) {
+		return p9.QID{}, attrErr(valid, want)
+	}
+	if err := newDir.SetAttr(validSet, setAttr); err != nil {
+		return qid, err
+	}
+	return qid, ld.directory.Link(newDir, name)
 }
 
 func validateProtocol(name string) error {
@@ -195,9 +219,6 @@ func (ld *Listener) Mknod(name string, mode p9.FileMode,
 		return p9.QID{}, perrors.ENOSYS
 	}
 
-	if _, exists := ld.entries.load(name); exists {
-		return p9.QID{}, perrors.EEXIST
-	}
 	component, err := multiaddr.NewComponent(ld.protocol, name)
 	if err != nil {
 		return p9.QID{}, err
@@ -212,180 +233,88 @@ func (ld *Listener) Mknod(name string, mode p9.FileMode,
 		return p9.QID{}, err
 	}
 	defer callback(listener)
+	// TODO: we need to close the listener,
+	// in case of file system error before return.
+	// (Extending the defer to check nrErr, would probably be easiest.)
 
-	uid := ld.UID
-	return createListenerFile(listener, name,
-		mode, ld,
-		ld.path, uid, gid)
+	want := p9.AttrMask{UID: true}
+	_, valid, attr, err := ld.directory.GetAttr(want)
+	if err != nil {
+		return p9.QID{}, err
+	}
+	if valid.Contains(want) {
+		return p9.QID{}, attrErr(valid, want)
+	}
+	permissions := mode.Permissions() &^ S_LINMSK
+	/*
+		return createListenerFile(listener, name,
+			permissions, ld, ld.path, attr.UID, gid)
+	*/
+	listenerFile, err := makeListenerFile(listener,
+		permissions, attr.UID, gid, WithPath(ld.path))
+	qid := *listenerFile.QID
+	if err != nil {
+		return qid, err
+	}
+	return qid, ld.Link(listenerFile, name)
 }
 
 func (ld *Listener) Listen(maddr multiaddr.Multiaddr) (manet.Listener, error) {
 	var (
-		_, names    = splitMaddr(maddr)
-		components  = names[:len(names)-1]
-		socket      = names[len(names)-1]
-		permissions = ld.Mode.Permissions()
-		uid         = ld.UID
-		gid         = ld.GID
+		listener, err = listen(maddr)
+		_, names      = splitMaddr(maddr)
+		components    = names[:len(names)-1]
+		socket        = names[len(names)-1]
+		want          = p9.AttrMask{
+			Mode: true,
+			UID:  true,
+			GID:  true,
+		}
 	)
-	protocolDir, err := MkdirAll(ld, components, permissions, uid, gid)
 	if err != nil {
 		return nil, err
 	}
 
-	listener, err := listen(maddr)
+	// TODO: Close the listener in the event of an FS err
+
+	_, valid, attr, err := ld.directory.GetAttr(want)
 	if err != nil {
 		return nil, err
 	}
-
-	if _, err := createListenerFile(listener, socket,
-		permissions, protocolDir,
-		ld.path, uid, gid); err != nil {
+	if !valid.Contains(want) {
+		return nil, attrErr(valid, want)
+	}
+	var (
+		permissions  = attr.Mode.Permissions()
+		permissionsD = (permissions &^ S_LINMSK) & S_IRWXA
+		permissionsF = permissions &^ S_LINMSK
+		uid          = attr.UID
+		gid          = attr.GID
+	)
+	protocolDir, err := MkdirAll(ld, components, permissionsD, uid, gid)
+	if err != nil {
 		return nil, err
 	}
-
-	return listener, nil
-}
-
-func createListenerFile(listener manet.Listener, name string, permissions p9.FileMode,
-	parent p9.File, path *atomic.Uint64,
-	uid p9.UID, gid p9.GID,
-) (p9.QID, error) {
-	listenerFile := makeListenerFile(listener,
-		WithParent[listenerOption](parent),
-		WithPath[listenerOption](path),
-	)
-	if err := listenerFile.SetAttr(mknodMask(permissions, uid, gid)); err != nil {
-		return *listenerFile.QID, err
-	}
-	if err := parent.Link(listenerFile, name); err != nil {
-		return *listenerFile.QID, err
-	}
-	return *listenerFile.QID, nil
-}
-
-func splitMaddr(maddr multiaddr.Multiaddr) (components []*multiaddr.Component, names []string) {
-	multiaddr.ForEach(maddr, func(c multiaddr.Component) bool {
-		components = append(components, &c)
-		names = append(names, strings.Split(c.String(), "/")[1:]...)
-		return true
-	})
-	return
-}
-
-// getFirstUnixSocketPath returns the path
-// of the first Unix domain socket within the multiaddr (if any)
-func getFirstUnixSocketPath(ma multiaddr.Multiaddr) (target string) {
-	multiaddr.ForEach(ma, func(comp multiaddr.Component) bool {
-		isUnixComponent := comp.Protocol().Code == multiaddr.P_UNIX
-		if isUnixComponent {
-			target = comp.Value()
-			if runtime.GOOS == "windows" { // `/C:\path` -> `C:\path`
-				target = strings.TrimPrefix(target, `/`)
-			}
-			return true
+	/*
+		if _, err := createListenerFile(listener, socket,
+			permissionsF, protocolDir,
+			ld.path, uid, gid); err != nil {
+			return nil, err
 		}
-		return false
-	})
-	return
-}
 
-func (ld *Listener) UnlinkAt(name string, flags uint32) error {
-	// TODO: can we generalise the file table so it returns concrete types?
-	// ^ should we?
-	lf := ld.entries.pop(name)
-	if lf == nil {
-		return perrors.ENOENT
+		return listener, nil
+	*/
+	listenerFile, err := makeListenerFile(listener,
+		permissionsF, uid, gid, WithPath(ld.path))
+	if err != nil {
+		return nil, err
 	}
-	if lFile, ok := lf.(*listenerFile); ok {
-		if listener := lFile.Listener; listener != nil {
-			err := listener.Close()
-			return err
-		}
-	}
-	return nil
+	return nil, protocolDir.Link(listenerFile, socket)
 }
 
-func makeListenerFile(listener manet.Listener, options ...listenerOption,
-) *listenerFile {
-	lf := &listenerFile{
-		Listener: listener,
-		QID:      &p9.QID{Type: p9.TypeRegular},
-		Attr: &p9.Attr{
-			Mode: p9.ModeRegular,
-			UID:  p9.NoUID,
-			GID:  p9.NoGID,
-			Size: uint64(len(listener.Multiaddr().Bytes())),
-		},
-	}
-	for _, setFunc := range options {
-		if err := setFunc(lf); err != nil {
-			panic(err)
-		}
-	}
-	setupOrUsePather(&lf.QID.Path, &lf.path)
-	return lf
-}
-
-func (lf *listenerFile) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
-	lf.Attr.Apply(valid, attr)
-	return nil
-}
-
-func (lf *listenerFile) clone(withQID bool) ([]p9.QID, *listenerFile) {
-	var (
-		qids  []p9.QID
-		newLf = &listenerFile{
-			QID:        lf.QID,
-			Attr:       lf.Attr,
-			parentFile: lf.parentFile,
-			path:       lf.path,
-			Listener:   lf.Listener,
-			// unlinkErr:  lf.unlinkErr,
-			// Closed:     lf.Closed,
-		}
-	)
-	if withQID {
-		qids = []p9.QID{*newLf.QID}
-	}
-	return qids, newLf
-}
-
-func (lf *listenerFile) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
-	var (
-		qid          = *lf.QID
-		filled, attr = fillAttrs(req, lf.Attr)
-	)
-	return qid, filled, *attr, nil
-}
-
-func (lf *listenerFile) fidOpened() bool  { return lf.maddrReader != nil }
-func (lf *listenerFile) files() fileTable { return nil }
-func (lf *listenerFile) parent() p9.File  { return lf.parentFile }
-
-func (lf *listenerFile) Walk(names []string) ([]p9.QID, p9.File, error) {
-	return walk[*listenerFile](lf, names...)
-}
-
-func (lf *listenerFile) Open(mode p9.OpenFlags) (p9.QID, uint32, error) {
-	if lf.fidOpened() {
-		return p9.QID{}, 0, perrors.EBADF
-	}
-	if mode.Mode() != p9.ReadOnly {
-		// TODO: [spec] correct evalue?
-		return p9.QID{}, 0, perrors.EINVAL
-	}
-	lf.maddrReader = bytes.NewReader(lf.Listener.Multiaddr().Bytes())
-	return *lf.QID, 0, nil
-}
-
-func (lf *listenerFile) ReadAt(p []byte, offset int64) (int, error) {
-	if !lf.fidOpened() { // TODO: spec compliance check - may need to check flags too.
-		return 0, perrors.EINVAL
-	}
-	return lf.maddrReader.ReadAt(p, offset)
-}
-
+// TODO: split listen up into 3 phases
+// listen; mkfile; linkfile. Listen and Mknod call all 3,
+// but only mknod inserts a callback between the last phase.
 func listen(maddr multiaddr.Multiaddr) (manet.Listener, error) {
 	var (
 		err     error
@@ -432,4 +361,144 @@ func listen(maddr multiaddr.Multiaddr) (manet.Listener, error) {
 		}, nil
 	}
 	return listener, nil
+}
+
+func createListenerFile(listener manet.Listener, name string, permissions p9.FileMode,
+	parent p9.File, path *atomic.Uint64,
+	uid p9.UID, gid p9.GID,
+) (p9.QID, error) {
+	var (
+		listenerFile, err = makeListenerFile(listener,
+			permissions, uid, gid, WithPath(path))
+		qid = *listenerFile.QID
+	)
+	if err != nil {
+		return qid, err
+	}
+	return qid, parent.Link(listenerFile, name)
+}
+
+func makeListenerFile(listener manet.Listener,
+	permissions p9.FileMode, uid p9.UID, gid p9.GID,
+	options ...MetaOption,
+) (*listenerFile, error) {
+	var (
+		meta         = makeMetadata(p9.ModeRegular, options...)
+		listenerFile = &listenerFile{
+			Listener: listener,
+			metadata: meta,
+		}
+		validSet, setAttr = attrToSetAttr(&p9.Attr{
+			Mode: permissions,
+			UID:  uid,
+			GID:  gid,
+			Size: uint64(len(listener.Multiaddr().Bytes())),
+		})
+	)
+	return listenerFile, listenerFile.SetAttr(validSet, setAttr)
+}
+
+func splitMaddr(maddr multiaddr.Multiaddr) (components []*multiaddr.Component, names []string) {
+	multiaddr.ForEach(maddr, func(c multiaddr.Component) bool {
+		components = append(components, &c)
+		names = append(names, strings.Split(c.String(), "/")[1:]...)
+		return true
+	})
+	return
+}
+
+// getFirstUnixSocketPath returns the path
+// of the first Unix domain socket within the multiaddr (if any)
+func getFirstUnixSocketPath(ma multiaddr.Multiaddr) (target string) {
+	multiaddr.ForEach(ma, func(comp multiaddr.Component) bool {
+		isUnixComponent := comp.Protocol().Code == multiaddr.P_UNIX
+		if isUnixComponent {
+			target = comp.Value()
+			if runtime.GOOS == "windows" { // `/C:\path` -> `C:\path`
+				target = strings.TrimPrefix(target, `/`)
+			}
+			return true
+		}
+		return false
+	})
+	return
+}
+
+func (ld *Listener) UnlinkAt(name string, flags uint32) error {
+	_, lFile, err := ld.Walk([]string{name})
+	if err != nil {
+		return err
+	}
+
+	// TODO: we should do an internal [Open] with flags [ORCLOSE]
+	// then unlink from our table,
+	// then return the result of file.Close (which itself calls listener.Close)
+
+	ulErr := ld.directory.UnlinkAt(name, flags)
+	if lf, ok := lFile.(*listenerFile); ok {
+		if listener := lf.Listener; listener != nil {
+			if err := listener.Close(); err != nil {
+				return err
+			}
+		}
+	}
+	return ulErr
+}
+
+func (lf *listenerFile) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
+	return lf.metadata.SetAttr(valid, attr)
+}
+
+func (lf *listenerFile) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
+	return lf.metadata.GetAttr(req)
+}
+
+func (lf *listenerFile) clone(withQID bool) ([]p9.QID, *listenerFile, error) {
+	var (
+		qids  []p9.QID
+		newLf = &listenerFile{
+			metadata: lf.metadata,
+			Listener: lf.Listener,
+		}
+	)
+	if withQID {
+		qids = []p9.QID{*newLf.QID}
+	}
+	return qids, newLf, nil
+}
+
+func (lf *listenerFile) fidOpened() bool { return lf.maddrReader != nil }
+
+func (lf *listenerFile) Walk(names []string) ([]p9.QID, p9.File, error) {
+	return walk[*listenerFile](lf, names...)
+}
+
+func (lf *listenerFile) Open(mode p9.OpenFlags) (p9.QID, uint32, error) {
+	if lf.fidOpened() {
+		return p9.QID{}, 0, perrors.EBADF
+	}
+	if mode.Mode() != p9.ReadOnly {
+		// TODO: [spec] correct evalue?
+		return p9.QID{}, 0, perrors.EINVAL
+	}
+	lf.maddrReader = bytes.NewReader(lf.Listener.Multiaddr().Bytes())
+	return *lf.QID, 0, nil
+}
+
+func (lf *listenerFile) ReadAt(p []byte, offset int64) (int, error) {
+	if !lf.fidOpened() { // TODO: spec compliance check - may need to check flags too.
+		return 0, perrors.EINVAL
+	}
+	return lf.maddrReader.ReadAt(p, offset)
+}
+
+func (udl *listenerUDSWrapper) Close() error {
+	var (
+		lErr = udl.Listener.Close()
+		cErr = udl.closeFunc()
+	)
+	if cErr == nil {
+		return lErr
+	}
+	return cErr
 }
