@@ -1,8 +1,7 @@
 package files
 
 import (
-	"sync/atomic"
-	"time"
+	"log"
 
 	"github.com/hugelgupf/p9/fsimpl/templatefs"
 	"github.com/hugelgupf/p9/p9"
@@ -10,113 +9,95 @@ import (
 )
 
 type (
-	// TODO: rename to unexported mapDirectory?
 	Directory struct {
 		templatefs.NoopFile
-		parentFile p9.File
-		path       *atomic.Uint64
-		entries    fileTable
-		*p9.Attr
-		*p9.QID
+		fileTable
+		metadata
 		opened bool
+	}
+	linkedFile struct {
+		parent p9.File
+		p9.File
+	}
+	ephemeralDir struct {
+		parent p9.File
+		*Directory
+		name string
 	}
 )
 
-func NewDirectory(options ...DirectoryOption) *Directory {
-	var (
-		qid, attr = newMeta(p9.TypeDir)
-		dir       = &Directory{
-			QID:     qid,
-			Attr:    attr,
-			entries: newFileTable(),
-		}
-	)
-	for _, setFunc := range options {
-		if err := setFunc(dir); err != nil {
-			panic(err)
-		}
+func NewDirectory(options ...MetaOption) (p9.QID, *Directory) {
+	meta := makeMetadata(p9.ModeDirectory, options...)
+	return *meta.QID, &Directory{
+		metadata:  meta,
+		fileTable: newFileTable(),
 	}
-	setupOrUsePather(&dir.QID.Path, &dir.path)
-	return dir
 }
 
-func (dir *Directory) Attach() (p9.File, error) { return dir, nil }
+func newLinkedFile(parent, file p9.File) p9.File { return linkedFile{parent: parent, File: file} }
 
-func (dir *Directory) fidOpened() bool  { return dir.opened }
-func (dir *Directory) parent() p9.File  { return dir.parentFile }
-func (dir *Directory) files() fileTable { return dir.entries }
-func (dir *Directory) clone(withQID bool) ([]p9.QID, *Directory) {
+func newEphemeralDir(parent p9.File, name string, options ...MetaOption) (p9.QID, *ephemeralDir) {
+	qid, dir := NewDirectory(options...)
+	return qid, &ephemeralDir{
+		name:      name,
+		parent:    parent,
+		Directory: dir,
+	}
+}
+
+func (dir *ephemeralDir) clone(withQID bool) ([]p9.QID, *ephemeralDir, error) {
 	var (
 		qids   []p9.QID
-		newDir = &Directory{
-			parentFile: dir.parentFile,
-			path:       dir.path,
-			QID:        dir.QID,
-			Attr:       dir.Attr,
-			entries:    dir.entries,
+		newDir = &ephemeralDir{
+			name:      dir.name,
+			parent:    dir.parent,
+			Directory: dir.Directory,
 		}
 	)
 	if withQID {
 		qids = []p9.QID{*newDir.QID}
 	}
-	return qids, newDir
+	return qids, newDir, nil
+}
+
+func (dir *Directory) Attach() (p9.File, error) { return dir, nil }
+
+func (dir *Directory) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
+	return dir.metadata.SetAttr(valid, attr)
+}
+
+func (dir *Directory) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
+	return dir.metadata.GetAttr(req)
 }
 
 func (dir *Directory) Walk(names []string) ([]p9.QID, p9.File, error) {
 	return walk[*Directory](dir, names...)
 }
 
-func (dir *Directory) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
-	var (
-		now             time.Time
-		nowSec, nowNano uint64
-		usingClock      = valid.ATime || valid.MTime || valid.CTime ||
-			valid.ATimeNotSystemTime || valid.MTimeNotSystemTime
-	)
-	if usingClock {
-		now = time.Now()
-		nowSec = uint64(now.Second())
-		nowNano = uint64(now.Nanosecond())
-	}
-	dir.Attr.Apply(valid, attr)
-	if !valid.ATimeNotSystemTime && valid.ATime {
-		dir.Attr.ATimeSeconds = nowSec
-		dir.Attr.ATimeNanoSeconds = nowNano
-	}
-	if !valid.MTimeNotSystemTime && valid.MTime {
-		dir.Attr.MTimeSeconds = nowSec
-		dir.Attr.MTimeNanoSeconds = nowNano
-	}
-	if valid.CTime {
-		if dir.Attr.CTimeNanoSeconds != 0 {
-			return perrors.EINVAL // TODO: eValue; this may only be set once for now - spec unclear.
-		}
-	}
-	return nil
-}
-
-func (dir *Directory) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
-	var (
-		qid          = *dir.QID
-		filled, attr = fillAttrs(req, dir.Attr)
-	)
-	return qid, filled, *attr, nil
-}
-
 func (dir *Directory) Link(file p9.File, name string) error {
-	// TODO: incomplete impl; for testing
-	if !dir.entries.exclusiveStore(name, file) {
+	log.Printf("dir, linking (%T) from (%T): %s", file, dir, name)
+	if !dir.exclusiveStore(name, newLinkedFile(dir, file)) {
 		return perrors.EEXIST // TODO: spec; evalue
 	}
 	return nil
 }
 
 func (dir *Directory) UnlinkAt(name string, flags uint32) error {
-	// TODO: incomplete impl; for testing
-	if !dir.entries.delete(name) {
+	if !dir.fileTable.delete(name) {
 		return perrors.ENOENT // TODO: spec; evalue
 	}
 	return nil
+}
+
+func (dir *Directory) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9.GID) (p9.QID, error) {
+	if _, exists := dir.load(name); exists {
+		return p9.QID{}, perrors.EEXIST
+	}
+	qid, newDir := NewDirectory(WithPath(dir.path))
+	if err := newDir.SetAttr(mkdirMask(permissions, dir.UID, gid)); err != nil {
+		return *newDir.QID, err
+	}
+	return qid, dir.Link(newDir, name)
 }
 
 func (dir *Directory) Open(mode p9.OpenFlags) (p9.QID, uint32, error) {
@@ -131,17 +112,71 @@ func (dir *Directory) Open(mode p9.OpenFlags) (p9.QID, uint32, error) {
 	return *dir.QID, 0, nil
 }
 
-func (dir *Directory) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9.GID) (p9.QID, error) {
-	newDir := NewDirectory(
-		WithParent[DirectoryOption](dir),
-		WithPath[DirectoryOption](dir.path),
-	)
-	if err := newDir.SetAttr(mkdirMask(permissions, dir.UID, gid)); err != nil {
-		return *newDir.QID, err
-	}
-	return *newDir.QID, dir.Link(newDir, name)
+func (dir *Directory) Readdir(offset uint64, count uint32) (p9.Dirents, error) {
+	return dir.fileTable.to9Ents(offset, count)
 }
 
-func (dir *Directory) Readdir(offset uint64, count uint32) (p9.Dirents, error) {
-	return dir.entries.to9Ents(offset, count)
+func (dir *Directory) fidOpened() bool { return dir.opened }
+
+func (dir *Directory) clone(withQID bool) ([]p9.QID, *Directory, error) {
+	var (
+		qids   []p9.QID
+		newDir = &Directory{
+			metadata:  dir.metadata,
+			fileTable: dir.fileTable,
+		}
+	)
+	if withQID {
+		qids = []p9.QID{*newDir.QID}
+	}
+	return qids, newDir, nil
 }
+
+func (lf linkedFile) Walk(names []string) ([]p9.QID, p9.File, error) {
+	parent := lf.parent
+	switch nameCount := len(names); nameCount {
+	case 0:
+		_, file, err := lf.File.Walk(nil)
+		return nil, &linkedFile{
+			parent: parent,
+			File:   file,
+		}, err
+	case 1:
+		switch names[0] {
+		case parentWName:
+			return parent.Walk([]string{selfWName})
+		case selfWName:
+			qids, file, err := lf.File.Walk([]string{selfWName})
+			return qids, &linkedFile{
+				parent: parent,
+				File:   file,
+			}, err
+		}
+	}
+	return lf.File.Walk(names)
+}
+
+func (dir *ephemeralDir) UnlinkAt(name string, flags uint32) error {
+	if !dir.fileTable.delete(name) {
+		return perrors.ENOENT // TODO: spec; evalue
+	}
+	if dir.fileTable.length() == 0 {
+		return dir.parent.UnlinkAt(dir.name, flags)
+	}
+	return nil
+}
+
+func (dir *ephemeralDir) Link(file p9.File, name string) error {
+	log.Println("T1")
+	if !dir.exclusiveStore(name, newLinkedFile(dir, file)) {
+		return perrors.EEXIST
+	}
+	return nil
+}
+
+/*
+func (dir linkedFile) Link(file p9.File, name string) error {
+	log.Println("T2")
+	return perrors.ENOSYS
+}
+*/

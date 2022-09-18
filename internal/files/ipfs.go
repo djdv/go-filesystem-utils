@@ -87,7 +87,7 @@ func makeIPFSTarget(fsid filesystem.ID, options ...ipfsTargetOption) *ipfsTarget
 	return it
 }
 
-func (it *ipfsTarget) clone(withQID bool) ([]p9.QID, *ipfsTarget) {
+func (it *ipfsTarget) clone(withQID bool) ([]p9.QID, *ipfsTarget, error) {
 	var (
 		qids  []p9.QID
 		newIt = &ipfsTarget{
@@ -104,13 +104,10 @@ func (it *ipfsTarget) clone(withQID bool) ([]p9.QID, *ipfsTarget) {
 	if withQID {
 		qids = []p9.QID{newIt.QID}
 	}
-	return qids, newIt
+	return qids, newIt, nil
 }
 
-func (it *ipfsTarget) fidOpened() bool  { return it.opened }
-func (it *ipfsTarget) files() fileTable { return nil }
-
-func (it *ipfsTarget) parent() p9.File { return it.parentFile }
+func (it *ipfsTarget) fidOpened() bool { return it.opened }
 func (it *ipfsTarget) Walk(names []string) ([]p9.QID, p9.File, error) {
 	return walk[*ipfsTarget](it, names...)
 }

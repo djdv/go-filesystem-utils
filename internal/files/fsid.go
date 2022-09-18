@@ -10,15 +10,18 @@ import (
 
 type FSIDDir struct{ *Directory }
 
-func NewFSIDDir(fsid filesystem.ID, options ...DirectoryOption) *FSIDDir {
-	root := &FSIDDir{Directory: NewDirectory(options...)}
-	root.Attr.RDev = p9.Dev(fsid)
-	return root
+func NewFSIDDir(fsid filesystem.ID, options ...MetaOption) *FSIDDir {
+	var (
+		_, dir = NewDirectory(options...)
+		fsys   = &FSIDDir{Directory: dir}
+	)
+	fsys.Attr.RDev = p9.Dev(fsid)
+	return fsys
 }
 
-func (fsi *FSIDDir) clone(withQID bool) ([]p9.QID, *FSIDDir) {
-	qids, dirClone := fsi.Directory.clone(withQID)
-	return qids, &FSIDDir{Directory: dirClone}
+func (fsi *FSIDDir) clone(withQID bool) ([]p9.QID, *FSIDDir, error) {
+	qids, dirClone, err := fsi.Directory.clone(withQID)
+	return qids, &FSIDDir{Directory: dirClone}, err
 }
 
 func (fsi *FSIDDir) Walk(names []string) ([]p9.QID, p9.File, error) {
@@ -63,7 +66,7 @@ func (mn *FSIDDir) Mknod(name string, mode p9.FileMode,
 }
 
 func (mn *FSIDDir) UnlinkAt(name string, flags uint32) error {
-	tf := mn.entries.pop(name)
+	tf := mn.fileTable.pop(name)
 	if tf == nil {
 		return perrors.ENOENT
 	}

@@ -2,6 +2,7 @@ package files
 
 import (
 	"sync/atomic"
+	"time"
 
 	"github.com/hugelgupf/p9/p9"
 )
@@ -49,23 +50,85 @@ const (
 	S_LINMSK = S_IWGRP | S_IWOTH
 )
 
-func newMeta(qType p9.QIDType) (*p9.QID, *p9.Attr) {
-	var mode p9.FileMode
-	switch qType { // TODO: cases for links and such.
-	case p9.TypeRegular:
-		mode = p9.ModeRegular
-	case p9.TypeDir:
-		mode = p9.ModeDirectory
-	}
-	var (
-		qid  = &p9.QID{Type: qType}
-		attr = &p9.Attr{
-			Mode: mode,
+type metadata struct {
+	// parentFile p9.File
+	path *atomic.Uint64
+	*p9.Attr
+	*p9.QID
+}
+
+func makeMetadata(filetype p9.FileMode, options ...MetaOption) metadata {
+	data := metadata{
+		QID: &p9.QID{Type: filetype.QIDType()},
+		Attr: &p9.Attr{
+			Mode: filetype.FileType(),
 			UID:  p9.NoUID,
 			GID:  p9.NoGID,
+		},
+	}
+	for _, setFunc := range options {
+		if err := setFunc(&data); err != nil {
+			panic(err)
 		}
+	}
+	setupOrUsePather(&(data.QID.Path), &(data.path))
+	return data
+}
+
+// func (md metadata) parent() p9.File { return md.parentFile }
+func (md metadata) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
+	var (
+		ourAtime   = !valid.ATimeNotSystemTime
+		ourMtime   = !valid.MTimeNotSystemTime
+		cTime      = valid.CTime
+		usingClock = ourAtime || ourMtime || cTime
 	)
-	return qid, attr
+	if usingClock {
+		var (
+			now     = time.Now()
+			nowSec  = uint64(now.Second())
+			nowNano = uint64(now.Nanosecond())
+		)
+		for _, x := range []struct {
+			set  bool
+			flag *bool
+			s, n *uint64
+		}{
+			{
+				set:  ourAtime,
+				flag: &valid.ATime,
+				s:    &attr.ATimeSeconds,
+				n:    &attr.ATimeNanoSeconds,
+			},
+			{
+				set:  ourMtime,
+				flag: &valid.MTime,
+				s:    &attr.MTimeSeconds,
+				n:    &attr.MTimeNanoSeconds,
+			},
+			{
+				set:  cTime,
+				flag: &valid.CTime,
+				s:    &md.Attr.CTimeSeconds,
+				n:    &md.Attr.CTimeNanoSeconds,
+			},
+		} {
+			if x.set {
+				*x.s, *x.n = nowSec, nowNano
+				*x.flag = false
+			}
+		}
+	}
+	md.Attr.Apply(valid, attr)
+	return nil
+}
+
+func (md metadata) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
+	var (
+		qid          = *md.QID
+		filled, attr = fillAttrs(req, md.Attr)
+	)
+	return qid, filled, *attr, nil
 }
 
 // If the optional parent pather was provided, use it
@@ -122,4 +185,20 @@ func attrToSetAttr(source *p9.Attr) (p9.SetAttrMask, p9.SetAttr) {
 			UID:         source.UID,
 			GID:         source.GID,
 		}
+}
+
+func mkdirMask(permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.SetAttrMask, p9.SetAttr) {
+	return attrToSetAttr(&p9.Attr{
+		Mode: (permissions &^ S_LINMSK) & S_IRWXA,
+		UID:  uid,
+		GID:  gid,
+	})
+}
+
+func mknodMask(permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.SetAttrMask, p9.SetAttr) {
+	return attrToSetAttr(&p9.Attr{
+		Mode: permissions.Permissions() &^ S_LINMSK,
+		UID:  uid,
+		GID:  gid,
+	})
 }

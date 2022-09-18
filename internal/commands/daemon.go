@@ -10,7 +10,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,7 +18,6 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/daemon"
 	"github.com/djdv/go-filesystem-utils/internal/files"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
-	"github.com/hugelgupf/p9/fsimpl/staticfs"
 	"github.com/hugelgupf/p9/p9"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
@@ -166,16 +164,10 @@ func newFileSystem(uid p9.UID, gid p9.GID, netCallback files.ListenerCallback) (
 			UID:         uid,
 			GID:         gid,
 		}
-		path    = new(atomic.Uint64)
-		options = []files.DirectoryOption{
-			files.WithPath[files.DirectoryOption](path),
-		}
-		fsys        = files.NewDirectory(options...)
-		listenerDir = files.NewListener(
-			files.WithParent[files.ListenerOption](fsys),
-			files.WithPath[files.ListenerOption](path),
-			files.WithCallback(netCallback),
-		)
+		path        = new(atomic.Uint64)
+		options     = []files.MetaOption{files.WithPath(path)}
+		_, fsys     = files.NewDirectory(options...)
+		listenerDir = files.NewListener(netCallback, options...)
 	)
 	if err := fsys.SetAttr(valid, attr); err != nil {
 		panic(err)
@@ -186,10 +178,7 @@ func newFileSystem(uid p9.UID, gid p9.GID, netCallback files.ListenerCallback) (
 	}{
 		{
 			name: mounterName,
-			File: files.NewMounter(
-				files.WithParent[files.DirectoryOption](fsys),
-				files.WithPath[files.DirectoryOption](path),
-			),
+			File: files.NewMounter(options...),
 		},
 		{
 			name: listenerName,
@@ -257,6 +246,7 @@ func reopenNullStdio() error {
 // containing multiaddr files that match the listening addresses passed in.
 // (Typically used between the daemon and
 // a client that spawned the daemon's process - via stdio.)
+/* DEPRECATED; actual server's listener dir is passed through flatfunc now instead.
 func newListenerServer(listeners ...manet.Listener) (*p9.Server, error) {
 	root, err := newListenerFlatDir(listeners...)
 	if err != nil {
@@ -267,10 +257,8 @@ func newListenerServer(listeners ...manet.Listener) (*p9.Server, error) {
 
 func newListenerFlatDir(listeners ...manet.Listener) (*files.Directory, error) {
 	var (
-		root         = files.NewDirectory()
-		listenersDir = files.NewDirectory(
-			files.WithParent[files.DirectoryOption](root),
-		)
+		_, root         = files.NewDirectory()
+		_, listenersDir = files.NewDirectory(files.WithParent(root))
 	)
 	// TODO: name const
 	if err := root.Link(listenersDir, "listeners"); err != nil {
@@ -287,6 +275,7 @@ func newListenerFlatDir(listeners ...manet.Listener) (*files.Directory, error) {
 	}
 	return root, nil
 }
+*/
 
 func signalCount(ctx context.Context, sig os.Signal) <-chan uint {
 	var (
@@ -401,17 +390,23 @@ func shutdownOnIdle(ctx context.Context, interval time.Duration,
 		for {
 			select {
 			case <-idleCheckTicker.C:
+				log.Println("checking if busy...")
 				busy, err := haveMounts(mounterDir)
 				if err != nil {
+					log.Println("err:", err)
 					sendErr(err)
 					return
 				}
 				if busy {
+					log.Println("we're busy.")
 					continue
 				}
+				log.Println("we're not busy - shutting down")
 				if err := shutdown(ctx, netMan); err != nil {
+					log.Println("shutdown err:", err)
 					sendErr(err)
 				}
+				log.Println("shutdown")
 				return
 			case <-ctx.Done():
 				return

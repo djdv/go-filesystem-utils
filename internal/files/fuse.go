@@ -25,15 +25,18 @@ type (
 	}
 )
 
-func NewFuseDir(options ...DirectoryOption) *FuseDir {
-	dir := &FuseDir{Directory: NewDirectory(options...)}
-	dir.Directory.Attr.RDev = p9.Dev(filesystem.Fuse)
-	return dir
+func NewFuseDir(options ...MetaOption) *FuseDir {
+	var (
+		_, dir = NewDirectory(options...)
+		fsys   = &FuseDir{Directory: dir}
+	)
+	fsys.Directory.Attr.RDev = p9.Dev(filesystem.Fuse)
+	return fsys
 }
 
-func (dir *FuseDir) clone(withQID bool) ([]p9.QID, *FuseDir) {
-	qids, dirClone := dir.Directory.clone(withQID)
-	return qids, &FuseDir{Directory: dirClone}
+func (dir *FuseDir) clone(withQID bool) ([]p9.QID, *FuseDir, error) {
+	qids, dirClone, err := dir.Directory.clone(withQID)
+	return qids, &FuseDir{Directory: dirClone}, err
 }
 
 func (dir *FuseDir) Walk(names []string) ([]p9.QID, p9.File, error) {
@@ -45,13 +48,10 @@ func (dir *FuseDir) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9
 	if err != nil {
 		return p9.QID{}, err
 	}
-	if _, exists := dir.entries.load(name); exists {
+	if _, exists := dir.fileTable.load(name); exists {
 		return p9.QID{}, perrors.EEXIST
 	}
-	fsidDir := NewFSIDDir(fsid,
-		WithParent[DirectoryOption](dir),
-		WithPath[DirectoryOption](dir.Directory.path),
-	)
+	fsidDir := NewFSIDDir(fsid, WithPath(dir.Directory.path))
 	if err := fsidDir.SetAttr(mkdirMask(permissions, dir.UID, gid)); err != nil {
 		return *fsidDir.QID, err
 	}
