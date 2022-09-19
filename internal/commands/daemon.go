@@ -96,7 +96,7 @@ func daemonExecute(ctx context.Context, set *daemonSettings) error {
 			serversWg.Add(1)
 			go func() {
 				defer serversWg.Done()
-				if err := serve(ctx, server, netMan, listener); err != nil {
+				if err := serve(ctx, server, listener, &serversWg, netMan); err != nil {
 					select {
 					case serveErrs <- err:
 					case <-ctx.Done():
