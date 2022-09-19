@@ -11,10 +11,14 @@ import (
 	"github.com/u-root/uio/ulog"
 )
 
-type Client struct {
-	p9Client *p9.Client
-	log      ulog.Logger
-}
+type (
+	nanoidGen = func() string
+	Client    struct {
+		p9Client *p9.Client
+		log      ulog.Logger
+		idGen    nanoidGen
+	}
+)
 
 func Connect(serverMaddr multiaddr.Multiaddr, options ...ClientOption) (*Client, error) {
 	client := new(Client)

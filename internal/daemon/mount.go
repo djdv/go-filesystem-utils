@@ -19,19 +19,24 @@ type (
 	// I.e. 9lib.Mount and client.Mount should use the same option type/structs
 	MountOption   func(*mountSettings) error
 	mountSettings struct {
-		uid p9.UID
-		gid p9.GID
-		// fsid  filesystem.ID
-		// fsapi filesystem.API
-		/*
-			fuse struct {
-				uid, gid uint32
-			}
-		*/
 		ipfs struct {
 			nodeMaddr multiaddr.Multiaddr
 		}
+		uid p9.UID
+		gid p9.GID
+		/*
+			fuse struct {
+				// fsid  filesystem.ID
+				// fsapi filesystem.API
+				uid, gid uint32
+			}
+		*/
 	}
+)
+
+const (
+	idLength       = 9
+	base58Alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 )
 
 // func (c *Client) Mount(args []string, options ...MountOptions) error {
@@ -51,13 +56,23 @@ func (c *Client) Mount(host filesystem.API, fsid filesystem.ID, args []string, o
 		if err != nil {
 			return err
 		}
-		return handleFuse(mRoot, fsid, set, args)
+		idGen := c.idGen
+		if idGen == nil {
+			var err error
+			if idGen, err = nanoid.CustomASCII(base58Alphabet, idLength); err != nil {
+				return err
+			}
+			c.idGen = idGen
+		}
+		return handleFuse(mRoot, idGen, fsid, set, args)
 	default:
 		return errors.New("NIY")
 	}
 }
 
-func handleFuse(mRoot p9.File, fsid filesystem.ID, set *mountSettings, targets []string) error {
+func handleFuse(mRoot p9.File, idGen nanoidGen, fsid filesystem.ID,
+	set *mountSettings, targets []string,
+) error {
 	var (
 		fuseName = strings.ToLower(filesystem.Fuse.String())
 		fsidName = strings.ToLower(fsid.String())
@@ -73,13 +88,7 @@ func handleFuse(mRoot p9.File, fsid filesystem.ID, set *mountSettings, targets [
 
 	// TODO: make target file, write opts, close.
 	// ^ triggers mount on the server.
-
-	// TODO: store this generator, don't remake it every time.
-	newID9, err := nanoid.Standard(9)
-	if err != nil {
-		panic(err)
-	}
-	name := fmt.Sprintf("{%s}.json", newID9())
+	name := fmt.Sprintf("%s.json", idGen())
 	targetFile, _, _, err := idRoot.Create(name, p9.ReadWrite, permissions, uid, gid)
 	if err != nil {
 		return err
