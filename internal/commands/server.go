@@ -97,16 +97,15 @@ func closeIdle(conns connectionsMap) error {
 }
 
 func serve(ctx context.Context,
-	srv *p9.Server, netMan *listenerManager,
-	listener manet.Listener,
+	srv *p9.Server, listener manet.Listener,
+	connectionsWg *sync.WaitGroup, netMan *listenerManager,
 ) error {
 	acceptCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var (
-		handleErrs    []error
-		connectionsWg = new(sync.WaitGroup)
-		connections   = netMan.new(listener)
-		conns, errs   = accept(acceptCtx, listener)
+		handleErrs  []error
+		connections = netMan.new(listener)
+		conns, errs = accept(acceptCtx, listener)
 	)
 	for connOrErr := range generic.CtxEither(acceptCtx, conns, errs) {
 		if err := connOrErr.Right; err != nil {
