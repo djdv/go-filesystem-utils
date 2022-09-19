@@ -2,7 +2,6 @@ package files
 
 import (
 	"errors"
-	"log"
 	"sync/atomic"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
@@ -31,7 +30,7 @@ func (dir *mounter) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9
 		return p9.QID{}, err
 	}
 	want := p9.AttrMask{UID: true}
-	_, valid, attr, err := dir.File.GetAttr(want)
+	_, valid, attr, err := dir.GetAttr(want)
 	if err != nil {
 		return p9.QID{}, err
 	}
@@ -41,25 +40,6 @@ func (dir *mounter) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9
 	const withServerTimes = true
 	switch hostAPI {
 	case filesystem.Fuse:
-		// TODO: proper option for this? avoid allocating 2 directories and dropping 1.
-		/*
-			var (
-				_, hostAPIDir = NewFuseDir()
-				qid, eDir     = newEphemeralDir(dir, name, WithPath(dir.path))
-			)
-			eDir.File = hostAPIDir
-		*/
-		/*
-			var ( // TODO: Proper.
-				qid, hostAPIDir = NewFuseDir(WithPath(dir.path))
-				eDir            = &ephemeralDir{
-					File:   hostAPIDir,
-					parent: dir,
-					name:   name,
-					path:   dir.path,
-				}
-			) //
-		*/
 		var ( // TODO: Proper.
 			qid, eDir  = newEphemeralDir(dir, name, WithPath(dir.path))
 			hostAPIDir = &FuseDir{
@@ -70,7 +50,7 @@ func (dir *mounter) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9
 		// TODO: need to be able to set this like constructor does.
 		// eDir.Attr.RDev = p9.Dev(filesystem.Fuse)
 		// HACK:
-		eDir.File.(*Directory).Attr.RDev = p9.Dev(filesystem.Fuse)
+		eDir.File.(*Directory).RDev = p9.Dev(filesystem.Fuse)
 		if err := setAttr(hostAPIDir, &p9.Attr{
 			Mode: (permissions.Permissions() &^ S_LINMSK) & S_IRWXA,
 			UID:  attr.UID,
@@ -78,9 +58,6 @@ func (dir *mounter) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9
 		}, withServerTimes); err != nil {
 			return qid, err
 		}
-
-		log.Printf("linking %T \"%s\" to %T", hostAPIDir, name, dir)
-
 		return qid, dir.Link(hostAPIDir, name)
 	default:
 		return p9.QID{}, errors.New("unexpected host") // TODO: msg

@@ -68,7 +68,7 @@ func flattenListeners(dir p9.File) ([]multiaddr.Multiaddr, error) {
 	if err != nil {
 		return nil, err
 	}
-	var maddrs []multiaddr.Multiaddr
+	maddrs := make([]multiaddr.Multiaddr, 0, len(ents))
 	for _, ent := range ents {
 		wnames := []string{ent.Name}
 		_, entFile, err := dir.Walk(wnames) // TODO: close?

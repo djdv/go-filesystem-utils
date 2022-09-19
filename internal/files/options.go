@@ -17,36 +17,10 @@ import (
 // we'll uhhh... figure something out later I guess.
 
 type (
-	MetaOption func(*metadata) error
-
-	// ListenerOption func(*Listener) error
-	// listenerOption   func(*listenerFile) error
+	MetaOption       func(*metadata) error
 	ipfsTargetOption func(*ipfsTarget) error
 )
 
 func WithPath(path *atomic.Uint64) MetaOption {
 	return func(m *metadata) error { m.path = path; return nil }
 }
-
-/*
-func WithParent(parent p9.File) MetaOption {
-	return func(m *metadata) error { m.parentFile = parent; return nil }
-}
-*/
-
-// TODO: name: WithMknodCallback?
-/*
-func WithCallback(cb ListenerCallback) ListenerOption {
-	return func(l *Listener) error { l.mknodCallback = cb; return nil }
-}
-*/
-
-/*
-func withPrefix(prefix multiaddr.Multiaddr) ListenerOption {
-	return func(l *Listener) error { l.prefix = prefix; return nil }
-}
-
-func withProtocol(protocol string) ListenerOption {
-	return func(l *Listener) error { l.protocol = protocol; return nil }
-}
-*/

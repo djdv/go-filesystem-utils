@@ -2,7 +2,6 @@ package files
 
 import (
 	"errors"
-	"log"
 	"sync/atomic"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
@@ -20,7 +19,7 @@ func NewFSIDDir(fsid filesystem.ID, options ...MetaOption) (p9.QID, *FSIDDir) {
 		qid, dir = NewDirectory(options...)
 		fsys     = &FSIDDir{File: dir, path: dir.path}
 	)
-	dir.Attr.RDev = p9.Dev(fsid)
+	dir.RDev = p9.Dev(fsid)
 	return qid, fsys
 }
 
@@ -73,28 +72,25 @@ func (mn *FSIDDir) Create(name string, flags p9.OpenFlags, permissions p9.FileMo
 }
 
 func (mn *FSIDDir) Mknod(name string, mode p9.FileMode,
-	major uint32, minor uint32, uid p9.UID, gid p9.GID,
+	major uint32, minor uint32, _ p9.UID, gid p9.GID,
 ) (p9.QID, error) {
-	_, _, attr, err := mn.File.GetAttr(p9.AttrMaskAll)
+	want := p9.AttrMask{UID: true, RDev: true}
+	attr, err := getAttrs(mn.File, want)
 	if err != nil {
 		return p9.QID{}, err
 	}
 	switch fsid := filesystem.ID(attr.RDev); fsid {
 	case filesystem.IPFS, filesystem.IPFSPins,
 		filesystem.IPNS, filesystem.IPFSKeys:
-		mountFile := makeIPFSTarget(fsid)
-		if err := setAttr(mountFile, &attr, true); err != nil {
-			return p9.QID{}, err
-		}
-		log.Printf("linking %T \"%s\" to %T", mountFile, name, mn)
-		return mountFile.QID, mn.Link(mountFile, name)
+
+		permissions := mode.Permissions() &^ S_LINMSK
+		return createIPFSTarget(fsid, name, permissions, mn, mn.path, attr.UID, gid)
 	default:
 		return p9.QID{}, errors.New("unexpected fsid") // TODO: real error
 	}
 }
 
 func (mn *FSIDDir) UnlinkAt(name string, flags uint32) error {
-	log.Println("fsidir UnlinkAt:", name)
 	_, tf, err := mn.File.Walk([]string{name})
 	if err != nil {
 		return err

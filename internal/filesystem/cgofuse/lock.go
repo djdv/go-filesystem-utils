@@ -64,7 +64,7 @@ func pathIndex(path string) []int {
 	const (
 		delim      = '/'
 		indexAlloc = 8 // NOTE: Arbitrary; change if it makes sense to.
-		//Should be some average path depth.
+		// Should be some average path depth.
 	)
 	var (
 		fullPath       = len(path)

@@ -39,15 +39,13 @@ type ipfsTarget struct {
 	wBufMu sync.Locker  // TODO: no external hats, roll into method box.
 	wBuf   bytes.Buffer // TODO: pointer to buf, init on open(W)?
 
+	metadata
 	parentFile p9.File
 	mountpoint io.Closer
-	path       *atomic.Uint64
-	options    struct {
+	options    struct { // TODO: json encoding methods to be called directly.
 		ApiMaddr ipfsAPIMultiaddr
 		Target   string
 	}
-	p9.Attr
-	p9.QID
 	fsid   filesystem.ID
 	opened bool
 }
@@ -67,35 +65,46 @@ func withMountTarget(target string) ipfsTargetOption {
 	}
 }
 
-// TODO: follow makeListenerFile style.
-func makeIPFSTarget(fsid filesystem.ID, options ...ipfsTargetOption) *ipfsTarget {
-	it := &ipfsTarget{
-		QID: p9.QID{Type: p9.TypeRegular},
-		Attr: p9.Attr{
-			Mode: p9.ModeRegular,
-			UID:  p9.NoUID,
-			GID:  p9.NoGID,
-		},
-		fsid:   fsid,
-		wBufMu: new(sync.Mutex),
+func createIPFSTarget(fsid filesystem.ID, name string, permissions p9.FileMode,
+	parent p9.File, path *atomic.Uint64,
+	uid p9.UID, gid p9.GID,
+) (p9.QID, error) {
+	var (
+		mountFile, err = makeIPFSTarget(fsid,
+			permissions, uid, gid, WithPath(path))
+		qid = *mountFile.QID
+	)
+	if err != nil {
+		return qid, err
 	}
-	for _, setFunc := range options {
-		if err := setFunc(it); err != nil {
-			panic(err)
-		}
+	return qid, parent.Link(mountFile, name)
+}
+
+func makeIPFSTarget(fsid filesystem.ID,
+	permissions p9.FileMode, uid p9.UID, gid p9.GID,
+	options ...MetaOption,
+) (*ipfsTarget, error) {
+	ipfsFile := &ipfsTarget{
+		metadata: makeMetadata(p9.ModeRegular, options...),
+		fsid:     fsid,
+		wBufMu:   new(sync.Mutex),
 	}
-	setupOrUsePather(&it.QID.Path, &it.path)
-	return it
+	const withServerTimes = true
+	return ipfsFile, setAttr(ipfsFile, &p9.Attr{
+		Mode: permissions,
+		UID:  uid,
+		GID:  gid,
+		// TODO: sizeof file in json bytes.
+		// Size: uint64(len(listener.Multiaddr().Bytes())),
+	}, withServerTimes)
 }
 
 func (it *ipfsTarget) clone(withQID bool) ([]p9.QID, *ipfsTarget, error) {
 	var (
 		qids  []p9.QID
 		newIt = &ipfsTarget{
-			QID:        it.QID,
-			Attr:       it.Attr,
+			metadata:   it.metadata,
 			parentFile: it.parentFile,
-			path:       it.path,
 			options:    it.options,
 			mountpoint: it.mountpoint,
 			wBufMu:     it.wBufMu,
@@ -103,7 +112,7 @@ func (it *ipfsTarget) clone(withQID bool) ([]p9.QID, *ipfsTarget, error) {
 		}
 	)
 	if withQID {
-		qids = []p9.QID{newIt.QID}
+		qids = []p9.QID{*newIt.QID}
 	}
 	return qids, newIt, nil
 }
@@ -114,16 +123,11 @@ func (it *ipfsTarget) Walk(names []string) ([]p9.QID, p9.File, error) {
 }
 
 func (it *ipfsTarget) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
-	it.Attr.Apply(valid, attr)
-	return nil
+	return it.metadata.SetAttr(valid, attr)
 }
 
-func (lf *ipfsTarget) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
-	var (
-		qid          = lf.QID
-		filled, attr = fillAttrs(req, &lf.Attr)
-	)
-	return qid, filled, *attr, nil
+func (it *ipfsTarget) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
+	return it.metadata.GetAttr(req)
 }
 
 func (it *ipfsTarget) Open(mode p9.OpenFlags) (p9.QID, uint32, error) {
@@ -131,7 +135,7 @@ func (it *ipfsTarget) Open(mode p9.OpenFlags) (p9.QID, uint32, error) {
 		return p9.QID{}, 0, perrors.EBADF
 	}
 	it.opened = true
-	return it.QID, 0, nil
+	return *it.QID, 0, nil
 }
 
 func (it *ipfsTarget) WriteAt(p []byte, offset int64) (int, error) {
@@ -205,8 +209,9 @@ func mountFuseIPFS(ipfsMaddr multiaddr.Multiaddr, fsid filesystem.ID, target str
 
 	// TODO: 1 interface per subsystem directory, not 1 per mountpoint
 	// I.e. 1 for /fuse/ipfs, 1 for /fuse/ipns, etc. not /fuse/ipfs/m1, /fuse/ipfs/m2
-	const dbgLog = false // TODO: plumbing from options.
-	fsi, err := cgofuse.NewFuseInterface(goFS, dbgLog)
+	// const dbgLog = false // TODO: plumbing from options.
+	// ^ Still needed but as funcopts
+	fsi, err := cgofuse.NewFuseInterface(goFS)
 	if err != nil {
 		return nil, err
 	}

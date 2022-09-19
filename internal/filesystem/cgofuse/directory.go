@@ -112,7 +112,7 @@ func (fuse *hostBinding) Readdir(path string,
 		// guarantee that we die on destroy at least.
 		readCtx, readCancel = context.WithCancel(context.TODO())
 		entries             = make(chan fs.DirEntry, buffSize)
-		// TODO: type saftey; revert this when the indexes are split
+		// TODO: type safety; revert this when the indexes are split
 		errs = filesystem.StreamDir(directory.goFile.(fs.ReadDirFile), readCtx, entries)
 	)
 	defer readCancel()

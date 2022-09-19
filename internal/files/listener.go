@@ -55,18 +55,9 @@ type (
 	}
 )
 
-// TODO: this has to be changed? Require the callbacks for mknod and unlink?
-// accept metadata options.
-func NewListener(callback ListenerCallback, options ...MetaOption) *Listener {
-	_, root := NewDirectory(options...)
-	/*
-		return &Listener{
-			path:          listeners.path,
-			directory:     listeners,
-			mknodCallback: callback,
-		}
-	*/
-	return newListener(callback, root, root.path)
+func NewListener(callback ListenerCallback, options ...MetaOption) (p9.QID, *Listener) {
+	qid, root := NewDirectory(options...)
+	return qid, newListener(callback, root, root.path)
 }
 
 func newListener(callback ListenerCallback, directory p9.File, path *atomic.Uint64) *Listener {
@@ -75,14 +66,6 @@ func newListener(callback ListenerCallback, directory p9.File, path *atomic.Uint
 		File:          directory,
 		mknodCallback: callback,
 	}
-}
-
-func (ld *Listener) fidOpened() bool { return false } // TODO need to store state or read &.dir's
-func (ld *Listener) files() fileTable {
-	// XXX: Magic; We need to change something to eliminate this.
-	return ld.File.(interface {
-		files() fileTable
-	}).files()
 }
 
 func (ld *Listener) clone(withQID bool) ([]p9.QID, *Listener, error) {
@@ -105,6 +88,15 @@ func (ld *Listener) clone(withQID bool) ([]p9.QID, *Listener, error) {
 
 func (ld *Listener) Walk(names []string) ([]p9.QID, p9.File, error) {
 	return walk[*Listener](ld, names...)
+}
+
+func (ld *Listener) fidOpened() bool { return false } // TODO need to store state or read &.dir's
+
+func (ld *Listener) files() fileTable {
+	// XXX: Magic; We need to change something to eliminate this.
+	return ld.File.(interface {
+		files() fileTable
+	}).files()
 }
 
 func (ld *Listener) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9.GID) (p9.QID, error) {
@@ -150,7 +142,7 @@ func (ld *Listener) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9
 	}, withServerTimes); err != nil {
 		return qid, err
 	}
-	return qid, ld.File.Link(newDir, name)
+	return qid, ld.Link(newDir, name)
 }
 
 func validateProtocol(name string) error {
@@ -336,13 +328,10 @@ func makeListenerFile(listener manet.Listener,
 	permissions p9.FileMode, uid p9.UID, gid p9.GID,
 	options ...MetaOption,
 ) (*listenerFile, error) {
-	var (
-		meta         = makeMetadata(p9.ModeRegular, options...)
-		listenerFile = &listenerFile{
-			Listener: listener,
-			metadata: meta,
-		}
-	)
+	listenerFile := &listenerFile{
+		metadata: makeMetadata(p9.ModeRegular, options...),
+		Listener: listener,
+	}
 	const withServerTimes = true
 	return listenerFile, setAttr(listenerFile, &p9.Attr{
 		Mode: permissions,

@@ -164,10 +164,10 @@ func newFileSystem(uid p9.UID, gid p9.GID, netCallback files.ListenerCallback) (
 			UID:         uid,
 			GID:         gid,
 		}
-		path        = new(atomic.Uint64)
-		options     = []files.MetaOption{files.WithPath(path)}
-		_, fsys     = files.NewDirectory(options...)
-		listenerDir = files.NewListener(netCallback, options...)
+		path           = new(atomic.Uint64)
+		options        = []files.MetaOption{files.WithPath(path)}
+		_, fsys        = files.NewDirectory(options...)
+		_, listenerDir = files.NewListener(netCallback, options...)
 	)
 	if err := fsys.SetAttr(valid, attr); err != nil {
 		panic(err)
