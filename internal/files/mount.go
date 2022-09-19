@@ -2,21 +2,25 @@ package files
 
 import (
 	"errors"
+	"log"
+	"sync/atomic"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	"github.com/hugelgupf/p9/p9"
-	"github.com/hugelgupf/p9/perrors"
 )
 
 // TODO: docs; recommended / default value for this file's name
 const MounterName = "mounts"
 
-type mounter struct{ *Directory }
+type mounter struct {
+	p9.File
+	path *atomic.Uint64
+}
 
 func NewMounter(options ...MetaOption) *mounter {
 	var (
-		_, dir  = NewDirectory(options...)
-		mounter = &mounter{Directory: dir}
+		_, root = NewDirectory(options...)
+		mounter = &mounter{File: root, path: root.path}
 	)
 	return mounter
 }
@@ -26,18 +30,58 @@ func (dir *mounter) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9
 	if err != nil {
 		return p9.QID{}, err
 	}
-	if _, exists := dir.fileTable.load(name); exists {
-		return p9.QID{}, perrors.EEXIST
+	want := p9.AttrMask{UID: true}
+	_, valid, attr, err := dir.File.GetAttr(want)
+	if err != nil {
+		return p9.QID{}, err
 	}
-	dirOptions := []MetaOption{WithPath(dir.Directory.path)}
+	if !valid.Contains(want) {
+		return p9.QID{}, attrErr(valid, want)
+	}
+	const withServerTimes = true
 	switch hostAPI {
 	case filesystem.Fuse:
-		hostAPIDir := NewFuseDir(dirOptions...)
-		if err := hostAPIDir.SetAttr(mkdirMask(permissions, dir.UID, gid)); err != nil {
-			return *hostAPIDir.QID, err
+		// TODO: proper option for this? avoid allocating 2 directories and dropping 1.
+		/*
+			var (
+				_, hostAPIDir = NewFuseDir()
+				qid, eDir     = newEphemeralDir(dir, name, WithPath(dir.path))
+			)
+			eDir.File = hostAPIDir
+		*/
+		/*
+			var ( // TODO: Proper.
+				qid, hostAPIDir = NewFuseDir(WithPath(dir.path))
+				eDir            = &ephemeralDir{
+					File:   hostAPIDir,
+					parent: dir,
+					name:   name,
+					path:   dir.path,
+				}
+			) //
+		*/
+		var ( // TODO: Proper.
+			qid, eDir  = newEphemeralDir(dir, name, WithPath(dir.path))
+			hostAPIDir = &FuseDir{
+				File: eDir,
+				path: dir.path,
+			}
+		) //
+		// TODO: need to be able to set this like constructor does.
+		// eDir.Attr.RDev = p9.Dev(filesystem.Fuse)
+		// HACK:
+		eDir.File.(*Directory).Attr.RDev = p9.Dev(filesystem.Fuse)
+		if err := setAttr(hostAPIDir, &p9.Attr{
+			Mode: (permissions.Permissions() &^ S_LINMSK) & S_IRWXA,
+			UID:  attr.UID,
+			GID:  gid,
+		}, withServerTimes); err != nil {
+			return qid, err
 		}
 
-		return *hostAPIDir.QID, dir.Link(hostAPIDir, name)
+		log.Printf("linking %T \"%s\" to %T", hostAPIDir, name, dir)
+
+		return qid, dir.Link(hostAPIDir, name)
 	default:
 		return p9.QID{}, errors.New("unexpected host") // TODO: msg
 	}

@@ -4,19 +4,20 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"sync/atomic"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem/cgofuse"
 	"github.com/hugelgupf/p9/fsimpl/templatefs"
 	"github.com/hugelgupf/p9/p9"
-	"github.com/hugelgupf/p9/perrors"
 	"github.com/multiformats/go-multiaddr"
 )
 
 type (
-	FuseDir struct{ *Directory }
-
-	// TODO: unlink == fsh.unmount?
+	FuseDir struct {
+		p9.File
+		path *atomic.Uint64
+	}
 	fuseInterfaceFile struct {
 		templatefs.NoopFile
 		mountpoint io.Closer
@@ -25,18 +26,36 @@ type (
 	}
 )
 
-func NewFuseDir(options ...MetaOption) *FuseDir {
+func NewFuseDir(options ...MetaOption) (p9.QID, *FuseDir) {
 	var (
-		_, dir = NewDirectory(options...)
-		fsys   = &FuseDir{Directory: dir}
+		qid, dir = NewDirectory(options...)
+		fsys     = &FuseDir{File: dir, path: dir.path}
 	)
-	fsys.Directory.Attr.RDev = p9.Dev(filesystem.Fuse)
-	return fsys
+	dir.Attr.RDev = p9.Dev(filesystem.Fuse)
+	return qid, fsys
+}
+
+func (dir *FuseDir) fidOpened() bool { return false } // TODO need to store state or read &.dir's
+func (dir *FuseDir) files() fileTable {
+	// XXX: Magic; We need to change something to eliminate this.
+	return dir.File.(interface {
+		files() fileTable
+	}).files()
 }
 
 func (dir *FuseDir) clone(withQID bool) ([]p9.QID, *FuseDir, error) {
-	qids, dirClone, err := dir.Directory.clone(withQID)
-	return qids, &FuseDir{Directory: dirClone}, err
+	var wnames []string
+	if withQID {
+		wnames = []string{selfWName}
+	}
+	var (
+		qids, dirClone, err = dir.File.Walk(wnames)
+		newDir              = &FuseDir{File: dirClone, path: dir.path}
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	return qids, newDir, nil
 }
 
 func (dir *FuseDir) Walk(names []string) ([]p9.QID, p9.File, error) {
@@ -48,14 +67,32 @@ func (dir *FuseDir) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9
 	if err != nil {
 		return p9.QID{}, err
 	}
-	if _, exists := dir.fileTable.load(name); exists {
-		return p9.QID{}, perrors.EEXIST
+	want := p9.AttrMask{UID: true}
+	attr, err := getAttrs(dir.File, want)
+	if err != nil {
+		return p9.QID{}, err
 	}
-	fsidDir := NewFSIDDir(fsid, WithPath(dir.Directory.path))
-	if err := fsidDir.SetAttr(mkdirMask(permissions, dir.UID, gid)); err != nil {
-		return *fsidDir.QID, err
+
+	var ( // TODO: Proper.
+		qid, fsiDir = NewFSIDDir(fsid, WithPath(dir.path))
+		eDir        = &ephemeralDir{
+			File:   fsiDir,
+			parent: dir,
+			name:   name,
+			path:   dir.path,
+		}
+	) //
+	const withServerTimes = true
+	if err := setAttr(eDir, &p9.Attr{
+		Mode: (permissions.Permissions() &^ S_LINMSK) & S_IRWXA,
+		UID:  attr.UID,
+		GID:  gid,
+	}, withServerTimes); err != nil {
+		return qid, err
 	}
-	return *fsidDir.QID, dir.Link(fsidDir, name)
+
+	log.Printf("linking %T \"%s\" to %T", eDir, name, dir)
+	return qid, dir.Link(eDir, name)
 }
 
 func (dir *FuseDir) newHostFile(target string, fsid filesystem.ID, attr *p9.Attr) *fuseInterfaceFile {
@@ -142,3 +179,10 @@ func (fsi *fuseInterfaceFile) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.
 	)
 	return qid, filled, *attr, nil
 }
+
+/* TODO: if we're empty, close the fuse/WinFSP interface?
+func (mn *FuseDir) UnlinkAt(name string, flags uint32) error {
+	log.Printf("fusedir UnlinkAt: %s from %T", name, mn.File)
+	return mn.File.UnlinkAt(name, flags)
+}
+*/
