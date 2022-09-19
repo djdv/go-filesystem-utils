@@ -82,18 +82,31 @@ func (cm *connectionManager) delete(conn manet.Conn) {
 func (tc *trackedConn) Read(b []byte) (int, error) { *tc.Time = time.Now(); return tc.Conn.Read(b) }
 
 func closeIdle(conns connectionsMap) error {
-	const threshold = time.Duration(3 * time.Second) // TODO: DBG value - real == 10? 30?
-	now := time.Now()
+	const threshold = time.Duration(30 * time.Second)
+	var (
+		now  = time.Now()
+		errs []error
+	)
 	for connection, lastActive := range conns {
 		if now.Sub(*lastActive) >= threshold {
 			delete(conns, connection) // XXX: Review sync.
 			if err := connection.Close(); err != nil {
-				// FIXME: aggregate errs
-				return err
+				errs = append(errs, err)
 			}
 		}
 	}
-	return nil
+	return joinErrs(errs...)
+}
+
+func closeAll(conns connectionsMap) error {
+	var errs []error
+	for connection := range conns {
+		delete(conns, connection) // XXX: Review sync.
+		if err := connection.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return joinErrs(errs...)
 }
 
 func serve(ctx context.Context,
@@ -129,17 +142,8 @@ func serve(ctx context.Context,
 			}
 		}(conn)
 	}
-
 	connectionsWg.Wait()
-	var err error
-	for _, e := range handleErrs {
-		if err == nil {
-			err = e
-		} else {
-			err = fmt.Errorf("%w\n%s", err, e)
-		}
-	}
-	return err
+	return joinErrs(handleErrs...)
 }
 
 func accept(ctx context.Context, listener manet.Listener) (<-chan manet.Conn, <-chan error) {
@@ -199,8 +203,13 @@ func shutdown(ctx context.Context, netMan *listenerManager) error {
 				connections.activeMu.Unlock()
 				continue
 			}
-			// TODO: if ctx.Err; force close connections, now, not on idle.
-			cErr := closeIdle(connections.active)
+			var closeConns func(connectionsMap) error
+			if ctx.Err() != nil {
+				closeConns = closeAll
+			} else {
+				closeConns = closeIdle
+			}
+			cErr := closeConns(connections.active)
 			connections.activeMu.Unlock()
 			if cErr != nil {
 				return cErr

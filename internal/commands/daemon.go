@@ -316,6 +316,17 @@ func flattenErrs(errs ...<-chan error) (err error) {
 	return
 }
 
+func joinErrs(errs ...error) (err error) {
+	for _, e := range errs {
+		if err == nil {
+			err = e
+		} else {
+			err = fmt.Errorf("%w\n%s", err, e)
+		}
+	}
+	return
+}
+
 func shutdownOnInterrupt(ctx context.Context, cancel context.CancelFunc,
 	counter <-chan uint, netMan *listenerManager,
 ) <-chan error {
