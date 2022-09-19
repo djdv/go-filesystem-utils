@@ -2,6 +2,7 @@ package files
 
 import (
 	"log"
+	"sync/atomic"
 
 	"github.com/hugelgupf/p9/fsimpl/templatefs"
 	"github.com/hugelgupf/p9/p9"
@@ -15,14 +16,11 @@ type (
 		metadata
 		opened bool
 	}
-	linkedFile struct {
-		parent p9.File
-		p9.File
-	}
 	ephemeralDir struct {
+		p9.File
 		parent p9.File
-		*Directory
-		name string
+		path   *atomic.Uint64
+		name   string
 	}
 )
 
@@ -34,28 +32,38 @@ func NewDirectory(options ...MetaOption) (p9.QID, *Directory) {
 	}
 }
 
-func newLinkedFile(parent, file p9.File) p9.File { return linkedFile{parent: parent, File: file} }
-
+// func newLinkedFile(parent, file p9.File) p9.File { return linkedFile{parent: parent, File: file} }
 func newEphemeralDir(parent p9.File, name string, options ...MetaOption) (p9.QID, *ephemeralDir) {
 	qid, dir := NewDirectory(options...)
 	return qid, &ephemeralDir{
-		name:      name,
-		parent:    parent,
-		Directory: dir,
+		File:   dir,
+		parent: parent,
+		path:   dir.path,
+		name:   name,
 	}
 }
 
+func (dir *ephemeralDir) files() fileTable {
+	// XXX: Magic; We need to change something to eliminate this.
+	return dir.File.(interface {
+		files() fileTable
+	}).files()
+}
+
 func (dir *ephemeralDir) clone(withQID bool) ([]p9.QID, *ephemeralDir, error) {
-	var (
-		qids   []p9.QID
-		newDir = &ephemeralDir{
-			name:      dir.name,
-			parent:    dir.parent,
-			Directory: dir.Directory,
-		}
-	)
+	var wnames []string
 	if withQID {
-		qids = []p9.QID{*newDir.QID}
+		wnames = []string{selfWName}
+	}
+	qids, dirClone, err := dir.File.Walk(wnames)
+	if err != nil {
+		return nil, nil, err
+	}
+	newDir := &ephemeralDir{
+		File:   dirClone,
+		parent: dir.parent,
+		path:   dir.path,
+		name:   dir.name,
 	}
 	return qids, newDir, nil
 }
@@ -75,14 +83,15 @@ func (dir *Directory) Walk(names []string) ([]p9.QID, p9.File, error) {
 }
 
 func (dir *Directory) Link(file p9.File, name string) error {
-	log.Printf("dir, linking (%T) from (%T): %s", file, dir, name)
-	if !dir.exclusiveStore(name, newLinkedFile(dir, file)) {
+	// log.Printf("dir, linking (%T) from (%T): %s", file, dir, name)
+	if !dir.exclusiveStore(name, file) {
 		return perrors.EEXIST // TODO: spec; evalue
 	}
 	return nil
 }
 
 func (dir *Directory) UnlinkAt(name string, flags uint32) error {
+	log.Printf("d(%T) - unlink: %s", dir, name)
 	if !dir.fileTable.delete(name) {
 		return perrors.ENOENT // TODO: spec; evalue
 	}
@@ -116,7 +125,8 @@ func (dir *Directory) Readdir(offset uint64, count uint32) (p9.Dirents, error) {
 	return dir.fileTable.to9Ents(offset, count)
 }
 
-func (dir *Directory) fidOpened() bool { return dir.opened }
+func (dir *Directory) fidOpened() bool  { return dir.opened }
+func (dir *Directory) files() fileTable { return dir.fileTable }
 
 func (dir *Directory) clone(withQID bool) ([]p9.QID, *Directory, error) {
 	var (
@@ -132,51 +142,21 @@ func (dir *Directory) clone(withQID bool) ([]p9.QID, *Directory, error) {
 	return qids, newDir, nil
 }
 
-func (lf linkedFile) Walk(names []string) ([]p9.QID, p9.File, error) {
-	parent := lf.parent
-	switch nameCount := len(names); nameCount {
-	case 0:
-		_, file, err := lf.File.Walk(nil)
-		return nil, &linkedFile{
-			parent: parent,
-			File:   file,
-		}, err
-	case 1:
-		switch names[0] {
-		case parentWName:
-			return parent.Walk([]string{selfWName})
-		case selfWName:
-			qids, file, err := lf.File.Walk([]string{selfWName})
-			return qids, &linkedFile{
-				parent: parent,
-				File:   file,
-			}, err
-		}
-	}
-	return lf.File.Walk(names)
-}
-
 func (dir *ephemeralDir) UnlinkAt(name string, flags uint32) error {
-	if !dir.fileTable.delete(name) {
-		return perrors.ENOENT // TODO: spec; evalue
+	log.Printf("ed(%T) - unlink: %s", dir, name)
+	if err := dir.File.UnlinkAt(name, flags); err != nil {
+		return err
 	}
-	if dir.fileTable.length() == 0 {
+	log.Printf("ed(%T) - unlink - post: %s", dir, name)
+	ents, err := ReadDir(dir.File)
+	if err != nil {
+		return err
+	}
+	if len(ents) == 0 {
+		log.Println("removing self:", dir.name)
 		return dir.parent.UnlinkAt(dir.name, flags)
+	} else {
+		log.Println("contents still here for ", dir.name, " ", ents)
 	}
 	return nil
 }
-
-func (dir *ephemeralDir) Link(file p9.File, name string) error {
-	log.Println("T1")
-	if !dir.exclusiveStore(name, newLinkedFile(dir, file)) {
-		return perrors.EEXIST
-	}
-	return nil
-}
-
-/*
-func (dir linkedFile) Link(file p9.File, name string) error {
-	log.Println("T2")
-	return perrors.ENOSYS
-}
-*/

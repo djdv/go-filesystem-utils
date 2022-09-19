@@ -67,6 +67,7 @@ func withMountTarget(target string) ipfsTargetOption {
 	}
 }
 
+// TODO: follow makeListenerFile style.
 func makeIPFSTarget(fsid filesystem.ID, options ...ipfsTargetOption) *ipfsTarget {
 	it := &ipfsTarget{
 		QID: p9.QID{Type: p9.TypeRegular},

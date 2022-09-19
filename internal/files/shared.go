@@ -15,6 +15,9 @@ const (
 )
 
 type (
+	childWalker[F p9.File] interface {
+		parent() p9.File
+	}
 	fileWalker[F p9.File] interface {
 		fidOpened() bool
 		clone(withQid bool) ([]p9.QID, F, error)
@@ -26,7 +29,7 @@ type (
 )
 
 func walk[F p9.File](file fileWalker[F], names ...string) ([]p9.QID, p9.File, error) {
-	fmt.Printf("walkan:\n\t%v\n\tfrom: %#v\n", names, file)
+	// fmt.Printf("walkan:\n\t%v\n\tfrom: %#v\n", names, file)
 	if file.fidOpened() {
 		return nil, nil, perrors.EINVAL // TODO: [spec] correct evalue?
 	}
@@ -38,7 +41,13 @@ func walk[F p9.File](file fileWalker[F], names ...string) ([]p9.QID, p9.File, er
 	case 0:
 		return file.clone(withoutQID)
 	case 1:
-		if names[0] == selfWName {
+		switch names[0] {
+		case parentWName:
+			if child, ok := file.(childWalker[F]); ok {
+				return child.parent().Walk([]string{selfWName})
+			}
+			fallthrough
+		case selfWName:
 			return file.clone(withQID)
 		}
 	}
@@ -53,10 +62,12 @@ func walkRecur(files fileTable, names ...string) ([]p9.QID, p9.File, error) {
 	if !ok {
 		return nil, nil, perrors.ENOENT
 	}
-
-	if linked, ok := file.(*linkedFile); ok {
-		file = linked.File
-	}
+	/*
+		if linked, ok := file.(linkedFile); ok {
+			log.Printf("unwrapping link: %T", linked.File)
+			file = linked.File
+		}
+	*/
 
 	qids := make([]p9.QID, 1, len(names))
 	qid, _, _, err := file.GetAttr(p9.AttrMask{})
@@ -123,6 +134,27 @@ func removeEmpties(root p9.File, dirs []string) error {
 		}
 	}
 	return nil
+}
+
+func setAttr(file p9.File, attr *p9.Attr, withServerTimes bool) error {
+	valid, setAttr := attrToSetAttr(attr)
+	if withServerTimes {
+		valid.ATime = true
+		valid.MTime = true
+		valid.CTime = true
+	}
+	return file.SetAttr(valid, setAttr)
+}
+
+func getAttrs(file p9.File, want p9.AttrMask) (*p9.Attr, error) {
+	_, valid, attr, err := file.GetAttr(want)
+	if err != nil {
+		return nil, err
+	}
+	if !valid.Contains(want) {
+		return nil, attrErr(valid, want)
+	}
+	return &attr, nil
 }
 
 func attrErr(got, want p9.AttrMask) error {

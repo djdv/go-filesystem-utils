@@ -128,6 +128,7 @@ func (md metadata) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error
 		qid          = *md.QID
 		filled, attr = fillAttrs(req, md.Attr)
 	)
+	// log.Println(filled, attr)
 	return qid, filled, *attr, nil
 }
 
@@ -173,18 +174,41 @@ func fillAttrs(req p9.AttrMask, attr *p9.Attr) (p9.AttrMask, *p9.Attr) {
 // FIXME: currently assumes perm, uid, and gid are set
 // should inspect source for dynamic mask.
 func attrToSetAttr(source *p9.Attr) (p9.SetAttrMask, p9.SetAttr) {
-	return p9.SetAttrMask{
-			Permissions: true,
-			UID:         true,
-			GID:         true,
-			ATime:       true,
-			MTime:       true,
-			CTime:       true,
-		}, p9.SetAttr{
-			Permissions: source.Mode,
-			UID:         source.UID,
-			GID:         source.GID,
+	var (
+		valid p9.SetAttrMask
+		attr  p9.SetAttr
+		uid   = source.UID
+		gid   = source.GID
+	)
+	if permissions := source.Mode.Permissions(); permissions != 0 {
+		attr.Permissions, valid.Permissions = permissions, true
+	}
+	attr.UID, valid.UID = uid, uid.Ok()
+	attr.GID, valid.GID = gid, gid.Ok()
+	if size := source.Size; size != 0 {
+		attr.Size, valid.Size = size, true
+	}
+	for _, timeAttr := range []struct {
+		value              uint64
+		setTime, localTime *bool
+	}{
+		{
+			value:     source.ATimeNanoSeconds,
+			setTime:   &valid.ATime,
+			localTime: &valid.ATimeNotSystemTime,
+		},
+		{
+			value:     source.MTimeNanoSeconds,
+			setTime:   &valid.MTime,
+			localTime: &valid.MTimeNotSystemTime,
+		},
+	} {
+		if timeAttr.value != 0 {
+			*timeAttr.setTime = true
+			*timeAttr.localTime = true
 		}
+	}
+	return valid, attr
 }
 
 func mkdirMask(permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.SetAttrMask, p9.SetAttr) {
