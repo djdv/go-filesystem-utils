@@ -30,7 +30,7 @@ import (
 type (
 	// TODO: we should probably note why this exists ✔️
 	// TODO: [Ame] English.
-	// it's just a typedef for the constructor to switch on.
+	// Op is a typedef for the constructor to switch on.
 	// To distinguish between untyped strings.
 	Op string
 
@@ -75,11 +75,11 @@ func (e *Error) Error() string {
 	b := new(bytes.Buffer)
 	if e.Op != "" {
 		pad(b, ": ")
-		b.WriteString(string(e.Op))
+		b.WriteString(e.Op)
 	}
 	if e.Path != "" {
 		pad(b, ": ")
-		b.WriteString(string(e.Path))
+		b.WriteString(e.Path)
 	}
 	if e.Kind != Other {
 		pad(b, ": ")

@@ -31,7 +31,7 @@ type hostBinding struct {
 	log        ulog.Logger // general operations log
 }
 
-func NewFuseInterface(fs fs.FS, dbgLog bool) (fuselib.FileSystemInterface, error) {
+func NewFuseInterface(fs fs.FS) (fuselib.FileSystemInterface, error) {
 	// TODO: WithLog(...) option.
 	/*
 		var eLog logging.EventLogger
@@ -42,7 +42,8 @@ func NewFuseInterface(fs fs.FS, dbgLog bool) (fuselib.FileSystemInterface, error
 		}
 	*/
 	sysLog := ulog.Null
-	if dbgLog {
+	const logStub = false // TODO: from CLI flags / funcopts.
+	if logStub {
 		// sysLog = log.Default()
 		sysLog = log.New(os.Stdout, "fuse dbg - ", log.Lshortfile)
 	}
