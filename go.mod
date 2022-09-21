@@ -6,13 +6,16 @@ require (
 	github.com/adrg/xdg v0.4.0
 	github.com/billziss-gh/cgofuse v1.5.0
 	github.com/hugelgupf/p9 v0.2.0
+	github.com/ipfs/go-cid v0.2.0
 	github.com/ipfs/go-ipfs-files v0.1.1
 	github.com/ipfs/go-ipfs-http-client v0.4.0
 	github.com/ipfs/go-ipld-cbor v0.0.6
 	github.com/ipfs/go-ipld-format v0.4.0
 	github.com/ipfs/go-merkledag v0.6.0
+	github.com/ipfs/go-path v0.3.0
 	github.com/ipfs/go-unixfs v0.4.0
 	github.com/ipfs/interface-go-ipfs-core v0.7.0
+	github.com/ipfs/kubo v0.14.0
 	github.com/jaevor/go-nanoid v1.3.0
 	github.com/multiformats/go-multiaddr v0.6.0
 	github.com/multiformats/go-multiaddr-dns v0.3.1
@@ -32,7 +35,6 @@ require (
 	github.com/ipfs/bbloom v0.0.4 // indirect
 	github.com/ipfs/go-block-format v0.0.3 // indirect
 	github.com/ipfs/go-blockservice v0.3.0 // indirect
-	github.com/ipfs/go-cid v0.2.0
 	github.com/ipfs/go-datastore v0.5.1 // indirect
 	github.com/ipfs/go-ipfs-blockstore v1.2.0 // indirect
 	github.com/ipfs/go-ipfs-cmds v0.8.1 // indirect
@@ -43,9 +45,7 @@ require (
 	github.com/ipfs/go-log v1.0.5 // indirect
 	github.com/ipfs/go-log/v2 v2.5.1 // indirect
 	github.com/ipfs/go-metrics-interface v0.0.1 // indirect
-	github.com/ipfs/go-path v0.3.0
 	github.com/ipfs/go-verifcid v0.0.1 // indirect
-	github.com/ipfs/kubo v0.14.0
 	github.com/ipld/go-codec-dagpb v1.4.0 // indirect
 	github.com/ipld/go-ipld-prime v0.17.0 // indirect
 	github.com/jbenet/goprocess v0.1.4 // indirect
