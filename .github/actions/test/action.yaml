@@ -1,0 +1,8 @@
+name: "Go tests"
+description: "Runs the standard Golang test suite."
+runs:
+  using: "composite"
+  steps:
+    - name: Test
+      shell: pwsh
+      run: go test -cover .${{ matrix.pathdelm }}...

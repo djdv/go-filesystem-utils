@@ -1,0 +1,52 @@
+name: "Setup environment"
+description: "Installs dependencies and configures the CI for building and deploying."
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Go
+      uses: actions/setup-go@v3
+      with:
+        go-version-file: 'go.mod'
+        check-latest: true
+
+    - name: Get Go cache paths
+      id: cache_go
+      shell: pwsh
+      run: |
+        echo "::set-output name=mod::$(go env GOMODCACHE)"
+        echo "::set-output name=build::$(go env GOCACHE)"
+
+    - name: Restore cache
+      uses: actions/cache@v3
+      with:
+        path: |
+          ${{ steps.cache_go.outputs.mod }}
+          ${{ steps.cache_go.outputs.build }}
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: ${{ runner.os }}-go-
+
+    - name: Install winfsp (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $releases = Invoke-WebRequest https://api.github.com/repos/winfsp/winfsp/releases | `
+          ConvertFrom-Json
+
+        $asseturi = $releases[0].assets.browser_download_url | `
+            Where-Object { $_ -match "winfsp-.*\.msi" }
+        Invoke-WebRequest -Uri $asseturi -Out winfsp.msi
+        Start-Process -NoNewWindow -Wait msiexec "/i winfsp.msi /qn INSTALLLEVEL=1000"
+
+    - name: Install FUSE (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get -qq install libfuse-dev
+        sudo apt-get -qq install libacl1-dev
+
+    - name: Install FUSE (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        brew tap macos-fuse-t/homebrew-cask
+        brew install fuse-t
