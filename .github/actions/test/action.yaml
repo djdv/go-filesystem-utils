@@ -1,8 +1,18 @@
 name: "Go tests"
-description: "Runs the standard Golang test suite."
+description: "Runs the standard Golang test suite"
 runs:
   using: "composite"
   steps:
-    - name: Test
+    - uses: ./.github/actions/setup
+    - if: runner.os == 'Windows'
       shell: pwsh
-      run: go test -cover .${{ matrix.pathdelm }}...
+      run: |
+        $incDir = $(Join-Path (${ENV:ProgramFiles(x86)} ?? $ENV:ProgramFiles) "WinFsp" "inc" "fuse")
+        "CPATH=$incDir" >> $env:GITHUB_ENV
+    - shell: pwsh
+      env:
+        CPATH: ${{env.CPATH}}
+      run: |
+        $commandPath = $(Join-Path . ...)
+        go test -cover ${commandPath}
+        go test -race ${commandPath}

@@ -1,0 +1,23 @@
+name: "Setup Go"
+description: "Installs Go and restores a build cache"
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-go@v3
+      with:
+        go-version-file: 'go.mod'
+        check-latest: true
+    - name: Get Go cache paths
+      id: cache_go
+      shell: pwsh
+      run: |
+        echo "::set-output name=mod::$(go env GOMODCACHE)"
+        echo "::set-output name=build::$(go env GOCACHE)"
+    - name: Restore cache
+      uses: actions/cache@v3
+      with:
+        path: |
+          ${{ steps.cache_go.outputs.mod }}
+          ${{ steps.cache_go.outputs.build }}
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: ${{ runner.os }}-go-
