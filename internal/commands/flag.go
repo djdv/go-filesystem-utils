@@ -37,17 +37,12 @@ type (
 	defaultServerMaddr struct{ multiaddr.Multiaddr }
 )
 
-func (dm defaultServerMaddr) get() multiaddr.Multiaddr {
-	if maddr := dm.Multiaddr; maddr != nil {
-		return maddr
-	}
+func (defaultServerMaddr) get() multiaddr.Multiaddr {
 	userMaddrs, err := daemon.UserServiceMaddrs()
 	if err != nil {
 		panic(err)
 	}
-	defaultMaddr := userMaddrs[0]
-	dm.Multiaddr = defaultMaddr
-	return defaultMaddr
+	return userMaddrs[0]
 }
 
 func (set *commonSettings) BindFlags(fs *flag.FlagSet) {

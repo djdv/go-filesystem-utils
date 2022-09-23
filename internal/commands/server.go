@@ -2,13 +2,14 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"log"
+	"io"
+	"net"
 	"sync"
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/internal/generic"
-	"github.com/hugelgupf/p9/p9"
 	manet "github.com/multiformats/go-multiaddr/net"
 )
 
@@ -31,6 +32,8 @@ type (
 		manet.Conn
 		*time.Time
 	}
+
+	serverHandleFunc = func(io.ReadCloser, io.WriteCloser) error
 )
 
 // TODO: better name?
@@ -82,7 +85,7 @@ func (cm *connectionManager) delete(conn manet.Conn) {
 func (tc *trackedConn) Read(b []byte) (int, error) { *tc.Time = time.Now(); return tc.Conn.Read(b) }
 
 func closeIdle(conns connectionsMap) error {
-	const threshold = time.Duration(30 * time.Second)
+	const threshold = 30 * time.Second
 	var (
 		now  = time.Now()
 		errs []error
@@ -110,40 +113,54 @@ func closeAll(conns connectionsMap) error {
 }
 
 func serve(ctx context.Context,
-	srv *p9.Server, listener manet.Listener,
-	connectionsWg *sync.WaitGroup, netMan *listenerManager,
-) error {
-	acceptCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	var (
-		handleErrs  []error
-		connections = netMan.new(listener)
-		conns, errs = accept(acceptCtx, listener)
-	)
-	for connOrErr := range generic.CtxEither(acceptCtx, conns, errs) {
-		if err := connOrErr.Right; err != nil {
-			return err
-		}
+	listener manet.Listener, listMan *listenerManager,
+	handle serverHandleFunc,
+) <-chan error {
+	errs := make(chan error)
+	go func() {
+		defer close(errs)
 		var (
-			conn   = connOrErr.Left
-			handle = srv.Handle
+			connectionsWg     sync.WaitGroup
+			connMan           = listMan.new(listener)
+			acceptCtx, cancel = context.WithCancel(ctx)
+			conns, acceptErrs = accept(acceptCtx, listener)
 		)
-		connectionsWg.Add(1)
-		go func(cn manet.Conn) {
-			defer connectionsWg.Done()
-			defer connections.delete(cn)
-			lastActive := connections.new(conn)
-			tc := &trackedConn{
-				Conn: cn,
-				Time: lastActive,
+		defer cancel()
+		defer listMan.delete(listener)
+		for connOrErr := range generic.CtxEither(acceptCtx, conns, acceptErrs) {
+			var (
+				conn = connOrErr.Left
+				err  = connOrErr.Right
+			)
+			if err != nil {
+				select {
+				case errs <- err:
+					continue
+				case <-ctx.Done():
+					return
+				}
 			}
-			if err := handle(tc, tc); err != nil {
-				handleErrs = append(handleErrs, err)
-			}
-		}(conn)
-	}
-	connectionsWg.Wait()
-	return joinErrs(handleErrs...)
+			connectionsWg.Add(1)
+			go func(cn manet.Conn) {
+				defer connectionsWg.Done()
+				defer connMan.delete(cn)
+				tc := &trackedConn{
+					Conn: cn,
+					Time: connMan.new(conn),
+				}
+				if err := handle(tc, tc); err != nil {
+					if !errors.Is(err, io.EOF) {
+						select {
+						case errs <- err:
+						case <-ctx.Done():
+						}
+					}
+				}
+			}(conn)
+		}
+		connectionsWg.Wait()
+	}()
+	return errs
 }
 
 func accept(ctx context.Context, listener manet.Listener) (<-chan manet.Conn, <-chan error) {
@@ -154,24 +171,21 @@ func accept(ctx context.Context, listener manet.Listener) (<-chan manet.Conn, <-
 	go func() {
 		defer close(conns)
 		defer close(errs)
-		// TODO: should we watch the context and call listener.Close on Done?
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
-				select {
-				case errs <- err:
-				case <-ctx.Done():
+				if !errors.Is(err, net.ErrClosed) {
+					select {
+					case errs <- err:
+					case <-ctx.Done():
+					}
 				}
 				return
 			}
 			select {
 			case conns <- conn:
 			case <-ctx.Done():
-				if err := listener.Close(); err != nil {
-					// TODO: log this?
-					// Force errs drain?
-					log.Println(err)
-				}
+				conn.Close()
 				return
 			}
 		}
@@ -179,9 +193,9 @@ func accept(ctx context.Context, listener manet.Listener) (<-chan manet.Conn, <-
 	return conns, errs
 }
 
-func shutdown(ctx context.Context, netMan *listenerManager) error {
-	listenerMap := netMan.active
-	defer netMan.activeMu.locks()()
+func shutdown(ctx context.Context, listMan *listenerManager) error {
+	listenerMap := listMan.active
+	defer listMan.activeMu.locks()()
 	var err error
 	for listener := range listenerMap {
 		if cErr := listener.Close(); cErr != nil {
@@ -215,6 +229,7 @@ func shutdown(ctx context.Context, netMan *listenerManager) error {
 				return cErr
 			}
 			if len(connections.active) != 0 {
+				// TODO: const
 				time.Sleep(1 * time.Second)
 			}
 		}

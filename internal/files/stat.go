@@ -51,7 +51,6 @@ const (
 )
 
 type metadata struct {
-	// parentFile p9.File
 	path *atomic.Uint64
 	*p9.Attr
 	*p9.QID
@@ -75,7 +74,6 @@ func makeMetadata(filetype p9.FileMode, options ...MetaOption) metadata {
 	return data
 }
 
-// func (md metadata) parent() p9.File { return md.parentFile }
 func (md metadata) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
 	var (
 		ourAtime   = !valid.ATimeNotSystemTime
@@ -90,32 +88,32 @@ func (md metadata) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
 			nowNano = uint64(now.Nanosecond())
 		)
 		for _, x := range []struct {
-			set  bool
-			flag *bool
-			s, n *uint64
+			maskFlag             *bool
+			seconds, nanoseconds *uint64
+			setFlag              bool
 		}{
 			{
-				set:  ourAtime,
-				flag: &valid.ATime,
-				s:    &attr.ATimeSeconds,
-				n:    &attr.ATimeNanoSeconds,
+				setFlag:     ourAtime,
+				maskFlag:    &valid.ATime,
+				seconds:     &attr.ATimeSeconds,
+				nanoseconds: &attr.ATimeNanoSeconds,
 			},
 			{
-				set:  ourMtime,
-				flag: &valid.MTime,
-				s:    &attr.MTimeSeconds,
-				n:    &attr.MTimeNanoSeconds,
+				setFlag:     ourMtime,
+				maskFlag:    &valid.MTime,
+				seconds:     &attr.MTimeSeconds,
+				nanoseconds: &attr.MTimeNanoSeconds,
 			},
 			{
-				set:  cTime,
-				flag: &valid.CTime,
-				s:    &md.Attr.CTimeSeconds,
-				n:    &md.Attr.CTimeNanoSeconds,
+				setFlag:     cTime,
+				maskFlag:    &valid.CTime,
+				seconds:     &md.Attr.CTimeSeconds,
+				nanoseconds: &md.Attr.CTimeNanoSeconds,
 			},
 		} {
-			if x.set {
-				*x.s, *x.n = nowSec, nowNano
-				*x.flag = false
+			if x.setFlag {
+				*x.seconds, *x.nanoseconds = nowSec, nowNano
+				*x.maskFlag = false
 			}
 		}
 	}
@@ -151,7 +149,6 @@ func fillAttrs(req p9.AttrMask, attr *p9.Attr) (p9.AttrMask, *p9.Attr) {
 	if req.Empty() {
 		return filled, &rAttr
 	}
-
 	if req.Mode {
 		rAttr.Mode, filled.Mode = attr.Mode, true
 	}
@@ -167,7 +164,6 @@ func fillAttrs(req p9.AttrMask, attr *p9.Attr) (p9.AttrMask, *p9.Attr) {
 	if req.Size {
 		rAttr.Size, filled.Size = attr.Size, true
 	}
-
 	return filled, &rAttr
 }
 
@@ -189,8 +185,8 @@ func attrToSetAttr(source *p9.Attr) (p9.SetAttrMask, p9.SetAttr) {
 		attr.Size, valid.Size = size, true
 	}
 	for _, timeAttr := range []struct {
-		value              uint64
 		setTime, localTime *bool
+		value              uint64
 	}{
 		{
 			value:     source.ATimeNanoSeconds,

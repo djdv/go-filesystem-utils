@@ -4,13 +4,40 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"os"
 	"time"
 
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
+	"github.com/hugelgupf/p9/p9"
 )
 
-const rootName = "."
+const (
+	rootName = "."
+
+	s_IROTH os.FileMode = os.FileMode(p9.Read)
+	s_IWOTH             = os.FileMode(p9.Write)
+	s_IXOTH             = os.FileMode(p9.Exec)
+
+	i_modeShift = 3
+
+	s_IRGRP = s_IROTH << i_modeShift
+	s_IWGRP = s_IWOTH << i_modeShift
+	s_IXGRP = s_IXOTH << i_modeShift
+
+	s_IRUSR = s_IRGRP << i_modeShift
+	s_IWUSR = s_IWGRP << i_modeShift
+	s_IXUSR = s_IXGRP << i_modeShift
+
+	s_IRWXO = s_IROTH | s_IWOTH | s_IXOTH
+	s_IRWXG = s_IRGRP | s_IWGRP | s_IXGRP
+	s_IRWXU = s_IRUSR | s_IWUSR | s_IXUSR
+
+	// Non-standard.
+
+	s_IRWXA = s_IRWXU | s_IRWXG | s_IRWXO              // 0777
+	s_IRXA  = s_IRWXA &^ (s_IWUSR | s_IWGRP | s_IWOTH) // 0555
+)
 
 type (
 	rootStat struct { // TODO: remove

@@ -6,12 +6,7 @@ import (
 	"github.com/u-root/uio/ulog"
 )
 
-type (
-	ClientOption func(*Client) error
-
-	// TODO: server options removed, remove this too?
-	NetOptions interface{ ClientOption }
-)
+type ClientOption func(*Client) error
 
 const (
 	// TODO: del
@@ -58,12 +53,8 @@ func AllServiceMaddrs() ([]multiaddr.Multiaddr, error) {
 	return serviceMaddrs, nil
 }
 
-func WithLogger[OT NetOptions](log ulog.Logger) (option OT) {
-	switch fnPtrPtr := any(&option).(type) {
-	case *ClientOption:
-		*fnPtrPtr = func(c *Client) error { c.log = log; return nil }
-	}
-	return option
+func WithLogger(log ulog.Logger) ClientOption {
+	return func(c *Client) error { c.log = log; return nil }
 }
 
 func WithIPFS(maddr multiaddr.Multiaddr) MountOption {

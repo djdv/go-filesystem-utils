@@ -239,10 +239,11 @@ func (ld *Listener) Listen(maddr multiaddr.Multiaddr) (manet.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
+	const socketMask = S_IXOTH | S_IXGRP | S_IXUSR
 	var (
 		permissions  = attr.Mode.Permissions()
 		permissionsD = (permissions &^ S_LINMSK) & S_IRWXA
-		permissionsF = permissions &^ S_LINMSK
+		permissionsF = (permissions &^ S_LINMSK) &^ socketMask
 		uid          = attr.UID
 		gid          = attr.GID
 	)

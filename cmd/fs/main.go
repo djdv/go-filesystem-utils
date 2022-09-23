@@ -16,7 +16,6 @@ import (
 
 type settings struct {
 	command.HelpArg
-	somethingDifferent int
 }
 
 func (set *settings) BindFlags(fs *flag.FlagSet) {
