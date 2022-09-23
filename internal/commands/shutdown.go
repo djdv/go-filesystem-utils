@@ -25,7 +25,7 @@ func shutdownExecute(ctx context.Context, set *shutdownSettings, _ ...string) er
 	if set.verbose {
 		// TODO: less fancy prefix and/or out+prefix from CLI flags
 		clientLog := log.New(os.Stdout, "⬇️ client - ", log.Lshortfile)
-		clientOpts = append(clientOpts, daemon.WithLogger[daemon.ClientOption](clientLog))
+		clientOpts = append(clientOpts, daemon.WithLogger(clientLog))
 	}
 
 	// TODO: signalctx + shutdown on cancel

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"os"
 	"os/signal"
 	"sync"
@@ -69,84 +68,97 @@ const (
 func daemonExecute(ctx context.Context, set *daemonSettings) error {
 	var ( // TODO: [31f421d5-cb4c-464e-9d0f-41963d0956d1]
 		serverMaddr = set.serverMaddr
-		srvLog      ulog.Logger
-		nineOpts    []p9.ServerOpt
+		srvLog      = makeDaemonLog(set.verbose)
 	)
 	if lazy, ok := serverMaddr.(lazyFlag[multiaddr.Multiaddr]); ok {
 		serverMaddr = lazy.get()
 	}
-	if set.verbose {
-		srvLog = log.New(os.Stdout, "⬆️ server - ", log.Lshortfile)
-		nineOpts = []p9.ServerOpt{p9.WithServerLogger(srvLog)}
-	} else {
-		srvLog = ulog.Null
-	}
-	//
 	var (
-		sigCtx, sigCancel = context.WithCancel(ctx)
-		interruptCount    = signalCount(sigCtx, os.Interrupt)
-
-		serversWg sync.WaitGroup
-		server    *p9.Server
-
-		serveErrs = make(chan error)
-
-		netMan      = new(listenerManager)
-		netCallback = func(listener manet.Listener) {
-			serversWg.Add(1)
+		listenersWg    sync.WaitGroup
+		handler        serverHandleFunc
+		listMan        = new(listenerManager)
+		serveErrs      = make(chan error)
+		handleListener = func(listener manet.Listener) {
+			listenersWg.Add(1)
+			srvLog.Print("listening on: ", listener.Multiaddr())
 			go func() {
-				defer serversWg.Done()
-				if err := serve(ctx, server, listener, &serversWg, netMan); err != nil {
+				defer listenersWg.Done()
+				for err := range serve(ctx, listener, listMan, handler) {
 					select {
 					case serveErrs <- err:
 					case <-ctx.Done():
+						return
 					}
 				}
+				srvLog.Print("done listening on: ", listener.Multiaddr())
 			}()
 		}
-		fsys, netsys  = newFileSystem(set.uid, set.gid, netCallback)
-		listener, err = netsys.Listen(serverMaddr)
+		fsys, netsys                     = newSystems(set.uid, set.gid, handleListener)
+		server                           = p9.NewServer(fsys, p9.WithServerLogger(srvLog))
+		sigCtx, sigCancel, interruptErrs = shutdownOnInterrupt(ctx, listMan)
+		listener, err                    = netsys.Listen(serverMaddr)
+		errs                             = []<-chan error{serveErrs, interruptErrs}
 	)
-	defer sigCancel()
 	if err != nil {
+		sigCancel()
 		return err
 	}
-	server = p9.NewServer(fsys, nineOpts...)
-	netCallback(listener)
-
-	// TODO: share same shutdown function between interrupt, idle, et al. server-watchers
-
-	interruptErrs := shutdownOnInterrupt(sigCtx, sigCancel, interruptCount, netMan)
-	go func() {
-		defer sigCancel()
-		defer close(serveErrs)
-		serversWg.Wait()
-	}()
-
-	srvLog.Print("listening on: ", serverMaddr)
-
-	errs := []<-chan error{serveErrs, interruptErrs}
+	handler = server.Handle
+	handleListener(listener)
+	go func() { defer sigCancel(); defer close(serveErrs); listenersWg.Wait() }()
 	if isPipe(os.Stdin) {
-		errs = append(errs,
-			handleStdio(sigCtx, server))
+		errs = append(errs, handleStdio(sigCtx, server))
 	}
 	if interval := set.exitInterval; interval != 0 {
-		errs = append(errs,
-			shutdownOnIdle(ctx, interval, fsys, netMan))
+		errs = append(errs, shutdownOnIdle(ctx, interval, fsys, listMan))
 	}
-
-	// TODO: we need to act on all errors as they come in
-	// not just all of them at time of exit.
-	// (Trigger shutdown on first encountered?)
-	if err := flattenErrs(errs...); err != nil {
-		if !errors.Is(err, net.ErrClosed) {
-			return err
-		}
-	}
-	return nil
+	return flattenErrs(errs...)
 }
 
-func newFileSystem(uid p9.UID, gid p9.GID, netCallback files.ListenerCallback) (*files.Directory, *files.Listener) {
+func makeDaemonLog(verbose bool) ulog.Logger {
+	if verbose {
+		return log.New(os.Stdout, "⬆️ server - ", log.Lshortfile)
+	}
+	return ulog.Null
+}
+
+func shutdownOnInterrupt(ctx context.Context, listMan *listenerManager) (context.Context, context.CancelFunc, <-chan error) {
+	var (
+		sigCtx, sigCancel = context.WithCancel(ctx)
+		interruptCount    = signalCount(sigCtx, os.Interrupt)
+	)
+	return sigCtx, sigCancel, shutdownWithCounter(sigCtx, sigCancel, interruptCount, listMan)
+}
+
+func signalCount(ctx context.Context, sig os.Signal) <-chan uint {
+	var (
+		counter = make(chan uint)
+		signals = make(chan os.Signal, 1)
+	)
+	signal.Notify(signals, sig)
+	go func() {
+		defer close(counter)
+		defer close(signals)
+		defer signal.Ignore(sig)
+		var count uint
+		for {
+			select {
+			case <-signals:
+				count++
+				select {
+				case counter <- count:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return counter
+}
+
+func newSystems(uid p9.UID, gid p9.GID, netCallback files.ListenerCallback) (*files.Directory, *files.Listener) {
 	const permissions = files.S_IRWXU |
 		files.S_IRGRP | files.S_IXGRP |
 		files.S_IROTH | files.S_IXOTH
@@ -164,10 +176,11 @@ func newFileSystem(uid p9.UID, gid p9.GID, netCallback files.ListenerCallback) (
 			UID:         uid,
 			GID:         gid,
 		}
-		path           = new(atomic.Uint64)
-		options        = []files.MetaOption{files.WithPath(path)}
-		_, fsys        = files.NewDirectory(options...)
-		_, listenerDir = files.NewListener(netCallback, options...)
+		options = []files.MetaOption{
+			files.WithPath(new(atomic.Uint64)),
+		}
+		fsys      = newFileSystem(options...)
+		listeners = newNetwork(netCallback, options...)
 	)
 	if err := fsys.SetAttr(valid, attr); err != nil {
 		panic(err)
@@ -182,7 +195,7 @@ func newFileSystem(uid p9.UID, gid p9.GID, netCallback files.ListenerCallback) (
 		},
 		{
 			name: listenerName,
-			File: listenerDir,
+			File: listeners,
 		},
 	} {
 		if err := file.SetAttr(valid, attr); err != nil {
@@ -192,7 +205,17 @@ func newFileSystem(uid p9.UID, gid p9.GID, netCallback files.ListenerCallback) (
 			panic(err)
 		}
 	}
-	return fsys, listenerDir
+	return fsys, listeners
+}
+
+func newFileSystem(options ...files.MetaOption) *files.Directory {
+	_, fsys := files.NewDirectory(options...)
+	return fsys
+}
+
+func newNetwork(handleListener files.ListenerCallback, options ...files.MetaOption) *files.Listener {
+	_, listenerDir := files.NewListener(handleListener, options...)
+	return listenerDir
 }
 
 func isPipe(file *os.File) bool {
@@ -207,24 +230,18 @@ func handleStdio(ctx context.Context, server *p9.Server) <-chan error {
 	errs := make(chan error)
 	go func() {
 		defer close(errs)
-		sendErr := func(err error) {
-			select {
-			case errs <- err:
-			case <-ctx.Done():
-			}
-		}
 		if err := server.Handle(os.Stdin, os.Stdout); err != nil {
 			if !errors.Is(err, io.EOF) {
-				sendErr(err)
+				maybeSendErr(ctx, errs, err)
 				return
 			}
 		}
 		if err := os.Stderr.Close(); err != nil {
-			sendErr(err)
+			maybeSendErr(ctx, errs, err)
 			return
 		}
 		if err := reopenNullStdio(); err != nil {
-			sendErr(err)
+			maybeSendErr(ctx, errs, err)
 		}
 	}()
 	return errs
@@ -277,34 +294,6 @@ func newListenerFlatDir(listeners ...manet.Listener) (*files.Directory, error) {
 }
 */
 
-func signalCount(ctx context.Context, sig os.Signal) <-chan uint {
-	var (
-		counter = make(chan uint)
-		signals = make(chan os.Signal, 1)
-	)
-	signal.Notify(signals, sig)
-	go func() {
-		defer close(counter)
-		defer close(signals)
-		defer signal.Ignore(sig)
-		var count uint
-		for {
-			select {
-			case <-signals:
-				count++
-				select {
-				case counter <- count:
-				case <-ctx.Done():
-					return
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return counter
-}
-
 func flattenErrs(errs ...<-chan error) (err error) {
 	for e := range generic.CtxMerge(context.Background(), errs...) {
 		if err == nil {
@@ -327,7 +316,7 @@ func joinErrs(errs ...error) (err error) {
 	return
 }
 
-func shutdownOnInterrupt(ctx context.Context, cancel context.CancelFunc,
+func shutdownWithCounter(ctx context.Context, cancel context.CancelFunc,
 	counter <-chan uint, netMan *listenerManager,
 ) <-chan error {
 	var (
@@ -336,12 +325,17 @@ func shutdownOnInterrupt(ctx context.Context, cancel context.CancelFunc,
 	)
 	go func() {
 		defer cancel()
+		const (
+			waitForConns = 1
+			timeoutConns = 2
+			closeConns   = 3
+		)
 		var connectionsCancel context.CancelFunc
 		for {
 			select {
 			case signalCount := <-counter:
 				switch signalCount {
-				case 1: // "Close".
+				case waitForConns:
 					var connectionsCtx context.Context
 					sawSignal = true
 					connectionsCtx, connectionsCancel = context.WithCancel(ctx)
@@ -354,17 +348,16 @@ func shutdownOnInterrupt(ctx context.Context, cancel context.CancelFunc,
 							case <-ctx.Done():
 							}
 						}
-						// FIXME: Do this elsewhere.
-						// close(server.mknodServerErrs)
 					}()
-				case 2: // "Close now".
+				case timeoutConns:
 					// TODO: Notify clients?:
 					// mknod `/listeners/shuttingdown` {$time.Time}
 					go func() {
+						// TODO: const
 						<-time.After(10 * time.Second)
 						connectionsCancel()
 					}()
-				case 3: // "Close right now".
+				case closeConns:
 					connectionsCancel()
 					return
 				}
@@ -385,15 +378,9 @@ func shutdownOnIdle(ctx context.Context, interval time.Duration,
 	errs := make(chan error)
 	go func() {
 		defer close(errs)
-		sendErr := func(err error) {
-			select {
-			case errs <- err:
-			case <-ctx.Done():
-			}
-		}
 		_, mounterDir, err := fsys.Walk([]string{mounterName})
 		if err != nil {
-			sendErr(err)
+			maybeSendErr(ctx, errs, err)
 			return
 		}
 		idleCheckTicker := time.NewTicker(interval)
@@ -401,23 +388,17 @@ func shutdownOnIdle(ctx context.Context, interval time.Duration,
 		for {
 			select {
 			case <-idleCheckTicker.C:
-				log.Println("checking if busy...")
 				busy, err := haveMounts(mounterDir)
 				if err != nil {
-					log.Println("err:", err)
-					sendErr(err)
+					maybeSendErr(ctx, errs, err)
 					return
 				}
 				if busy {
-					log.Println("we're busy.")
 					continue
 				}
-				log.Println("we're not busy - shutting down")
 				if err := shutdown(ctx, netMan); err != nil {
-					log.Println("shutdown err:", err)
-					sendErr(err)
+					maybeSendErr(ctx, errs, err)
 				}
-				log.Println("shutdown")
 				return
 			case <-ctx.Done():
 				return
@@ -433,4 +414,11 @@ func haveMounts(mounterDir p9.File) (bool, error) {
 		return false, err
 	}
 	return len(ents) > 0, nil
+}
+
+func maybeSendErr(ctx context.Context, errs chan<- error, err error) {
+	select {
+	case errs <- err:
+	case <-ctx.Done():
+	}
 }
