@@ -19,8 +19,6 @@ type (
 		ipfs   FS // TODO: subsys should be handled via `bind` instead? fs.Subsys?
 	}
 
-	PinfsOption func(*IPFSPinAPI) error
-
 	pinsDirectory struct {
 		stat   fs.FileInfo
 		ipfs   fs.FS
@@ -35,9 +33,7 @@ type (
 )
 
 func NewPinFS(pinAPI coreiface.PinAPI, options ...PinfsOption) *IPFSPinAPI {
-	fs := &IPFSPinAPI{
-		pinAPI: pinAPI,
-	}
+	fs := &IPFSPinAPI{pinAPI: pinAPI}
 	for _, setter := range options {
 		if err := setter(fs); err != nil {
 			panic(err)
@@ -46,23 +42,17 @@ func NewPinFS(pinAPI coreiface.PinAPI, options ...PinfsOption) *IPFSPinAPI {
 	return fs
 }
 
-func WithIPFS(ipfs FS) PinfsOption {
-	return func(pa *IPFSPinAPI) error {
-		pa.ipfs = ipfs
-		return nil
-	}
-}
-
 func (*IPFSPinAPI) ID() ID { return IPFSPins }
 
 func (pfs *IPFSPinAPI) Open(name string) (fs.File, error) {
+	const op = "open"
 	if name == rootName {
 		return pfs.OpenDir(name)
 	}
 	if !fs.ValidPath(name) {
 		return nil,
 			&fs.PathError{
-				Op:   "open",
+				Op:   op,
 				Path: name,
 				Err:  fserrors.New(fserrors.InvalidItem), // TODO: convert old-style errors.
 			}
@@ -78,7 +68,7 @@ func (pfs *IPFSPinAPI) Open(name string) (fs.File, error) {
 	// Probably the latter.
 
 	return nil, &fs.PathError{
-		Op:   "open",
+		Op:   op,
 		Path: name,
 		Err:  fserrors.New(fserrors.NotExist), // TODO old-style err
 	}
@@ -95,9 +85,7 @@ func (pfs *IPFSPinAPI) OpenDir(name string) (fs.ReadDirFile, error) {
 			Err:  fserrors.New(fserrors.NotExist), // TODO old-style err; convert to wrapped, defined, const errs.
 		}
 	}
-
 	const op fserrors.Op = "pinfs.OpenDir"
-
 	ctx := context.TODO() // TODO: cancel on close.
 	pinEnts, err := getPinSliceChan(ctx, pfs.pinAPI, pfs.ipfs)
 	if err != nil {

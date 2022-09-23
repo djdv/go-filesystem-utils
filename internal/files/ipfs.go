@@ -200,8 +200,14 @@ func mountFuseIPFS(ipfsMaddr multiaddr.Multiaddr, fsid filesystem.ID, target str
 		goFS = filesystem.NewIPFS(client, fsid)
 	case filesystem.IPFSPins:
 		ipfs := filesystem.NewIPFS(client, filesystem.IPFS)
-		goFS = filesystem.NewPinFS(client.Pin(), filesystem.WithIPFS(ipfs))
-	// case filesystem.IPFSKeys:
+		goFS = filesystem.NewPinFS(client.Pin(),
+			filesystem.WithIPFS[filesystem.PinfsOption](ipfs),
+		)
+	case filesystem.IPFSKeys:
+		ipns := filesystem.NewIPFS(client, filesystem.IPNS)
+		goFS = filesystem.NewKeyFS(client.Key(),
+			filesystem.WithIPNS[filesystem.KeyfsOption](ipns),
+		)
 	default:
 		return nil, errors.New("not supported yet")
 	}
