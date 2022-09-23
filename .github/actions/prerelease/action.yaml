@@ -12,7 +12,9 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
       # TODO: --notes-file something.md; install instructions + mhash of release dir
       # TODO: some kind of coordination between artifact / directory names. inputs<=>outputs?
+      # TODO: use `gh release list` to check if our tag exist first, delete if so. Right now we assume it exists.
       run: |
         pushd artifact
-        gh release create --prerelease --generate-notes --title "testing CI" prerelease *
+        gh release delete --yes prerelease
+        gh release create --prerelease --generate-notes --title "Development build" prerelease *
         popd
