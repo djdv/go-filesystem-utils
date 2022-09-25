@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
 	"github.com/djdv/go-filesystem-utils/internal/daemon"
@@ -61,20 +60,8 @@ func (set *clientSettings) BindFlags(fs *flag.FlagSet) {
 	// /unix/
 	//   /fullPath1
 	//   /fullPath2
-	// ??
-	serviceMaddrs, err := daemon.AllServiceMaddrs()
-	if err != nil {
-		panic(err)
-	}
-	serviceMaddrStrings := make([]string, len(serviceMaddrs))
-	for i, maddr := range serviceMaddrs {
-		serviceMaddrStrings[i] = maddr.String()
-	}
 	multiaddrVar(fs, &set.serviceMaddr, daemon.ServerName,
-		nil, fmt.Sprintf(
-			"File system service `maddr`. (default: %s)",
-			strings.Join(serviceMaddrStrings, ", "),
-		))
+		defaultServerMaddr{}, "File system service `maddr`.")
 }
 
 func containerVar[t any, parser func(string) (t, error)](fs *flag.FlagSet, tPtr *t,

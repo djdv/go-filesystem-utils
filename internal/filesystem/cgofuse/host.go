@@ -4,7 +4,6 @@ import (
 	"io/fs"
 	"log"
 	"math"
-	"os"
 
 	fuselib "github.com/billziss-gh/cgofuse/fuse"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
@@ -24,33 +23,11 @@ const (
 	IRXA  = IRWXA &^ (fuselib.S_IWUSR | fuselib.S_IWGRP | fuselib.S_IWOTH) // 0o555
 )
 
-type hostBinding struct {
+type goWrapper struct {
 	fileTable
 	systemLock operationsLock
-	goFs       fs.FS
-	log        ulog.Logger // general operations log
-}
-
-func NewFuseInterface(fs fs.FS) (fuselib.FileSystemInterface, error) {
-	// TODO: WithLog(...) option.
-	/*
-		var eLog logging.EventLogger
-		if idFs, ok := fs.(filesystem.IdentifiedFS); ok {
-			eLog = log.New(idFs.ID().String())
-		} else {
-			eLog = log.New("ipfs-core")
-		}
-	*/
-	sysLog := ulog.Null
-	const logStub = false // TODO: from CLI flags / funcopts.
-	if logStub {
-		// sysLog = log.Default()
-		sysLog = log.New(os.Stdout, "fuse dbg - ", log.Lshortfile)
-	}
-	return &hostBinding{
-		goFs: fs,
-		log:  sysLog,
-	}, nil
+	fs.FS
+	log ulog.Logger // general operations log
 }
 
 const (
@@ -91,14 +68,14 @@ func goToFuseFileType(m fs.FileMode) fuseFileType {
 	}
 }
 
-func (fs *hostBinding) Init() {
+func (fs *goWrapper) Init() {
 	fs.log.Print("Init")
 	fs.fileTable = newFileTable()
 	fs.systemLock = newOperationsLock()
 	defer fs.log.Print("Init finished")
 }
 
-func (fuse *hostBinding) Getattr(path string, stat *fuselib.Stat_t, fh uint64) int {
+func (fuse *goWrapper) Getattr(path string, stat *fuselib.Stat_t, fh uint64) int {
 	defer fuse.systemLock.Access(path)()
 	fuse.log.Printf("Getattr - {%X}%q", fh, path)
 
@@ -120,7 +97,7 @@ func (fuse *hostBinding) Getattr(path string, stat *fuselib.Stat_t, fh uint64) i
 	// TODO: fh lookup
 
 	// TODO: review
-	goStat, err := fs.Stat(fuse.goFs, goPath)
+	goStat, err := fs.Stat(fuse.FS, goPath)
 	if err != nil {
 		errNo := interpretError(err)
 		// Don't flood the logs with "not found" errors.
@@ -171,7 +148,8 @@ func (fuse *hostBinding) Getattr(path string, stat *fuselib.Stat_t, fh uint64) i
 	return operationSuccess
 }
 
-func (fs *hostBinding) Destroy() {
+func (fs *goWrapper) Destroy() {
+	// TODO: dbg lint
 	fs.log.Print("Destroy")
 	defer fs.log.Print("Destroy finished")
 	/* TODO: something like this for the new system

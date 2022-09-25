@@ -146,22 +146,30 @@ func ipfsExecute(ctx context.Context, host filesystem.API, fsid filesystem.ID,
 	set *mountIPFSSettings, args ...string,
 ) error {
 	var (
-		err           error
-		serviceMadder = set.serviceMaddr
+		err          error
+		serviceMaddr = set.serviceMaddr
 
 		client     *daemon.Client
 		clientOpts []daemon.ClientOption
+
+		// TODO: quick hack; do better
+		defaultMaddrs bool
+		//
 	)
+	// TODO: [31f421d5-cb4c-464e-9d0f-41963d0956d1]
+	if lazy, ok := serviceMaddr.(lazyFlag[multiaddr.Multiaddr]); ok {
+		serviceMaddr = lazy.get()
+		defaultMaddrs = true
+	}
 	if set.verbose {
 		// TODO: less fancy prefix and/or out+prefix from CLI flags
 		clientLog := log.New(os.Stdout, "⬇️ client - ", log.Lshortfile)
 		clientOpts = append(clientOpts, daemon.WithLogger(clientLog))
 	}
-
-	if serviceMadder != nil {
-		client, err = daemon.Connect(serviceMadder, clientOpts...)
-	} else {
+	if defaultMaddrs {
 		client, err = daemon.ConnectOrLaunchLocal(clientOpts...)
+	} else {
+		client, err = daemon.Connect(serviceMaddr, clientOpts...)
 	}
 	if err != nil {
 		return err

@@ -14,32 +14,6 @@ import (
 	"github.com/multiformats/go-multiaddr"
 )
 
-type (
-	// TODO: these should be shared literally
-	// I.e. 9lib.Mount and client.Mount should use the same option type/structs
-	MountOption   func(*mountSettings) error
-	mountSettings struct {
-		ipfs struct {
-			nodeMaddr multiaddr.Multiaddr
-		}
-		uid p9.UID
-		gid p9.GID
-		/*
-			fuse struct {
-				// fsid  filesystem.ID
-				// fsapi filesystem.API
-				uid, gid uint32
-			}
-		*/
-	}
-)
-
-const (
-	idLength       = 9
-	base58Alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-)
-
-// func (c *Client) Mount(args []string, options ...MountOptions) error {
 func (c *Client) Mount(host filesystem.API, fsid filesystem.ID, args []string, options ...MountOption) error {
 	set := new(mountSettings)
 	for _, setter := range options {

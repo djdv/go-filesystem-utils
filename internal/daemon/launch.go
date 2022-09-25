@@ -15,7 +15,7 @@ const (
 )
 
 func SelfConnect(args []string, options ...ClientOption) (*Client, error) {
-	const defaultDecay = 6 * time.Second
+	const defaultDecay = 30 * time.Second
 	cmd, err := selfCommand(args, defaultDecay)
 	if err != nil {
 		return nil, err

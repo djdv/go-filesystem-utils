@@ -5,17 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
-	"github.com/djdv/go-filesystem-utils/internal/filesystem/cgofuse"
-	"github.com/hugelgupf/p9/fsimpl/templatefs"
 	"github.com/hugelgupf/p9/p9"
 	"github.com/hugelgupf/p9/perrors"
 	httpapi "github.com/ipfs/go-ipfs-http-client"
@@ -24,32 +22,51 @@ import (
 	manet "github.com/multiformats/go-multiaddr/net"
 )
 
-type ipfsFile struct {
-	templatefs.NoopFile
-	Parent p9.File
-	Path   *atomic.Uint64
-	*p9.Attr
-	*p9.QID
-	opened bool
-}
-
-type ipfsTarget struct {
-	templatefs.NoopFile
-
-	wBufMu sync.Locker  // TODO: no external hats, roll into method box.
-	wBuf   bytes.Buffer // TODO: pointer to buf, init on open(W)?
-
-	metadata
-	parentFile p9.File
-	mountpoint io.Closer
-	options    struct { // TODO: json encoding methods to be called directly.
+type (
+	ipfsMounter struct {
+		File
+		fsid   filesystem.ID
+		dataMu sync.Locker
+		ipfsDataBuffer
+		*ipfsMountData
+		mountpoint io.Closer
+		mount      mountFunc // TODO: placeholder name.
+	}
+	ipfsMountData struct {
 		ApiMaddr ipfsAPIMultiaddr
 		Target   string
 	}
-	fsid   filesystem.ID
-	opened bool
+	ipfsDataBuffer struct {
+		write *bytes.Buffer
+		read  *bytes.Reader
+	}
+)
+
+func newIPFSMounter(fsid filesystem.ID, mountFn mountFunc, options ...IPFSOption) (p9.QID, *ipfsMounter, error) {
+	var settings ipfsSettings
+	if err := parseOptions(&settings, options...); err != nil {
+		return p9.QID{}, nil, err
+	}
+	var (
+		metadata       = settings.metadata
+		withTimestamps = settings.withTimestamps
+	)
+	initMetadata(&metadata, p9.ModeRegular, withTimestamps)
+	return *metadata.QID, &ipfsMounter{
+		File: File{
+			metadata: metadata,
+			link:     settings.linkSettings,
+		},
+		fsid:          fsid,
+		dataMu:        new(sync.Mutex),
+		ipfsMountData: new(ipfsMountData),
+		mount:         mountFn,
+		// dataBufferMu: new(sync.Mutex),
+		// dataBuffer:   new(bytes.Buffer),
+	}, nil
 }
 
+/*
 func withAPIMaddr(serverMaddr multiaddr.Multiaddr) ipfsTargetOption {
 	return func(it *ipfsTarget) error {
 		it.options.ApiMaddr.Multiaddr = serverMaddr
@@ -64,51 +81,21 @@ func withMountTarget(target string) ipfsTargetOption {
 		return nil
 	}
 }
+*/
 
-func createIPFSTarget(fsid filesystem.ID, name string, permissions p9.FileMode,
-	parent p9.File, path *atomic.Uint64,
-	uid p9.UID, gid p9.GID,
-) (p9.QID, error) {
+func (im *ipfsMounter) clone(withQID bool) ([]p9.QID, *ipfsMounter, error) {
 	var (
-		mountFile, err = makeIPFSTarget(fsid,
-			permissions, uid, gid, WithPath(path))
-		qid = *mountFile.QID
-	)
-	if err != nil {
-		return qid, err
-	}
-	return qid, parent.Link(mountFile, name)
-}
-
-func makeIPFSTarget(fsid filesystem.ID,
-	permissions p9.FileMode, uid p9.UID, gid p9.GID,
-	options ...MetaOption,
-) (*ipfsTarget, error) {
-	ipfsFile := &ipfsTarget{
-		metadata: makeMetadata(p9.ModeRegular, options...),
-		fsid:     fsid,
-		wBufMu:   new(sync.Mutex),
-	}
-	const withServerTimes = true
-	return ipfsFile, setAttr(ipfsFile, &p9.Attr{
-		Mode: permissions,
-		UID:  uid,
-		GID:  gid,
-		// TODO: sizeof file in json bytes.
-		// Size: uint64(len(listener.Multiaddr().Bytes())),
-	}, withServerTimes)
-}
-
-func (it *ipfsTarget) clone(withQID bool) ([]p9.QID, *ipfsTarget, error) {
-	var (
-		qids  []p9.QID
-		newIt = &ipfsTarget{
-			metadata:   it.metadata,
-			parentFile: it.parentFile,
-			options:    it.options,
-			mountpoint: it.mountpoint,
-			wBufMu:     it.wBufMu,
-			wBuf:       it.wBuf,
+		qids []p9.QID
+		// TODO: audit; struct changed, what fields specifically need to be copied.
+		newIt = &ipfsMounter{
+			File:           im.File,
+			ipfsDataBuffer: im.ipfsDataBuffer,
+			ipfsMountData:  im.ipfsMountData,
+			// data:       it.data,
+			mount:      im.mount,
+			mountpoint: im.mountpoint,
+			dataMu:     im.dataMu,
+			// dataBuffer: it.write,
 		}
 	)
 	if withQID {
@@ -117,75 +104,124 @@ func (it *ipfsTarget) clone(withQID bool) ([]p9.QID, *ipfsTarget, error) {
 	return qids, newIt, nil
 }
 
-func (it *ipfsTarget) fidOpened() bool { return it.opened }
-func (it *ipfsTarget) Walk(names []string) ([]p9.QID, p9.File, error) {
-	return walk[*ipfsTarget](it, names...)
+func (im *ipfsMounter) Walk(names []string) ([]p9.QID, p9.File, error) {
+	return walk[*ipfsMounter](im, names...)
 }
 
-func (it *ipfsTarget) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
-	return it.metadata.SetAttr(valid, attr)
-}
-
-func (it *ipfsTarget) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
-	return it.metadata.GetAttr(req)
-}
-
-func (it *ipfsTarget) Open(mode p9.OpenFlags) (p9.QID, uint32, error) {
-	if it.opened {
-		return p9.QID{}, 0, perrors.EBADF
+func (im *ipfsMounter) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
+	if im.fidOpened() {
+		return p9.QID{}, noIOUnit, perrors.EBADF
 	}
-	it.opened = true
-	return *it.QID, 0, nil
+	im.openFlag = true
+	return *im.QID, noIOUnit, nil
 }
 
-func (it *ipfsTarget) WriteAt(p []byte, offset int64) (int, error) {
-	it.wBufMu.Lock()
-	defer it.wBufMu.Unlock()
-	// FIXME: ignoring offset / assuming contiguous write calls.
-	return it.wBuf.Write(p)
-}
-
-func (it *ipfsTarget) ReadAt(p []byte, offset int64) (int, error) {
-	// TODO: Suboptimal; cost of construction and encoding.
-	// Encode on change, store results. Same with reader, on Open().
-	b, err := json.Marshal(it.options)
-	if err != nil {
+func (im *ipfsMounter) WriteAt(p []byte, offset int64) (int, error) {
+	im.dataMu.Lock()
+	defer im.dataMu.Unlock()
+	writer := im.write
+	if writer == nil {
+		writer = new(bytes.Buffer)
+		im.write = writer
+	}
+	if dLen := writer.Len(); offset != int64(dLen) {
+		err := fmt.Errorf("only contiguous writes are currently supported")
 		return -1, err
 	}
-	return bytes.NewReader(b).ReadAt(p, offset)
+	return writer.Write(p)
 }
 
-func (it *ipfsTarget) Close() error {
-	it.wBufMu.Lock()
-	defer it.wBufMu.Unlock()
-	// FIXME: Walk will trigger this too
-	// We need to only clear the flag from the thread that opened it.
-	// How? it is shared currently? not all fields? not when cloned for walk?
-	it.opened = false
+func (im *ipfsMounter) ReadAt(p []byte, offset int64) (int, error) {
+	im.dataMu.Lock()
+	defer im.dataMu.Unlock()
+	reader := im.read
+	if reader == nil {
+		b, err := json.Marshal(im.ipfsMountData)
+		if err != nil {
+			return -1, err
+		}
+		reader = bytes.NewReader(b)
+		im.read = reader
+	}
+	return reader.ReadAt(p, offset)
+}
 
-	// FIXME: wBuf shared with all, same problem as above.
-	if wBuf := &it.wBuf; wBuf.Len() != 0 {
-		defer wBuf.Reset()
-		targetData := wBuf.Bytes()
-		targetPtr := &it.options
-
-		// log.Println("syncing:", string(targetData))
-		// it.options.ApiMaddr.UnmarshalText
-		// return json.Unmarshal(targetData, targetPtr)
-		err := json.Unmarshal(targetData, targetPtr)
+func (im *ipfsMounter) Close() error {
+	im.dataMu.Lock()
+	defer im.dataMu.Unlock()
+	if writer := im.write; writer != nil &&
+		writer.Len() != 0 {
+		var (
+			targetData = writer.Bytes()
+			targetPtr  = im.ipfsMountData
+			err        = json.Unmarshal(targetData, targetPtr)
+		)
 		if err != nil {
 			return err
 		}
-		// log.Println("trying to mount:", it.fsid.String(), targetPtr.Target)
-		closer, err := mountFuseIPFS(targetPtr.ApiMaddr.Multiaddr, it.fsid, targetPtr.Target)
+		if reader := im.read; reader != nil { // TODO export to method [invalidateReader]/[updateReader] or whatever. Data changed, so we re-encode and reset the reader.
+			b, err := json.Marshal(targetPtr)
+			if err != nil {
+				return err
+			}
+			im.read = bytes.NewReader(b)
+		}
+		fsid := im.fsid
+		goFS, err := ipfsToGoFS(fsid, targetPtr.ApiMaddr.Multiaddr)
 		if err != nil {
 			return err
 		}
-		it.mountpoint = closer
+		closer, err := im.mount(goFS, targetPtr.Target)
+		if err != nil {
+			return err
+		}
+		im.mountpoint = closer
+		/*
+			// TODO: structure; fsh should have Attach-like method.
+			// Not passed back to its package function.
+			fsh, err := cgofuse.GoToFuse(goFS)
+			if err != nil {
+				return err
+			}
+			cgofuse.AttachToHost(fsh.FileSystemHost, fsid, targetPtr.Target)
+			it.mountpoint = fsh
+		*/
+		/*
+			fuse := cgofuse.NewFuseInterface(goFS, )
+			closer, err := cgofuse.AttachToHost(fuse, fsid, targetPtr.Target)
+			it.mountpoint = fuse
+		*/
 	}
 	return nil
 }
 
+func ipfsToGoFS(fsid filesystem.ID, ipfsMaddr multiaddr.Multiaddr) (fs.FS, error) {
+	client, err := ipfsClient(ipfsMaddr)
+	if err != nil {
+		return nil, err
+	}
+	// TODO [de-dupe]: convert PinFS to fallthrough to IPFS if possible.
+	// Both need a client+IPFS-FS.
+	switch fsid { // TODO: add all cases
+	case filesystem.IPFS,
+		filesystem.IPNS:
+		return filesystem.NewIPFS(client, fsid), nil
+	case filesystem.IPFSPins:
+		ipfs := filesystem.NewIPFS(client, filesystem.IPFS)
+		return filesystem.NewPinFS(client.Pin(),
+			filesystem.WithIPFS[filesystem.PinfsOption](ipfs),
+		), nil
+	case filesystem.IPFSKeys:
+		ipns := filesystem.NewIPFS(client, filesystem.IPNS)
+		return filesystem.NewKeyFS(client.Key(),
+			filesystem.WithIPNS[filesystem.KeyfsOption](ipns),
+		), nil
+	default:
+		return nil, fmt.Errorf("%s has no handler", fsid)
+	}
+}
+
+/*
 func mountFuseIPFS(ipfsMaddr multiaddr.Multiaddr, fsid filesystem.ID, target string) (io.Closer, error) {
 	client, err := ipfsClient(ipfsMaddr)
 	if err != nil {
@@ -216,12 +252,10 @@ func mountFuseIPFS(ipfsMaddr multiaddr.Multiaddr, fsid filesystem.ID, target str
 	// I.e. 1 for /fuse/ipfs, 1 for /fuse/ipns, etc. not /fuse/ipfs/m1, /fuse/ipfs/m2
 	// const dbgLog = false // TODO: plumbing from options.
 	// ^ Still needed but as funcopts
-	fsi, err := cgofuse.NewFuseInterface(goFS)
-	if err != nil {
-		return nil, err
-	}
+	fsi := cgofuse.NewFuseInterface(goFS)
 	return cgofuse.AttachToHost(fsi, fsid, target)
 }
+*/
 
 func ipfsClient(apiMaddr multiaddr.Multiaddr) (*httpapi.HttpApi, error) {
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 10*time.Second)

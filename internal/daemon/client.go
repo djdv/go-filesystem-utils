@@ -60,6 +60,7 @@ func ConnectOrLaunchLocal(options ...ClientOption) (*Client, error) {
 	return SelfConnect([]string{"daemon"}, options...)
 }
 
+
 func (c *Client) Shutdown(maddr multiaddr.Multiaddr) error {
 	if c.p9Client == nil {
 		// TODO: better message; maybe better logic?

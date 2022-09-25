@@ -67,9 +67,8 @@ func makeSubcommands() []command.Command {
 	return []command.Command{
 		commands.Daemon(),
 		commands.Shutdown(),
-		commands.Mount(
-		// commands.WithLauncher([]{"daemon"}])
-		),
+		commands.Mount(),
+		commands.Unmount(),
 	}
 }
 
