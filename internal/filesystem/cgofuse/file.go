@@ -4,10 +4,79 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 
-	fuselib "github.com/billziss-gh/cgofuse/fuse"
+	"github.com/billziss-gh/cgofuse/fuse"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
+	"github.com/u-root/uio/ulog"
 )
+
+type Fuse struct {
+	*fuse.FileSystemHost
+}
+
+func (fh Fuse) Close() error {
+	if !fh.Unmount() {
+		// TODO: we should store the target + whatever else
+		// so we can print out a more helpful message here.
+		// TODO: investigate forking fuselib so that it returns us the same error
+		// it throws to the system's logger.
+		return fmt.Errorf("unmount failed - system log may have more information")
+	}
+	return nil
+}
+
+// TODO: types
+// TODO: signature / interface may need to change. We're going to want extensions to FS,
+// and we have to decide if we want to use Go standard FS form, or explicitly typed interfaces.
+func MountFuse(fsys fs.FS, target string) (io.Closer, error) {
+	fuse, err := GoToFuse(fsys)
+	if err != nil {
+		return nil, err
+	}
+
+	var fsid filesystem.ID
+	// TODO: define this interface within [filesystem] pkg.
+	if idFS, ok := fsys.(interface {
+		ID() filesystem.ID
+	}); ok {
+		fsid = idFS.ID()
+	}
+
+	return fuse, AttachToHost(fuse.FileSystemHost, fsid, target)
+}
+
+func GoToFuse(fs fs.FS) (Fuse, error) {
+	fsh := fuse.NewFileSystemHost(&goWrapper{
+		FS:         fs,
+		fileTable:  newFileTable(),
+		systemLock: newOperationsLock(),
+		log:        ulog.Null, // TODO: from options
+	})
+	// TODO: from options.
+	fsh.SetCapReaddirPlus(canReaddirPlus)
+	fsh.SetCapCaseInsensitive(false)
+	//
+	return Fuse{FileSystemHost: fsh}, nil
+	// TODO: WithLog(...) option.
+	// var eLog logging.EventLogger
+	// if idFs, ok := fs.(filesystem.IdentifiedFS); ok {
+	// 	eLog = log.New(idFs.ID().String())
+	// } else {
+	// 	eLog = log.New("ipfs-core")
+	// }
+
+	// sysLog := ulog.Null
+	// const logStub = false // TODO: from CLI flags / funcopts.
+	// if logStub {
+	// 	// sysLog = log.Default()
+	// 	sysLog = log.New(os.Stdout, "fuse dbg - ", log.Lshortfile)
+	// }
+	// return &hostBinding{
+	// 	goFs: fs,
+	// 	log:  sysLog,
+	// }
+}
 
 //TODO: dbg only - (re)move this
 /*
@@ -27,9 +96,9 @@ func (fs *hostBinding) Readlink(path string) (int, string) {
 }
 */
 
-func (fuse *hostBinding) Open(path string, flags int) (int, uint64) {
-	defer fuse.systemLock.Access(path)()
-	fuse.log.Printf("Open - {%X}%q", flags, path)
+func (hb *goWrapper) Open(path string, flags int) (int, uint64) {
+	defer hb.systemLock.Access(path)()
+	hb.log.Printf("Open - {%X}%q", flags, path)
 
 	// TODO: this when OpenDir is implimented
 	// if path == posixRoot {
@@ -40,28 +109,28 @@ func (fuse *hostBinding) Open(path string, flags int) (int, uint64) {
 	goPath, err := fuseToGo(path)
 	if err != nil {
 		// TODO: review; POSIX spec - make sure errno is appropriate for this op
-		fuse.log.Print(err)
+		hb.log.Print(err)
 		return interpretError(err), errorHandle
 	}
 
 	// TODO: port flags and use OpenFile
 	// file, err := fs.goFs.Open(path, ioFlagsFromFuse(flags))
-	file, err := fuse.goFs.Open(goPath)
+	file, err := hb.FS.Open(goPath)
 	if err != nil {
-		fuse.log.Print(err)
+		hb.log.Print(err)
 		return interpretError(err), errorHandle
 	}
 
-	handle, err := fuse.fileTable.Add(file)
+	handle, err := hb.fileTable.Add(file)
 	if err != nil {
-		fuse.log.Print(fuselib.Error(-fuselib.EMFILE))
-		return -fuselib.EMFILE, errorHandle
+		hb.log.Print(fuse.Error(-fuse.EMFILE))
+		return -fuse.EMFILE, errorHandle
 	}
 
 	return operationSuccess, handle
 }
 
-func (fs *hostBinding) Release(path string, fh uint64) int {
+func (fs *goWrapper) Release(path string, fh uint64) int {
 	fs.log.Printf("Release - {%X}%q", fh, path)
 
 	errNo, err := releaseFile(fs.fileTable, fh)
@@ -76,7 +145,7 @@ func (fs *hostBinding) Release(path string, fh uint64) int {
 func releaseFile(table fileTable, handle uint64) (errNo, error) {
 	file, err := table.Get(handle)
 	if err != nil {
-		return -fuselib.EBADF, err
+		return -fuse.EBADF, err
 	}
 
 	// SUSv7 `close` (parphrased)
@@ -86,25 +155,25 @@ func releaseFile(table fileTable, handle uint64) (errNo, error) {
 	if err := table.Remove(handle); err != nil {
 		// TODO: if the error is not found we need to panic or return a severe error
 		// this should not be possible
-		return -fuselib.EBADF, err
+		return -fuse.EBADF, err
 	}
 
 	return operationSuccess, file.goFile.Close()
 }
 
-func (fuse *hostBinding) Read(path string, buff []byte, ofst int64, fh uint64) int {
-	defer fuse.systemLock.Access(path)()
-	fuse.log.Printf("Read {%X|%d}%q", fh, ofst, path)
+func (hb *goWrapper) Read(path string, buff []byte, ofst int64, fh uint64) int {
+	defer hb.systemLock.Access(path)()
+	hb.log.Printf("Read {%X|%d}%q", fh, ofst, path)
 
 	// TODO: [review] we need to do things on failure
 	// the OS typically triggers a close, but we shouldn't expect it to invalidate this record for us
 	// we also might want to store a file cursor to reduce calls to seek
 	// the same thing already happens internally so it's at worst the overhead of a call right now
 
-	file, err := fuse.fileTable.Get(fh)
+	file, err := hb.fileTable.Get(fh)
 	if err != nil {
-		fuse.log.Print(fuselib.Error(-fuselib.EBADF))
-		return -fuselib.EBADF
+		hb.log.Print(fuse.Error(-fuse.EBADF))
+		return -fuse.EBADF
 	}
 
 	file.ioMu.Lock()
@@ -117,13 +186,13 @@ func (fuse *hostBinding) Read(path string, buff []byte, ofst int64, fh uint64) i
 			"\n\twant: %T",
 			file.goFile, fsFile,
 		)
-		fuse.log.Print(err)
-		return -fuselib.EIO
+		hb.log.Print(err)
+		return -fuse.EIO
 	}
 
 	retVal, err := readFile(fsFile, buff, ofst)
 	if err != nil && err != io.EOF {
-		fuse.log.Print(err)
+		hb.log.Print(err)
 	}
 	return retVal
 }
@@ -135,7 +204,7 @@ func readFile(file filesystem.File, buff []byte, ofst int64) (errNo, error) {
 	}
 
 	if ofst < 0 {
-		return -fuselib.EINVAL, fmt.Errorf("invalid offset %d", ofst)
+		return -fuse.EINVAL, fmt.Errorf("invalid offset %d", ofst)
 	}
 
 	// TODO: file.ReaderAt support?
@@ -143,7 +212,7 @@ func readFile(file filesystem.File, buff []byte, ofst int64) (errNo, error) {
 	stat, err := file.Stat()
 	if err != nil {
 		// TODO: consult spec for correct error value - this one is temporary
-		return -fuselib.EIO, err
+		return -fuse.EIO, err
 	}
 
 	if ofst >= stat.Size() {
@@ -151,7 +220,7 @@ func readFile(file filesystem.File, buff []byte, ofst int64) (errNo, error) {
 	}
 
 	if _, err := file.Seek(ofst, io.SeekStart); err != nil {
-		return -fuselib.EIO, err
+		return -fuse.EIO, err
 	}
 	var (
 		readBytes int
@@ -174,7 +243,7 @@ func readFile(file filesystem.File, buff []byte, ofst int64) (errNo, error) {
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
 				// POSIX overloads this variable; at this point it becomes an error
-				readBytes = -fuselib.EIO
+				readBytes = -fuse.EIO
 			}
 			return readBytes, err
 		}
@@ -190,10 +259,10 @@ func readFile(file filesystem.File, buff []byte, ofst int64) (errNo, error) {
 	// the caller should except bytes beyond `readBytes` to be garbage data anyway)
 }
 
-func (fuse *hostBinding) Write(path string, buff []byte, ofst int64, fh uint64) int {
-	defer fuse.systemLock.Modify(path)()
-	fuse.log.Printf("Write - HostRequest {%X|%d|%d}%q", fh, len(buff), ofst, path)
-	return -fuselib.EROFS
+func (hb *goWrapper) Write(path string, buff []byte, ofst int64, fh uint64) int {
+	defer hb.systemLock.Modify(path)()
+	hb.log.Printf("Write - HostRequest {%X|%d|%d}%q", fh, len(buff), ofst, path)
+	return -fuse.EROFS
 
 	/*
 		if path == "/" { // root Request; we're never a file

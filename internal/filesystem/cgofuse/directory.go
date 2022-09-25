@@ -4,7 +4,7 @@ import (
 	"io/fs"
 	"log"
 
-	fuselib "github.com/billziss-gh/cgofuse/fuse"
+	"github.com/billziss-gh/cgofuse/fuse"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 )
 
@@ -13,29 +13,29 @@ type goDirWrapper struct {
 	uid, gid uint32
 }
 
-func (fuse *hostBinding) Opendir(path string) (int, uint64) {
-	defer fuse.systemLock.Access(path)()
-	fuse.log.Printf("Opendir - %q", path)
+func (gw *goWrapper) Opendir(path string) (int, uint64) {
+	defer gw.systemLock.Access(path)()
+	gw.log.Printf("Opendir - %q", path)
 
-	openDirFS, ok := fuse.goFs.(filesystem.OpenDirFS)
+	openDirFS, ok := gw.FS.(filesystem.OpenDirFS)
 	if !ok {
 		// TODO: proper interface IDFS?
-		if idFS, ok := fuse.goFs.(interface {
+		if idFS, ok := gw.FS.(interface {
 			ID() filesystem.ID
 		}); ok {
-			fuse.log.Print("Opendir not supported by provided ", idFS.ID()) // TODO: better message
+			gw.log.Print("Opendir not supported by provided ", idFS.ID()) // TODO: better message
 		} else {
-			fuse.log.Print("Opendir not supported by provided fs.FS") // TODO: better message
+			gw.log.Print("Opendir not supported by provided fs.FS") // TODO: better message
 		}
 		// NOTE: Most fuse implementations consider this to be final.
 		// And will never try this operation again.
-		return -fuselib.ENOSYS, errorHandle
+		return -fuse.ENOSYS, errorHandle
 	}
 
 	goPath, err := fuseToGo(path)
 	if err != nil {
 		// TODO: review; POSIX spec - make sure errno is appropriate for this op
-		fuse.log.Print(err)
+		gw.log.Print(err)
 		return interpretError(err), errorHandle
 	}
 
@@ -55,32 +55,32 @@ func (fuse *hostBinding) Opendir(path string) (int, uint64) {
 
 	directory, err := openDirFS.OpenDir(goPath)
 	if err != nil {
-		fuse.log.Print(err)
+		gw.log.Print(err)
 		return interpretError(err), errorHandle
 	}
 
-	uid, gid, _ := fuselib.Getcontext()
+	uid, gid, _ := fuse.Getcontext()
 	wrappedDir := goDirWrapper{
 		ReadDirFile: directory,
 		uid:         uid,
 		gid:         gid,
 	}
 
-	handle, err := fuse.fileTable.Add(wrappedDir)
+	handle, err := gw.fileTable.Add(wrappedDir)
 	if err != nil { // TODO: transform error
-		fuse.log.Print(fuselib.Error(-fuselib.EMFILE))
-		return -fuselib.EMFILE, errorHandle
+		gw.log.Print(fuse.Error(-fuse.EMFILE))
+		return -fuse.EMFILE, errorHandle
 	}
 
 	return operationSuccess, handle
 }
 
-func (fs *hostBinding) Releasedir(path string, fh uint64) int {
-	fs.log.Printf("Releasedir - {%X}%q", fh, path)
+func (gw *goWrapper) Releasedir(path string, fh uint64) int {
+	gw.log.Printf("Releasedir - {%X}%q", fh, path)
 
-	errNo, err := releaseFile(fs.fileTable, fh)
+	errNo, err := releaseFile(gw.fileTable, fh)
 	if err != nil {
-		fs.log.Print(err)
+		gw.log.Print(err)
 	}
 
 	return errNo
@@ -172,61 +172,61 @@ func (fuse *hostBinding) Readdir(path string,
 }
 */
 
-func (fuse *hostBinding) Readdir(path string,
-	fill func(name string, stat *fuselib.Stat_t, ofst int64) bool,
+func (gw *goWrapper) Readdir(path string,
+	fill func(name string, stat *fuse.Stat_t, ofst int64) bool,
 	ofst int64,
 	fh uint64,
 ) int {
-	defer fuse.systemLock.Access(path)()
-	fuse.log.Printf("Readdir - {%X|%d}%q", fh, ofst, path)
+	defer gw.systemLock.Access(path)()
+	gw.log.Printf("Readdir - {%X|%d}%q", fh, ofst, path)
 
 	if fh == errorHandle {
 		log.Println("fuse readdir hit 1")
-		fuse.log.Print(fuselib.Error(-fuselib.EBADF))
-		return -fuselib.EBADF
+		gw.log.Print(fuse.Error(-fuse.EBADF))
+		return -fuse.EBADF
 	}
 
-	directory, err := fuse.fileTable.Get(fh)
+	directory, err := gw.fileTable.Get(fh)
 	if err != nil {
 		log.Println("fuse readdir hit 2")
-		fuse.log.Print(fuselib.Error(-fuselib.EBADF))
-		return -fuselib.EBADF
+		gw.log.Print(fuse.Error(-fuse.EBADF))
+		return -fuse.EBADF
 	}
 	dir, ok := directory.goFile.(goDirWrapper)
 	if !ok {
 		log.Println("fuse readdir hit 3")
 		// TODO: error message; unexpected type was stored in file table.
-		fuse.log.Print(fuselib.Error(-fuselib.EBADF))
-		return -fuselib.EBADF
+		gw.log.Print(fuse.Error(-fuse.EBADF))
+		return -fuse.EBADF
 	}
 
 	// TODO: inefficient, store these on open? Use stream?
 	ents, err := dir.ReadDir(0)
 	if err != nil {
 		log.Println("fuse readdir hit 4")
-		fuse.log.Print(fuselib.Error(-fuselib.EIO))
-		return -fuselib.EIO
+		gw.log.Print(fuse.Error(-fuse.EIO))
+		return -fuse.EIO
 	}
 
-	statFn := func(ent fs.DirEntry) *fuselib.Stat_t {
+	statFn := func(ent fs.DirEntry) *fuse.Stat_t {
 		if !canReaddirPlus {
 			return nil
 		}
 		goStat, err := ent.Info()
 		if err != nil {
-			fuse.log.Print(err)
+			gw.log.Print(err)
 			return nil
 		}
-		mTime := fuselib.NewTimespec(goStat.ModTime())
+		mTime := fuse.NewTimespec(goStat.ModTime())
 
 		// FIXME: We need to obtain these values during Opendir.
 		// And assign them here.
 		// They are NOT guaranteed to be valid within calls to Readdir.
 		// (some platforms may return data here)
 		// stat.Uid, stat.Gid, _ = fuselib.Getcontext()
-		return &fuselib.Stat_t{
+		return &fuse.Stat_t{
 			Mode: goToFuseFileType(goStat.Mode()) |
-				IRXA&^(fuselib.S_IXOTH), // TODO: const permissions; used here and in getattr
+				IRXA&^(fuse.S_IXOTH), // TODO: const permissions; used here and in getattr
 			Uid:      dir.uid,
 			Gid:      dir.gid,
 			Size:     goStat.Size(),

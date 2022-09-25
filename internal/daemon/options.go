@@ -2,11 +2,42 @@ package daemon
 
 import (
 	"github.com/adrg/xdg"
+	"github.com/hugelgupf/p9/p9"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/u-root/uio/ulog"
 )
 
-type ClientOption func(*Client) error
+const (
+	idLength       = 9
+	base58Alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+)
+
+type (
+	ClientOption func(*Client) error
+
+	// TODO: these should be shared literally
+	// I.e. 9lib.Mount and client.Mount should use the same option type/structs
+	MountOption   func(*mountSettings) error
+	mountSettings struct {
+		ipfs struct {
+			nodeMaddr multiaddr.Multiaddr
+		}
+		uid p9.UID
+		gid p9.GID
+		/*
+			fuse struct {
+				// fsid  filesystem.ID
+				// fsapi filesystem.API
+				uid, gid uint32
+			}
+		*/
+	}
+
+	UnmountOption   func(*unmountSettings) error
+	unmountSettings struct {
+		all bool
+	}
+)
 
 const (
 	// TODO: del
@@ -59,4 +90,9 @@ func WithLogger(log ulog.Logger) ClientOption {
 
 func WithIPFS(maddr multiaddr.Multiaddr) MountOption {
 	return func(s *mountSettings) error { s.ipfs.nodeMaddr = maddr; return nil }
+}
+
+// TODO: shared option?
+func UnmountAll(b bool) UnmountOption {
+	return func(us *unmountSettings) error { us.all = b; return nil }
 }

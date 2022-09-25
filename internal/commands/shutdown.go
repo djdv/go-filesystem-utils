@@ -7,6 +7,7 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
 	"github.com/djdv/go-filesystem-utils/internal/daemon"
+	"github.com/multiformats/go-multiaddr"
 )
 
 type shutdownSettings struct{ clientSettings }
@@ -31,12 +32,15 @@ func shutdownExecute(ctx context.Context, set *shutdownSettings, _ ...string) er
 	// TODO: signalctx + shutdown on cancel
 
 	serviceMaddr := set.serviceMaddr
+	// TODO: [31f421d5-cb4c-464e-9d0f-41963d0956d1]
+	if lazy, ok := serviceMaddr.(lazyFlag[multiaddr.Multiaddr]); ok {
+		serviceMaddr = lazy.get()
+	}
 
 	client, err := daemon.Connect(serviceMaddr, clientOpts...)
 	if err != nil {
 		return err
 	}
-
 	if err := client.Shutdown(serviceMaddr); err != nil {
 		return err
 	}

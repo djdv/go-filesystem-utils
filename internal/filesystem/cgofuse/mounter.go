@@ -6,7 +6,6 @@ package cgofuse
 import (
 	"errors"
 	"fmt"
-	"io"
 	"runtime"
 	"strings"
 	"time"
@@ -25,6 +24,7 @@ func (close closer) Close() error { return close() }
 const canReaddirPlus bool = runtime.GOOS == "windows"
 
 // TODO: unexport this? Investigate callsite and maybe invert them.
+/*
 func AttachToHost(fsi fuselib.FileSystemInterface, fsid filesystem.ID, target string) (io.Closer, error) {
 	hostInterface := fuselib.NewFileSystemHost(fsi)
 	hostInterface.SetCapReaddirPlus(canReaddirPlus)
@@ -51,6 +51,23 @@ func AttachToHost(fsi fuselib.FileSystemInterface, fsid filesystem.ID, target st
 	})
 
 	return instanceDetach, nil
+}
+*/
+
+// TODO: this code an deeper is ancient and likely needs a redesign.
+func AttachToHost(hostInterface *fuselib.FileSystemHost, fsid filesystem.ID, target string) error {
+	// This is how long we'll wait for `Mount` to fail
+	// before assume it's running as expected (blocking forever).
+	const failureThreasehold = 200 * time.Millisecond
+	errChan := safeMount(hostInterface, fsid, target)
+	select {
+	case err := <-errChan:
+		return err
+	case <-time.After(failureThreasehold):
+		// `Mount` hasn't panicked or returned an error yet
+		// assume `Mount` is running forever (as intended)
+		return nil
+	}
 }
 
 func safeMount(host *fuselib.FileSystemHost, fsid filesystem.ID, target string) <-chan error {
@@ -83,7 +100,7 @@ func safeMount(host *fuselib.FileSystemHost, fsid filesystem.ID, target string) 
 				isUNC = len(target) > 2 &&
 					(target)[:2] == `\\`
 			)
-			if fsid != 0 { // TODO if 0 we should error
+			if fsid != 0 { // TODO if 0 we should probably error, up-front.
 				opts += fmt.Sprintf(
 					",FileSystemName=%s,volname=%s",
 					fsid.String(),
@@ -106,7 +123,7 @@ func safeMount(host *fuselib.FileSystemHost, fsid filesystem.ID, target string) 
 		// fuseArgs = append(fuseArgs, "-d")
 		// fuseArgs = []string{"-d"}
 
-		//log.Println("calling fuse mount with args:", target, fuseArgs)
+		// log.Println("calling fuse mount with args:", target, fuseArgs)
 		if !host.Mount(target, fuseArgs) {
 			errChan <- fmt.Errorf("%s: mount failed for an unknown reason", target)
 		}

@@ -2,7 +2,6 @@ package files
 
 import (
 	"errors"
-	"sync/atomic"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	"github.com/hugelgupf/p9/p9"
@@ -11,54 +10,79 @@ import (
 // TODO: docs; recommended / default value for this file's name
 const MounterName = "mounts"
 
-type mounter struct {
-	p9.File
-	path *atomic.Uint64
+type Mounter struct {
+	file
+	path ninePath
+	linkSettings
+	cleanupEmpties bool
 }
 
-func NewMounter(options ...MetaOption) *mounter {
+func NewMounter(options ...MounterOption) *Mounter {
+	var settings mounterSettings
+	if err := parseOptions(&settings, options...); err != nil {
+		panic(err)
+	}
 	var (
-		_, root = NewDirectory(options...)
-		mounter = &mounter{File: root, path: root.path}
+		fsys             file
+		unlinkSelf       = settings.cleanupSelf
+		directoryOptions = []DirectoryOption{
+			WithSuboptions[DirectoryOption](settings.metaSettings.asOptions()...),
+			WithSuboptions[DirectoryOption](settings.linkSettings.asOptions()...),
+		}
 	)
-	return mounter
+	if unlinkSelf {
+		_, fsys = newEphemeralDirectory(directoryOptions...)
+	} else {
+		_, fsys = NewDirectory(directoryOptions...)
+	}
+	return &Mounter{
+		path:           settings.path,
+		file:           fsys,
+		cleanupEmpties: settings.cleanupElements,
+	}
 }
 
-func (dir *mounter) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9.GID) (p9.QID, error) {
+func (dir *Mounter) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9.GID) (p9.QID, error) {
 	hostAPI, err := filesystem.ParseAPI(name)
 	if err != nil {
 		return p9.QID{}, err
 	}
-	want := p9.AttrMask{UID: true}
-	_, valid, attr, err := dir.GetAttr(want)
+	attr, err := mkdirInherit(dir, permissions, gid)
 	if err != nil {
 		return p9.QID{}, err
 	}
-	if !valid.Contains(want) {
-		return p9.QID{}, attrErr(valid, want)
-	}
-	const withServerTimes = true
-	switch hostAPI {
-	case filesystem.Fuse:
-		var ( // TODO: Proper.
-			qid, eDir  = newEphemeralDir(dir, name, WithPath(dir.path))
-			hostAPIDir = &FuseDir{
-				File: eDir,
-				path: dir.path,
-			}
-		) //
-		// TODO: need to be able to set this like constructor does.
-		// eDir.Attr.RDev = p9.Dev(filesystem.Fuse)
-		// HACK:
-		eDir.File.(*Directory).RDev = p9.Dev(filesystem.Fuse)
-		if err := setAttr(hostAPIDir, &p9.Attr{
-			Mode: (permissions.Permissions() &^ S_LINMSK) & S_IRWXA,
-			UID:  attr.UID,
-			GID:  gid,
-		}, withServerTimes); err != nil {
-			return qid, err
+	var (
+		metaOptions = []MetaOption{
+			WithPath(dir.path),
+			WithBaseAttr(attr),
+			WithAttrTimestamps(true),
 		}
-		return qid, dir.Link(hostAPIDir, name)
+		linkOptions = []LinkOption{
+			WithParent(dir, name),
+		}
+		generatorOptions []GeneratorOption
+	)
+	if dir.cleanupEmpties {
+		generatorOptions = append(generatorOptions,
+			CleanupSelf(true),
+			CleanupEmpties(true),
+		)
+	}
+	switch hostAPI {
+	/*
+		case filesystem.Plan9Protocol:
+			// FIXME: implement
+			return p9.QID{}, errors.New("not fully implemented yet")
+			qid, nineDir := NewNineDir(WithSuboptions[NineOption](directoryOptions...))
+			return qid, dir.Link(nineDir, name)
+	*/
+	case filesystem.Fuse:
+		qid, fuseDir := NewFuseDir(
+			WithSuboptions[FuseOption](metaOptions...),
+			WithSuboptions[FuseOption](linkOptions...),
+			WithSuboptions[FuseOption](generatorOptions...),
+		)
+		return qid, dir.Link(fuseDir, name)
 	default:
 		return p9.QID{}, errors.New("unexpected host") // TODO: msg
 	}
