@@ -11,19 +11,20 @@ import (
 const MounterName = "mounts"
 
 type Mounter struct {
-	file
-	path ninePath
-	linkSettings
+	directory
 	cleanupEmpties bool
 }
 
+// TODO: temporary;
+// NOTE: Assure that we return a real concrete type.
+// otherwise t-e2e is required (l&r).
 func NewMounter(options ...MounterOption) *Mounter {
 	var settings mounterSettings
 	if err := parseOptions(&settings, options...); err != nil {
 		panic(err)
 	}
 	var (
-		fsys             file
+		fsys             directory
 		unlinkSelf       = settings.cleanupSelf
 		directoryOptions = []DirectoryOption{
 			WithSuboptions[DirectoryOption](settings.metaSettings.asOptions()...),
@@ -36,33 +37,65 @@ func NewMounter(options ...MounterOption) *Mounter {
 		_, fsys = NewDirectory(directoryOptions...)
 	}
 	return &Mounter{
-		path:           settings.path,
-		file:           fsys,
+		directory:      fsys,
 		cleanupEmpties: settings.cleanupElements,
 	}
 }
 
-func (dir *Mounter) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9.GID) (p9.QID, error) {
+func (mn *Mounter) clone(withQID bool) ([]p9.QID, *Mounter, error) {
+	var wnames []string
+	if withQID {
+		wnames = []string{selfWName}
+	}
+	qids, dirClone, err := mn.directory.Walk(wnames)
+	if err != nil {
+		return nil, nil, err
+	}
+	typedDir, err := assertDirectory(dirClone)
+	if err != nil {
+		return nil, nil, err
+	}
+	newDir := &Mounter{
+		directory: typedDir,
+
+		cleanupEmpties: mn.cleanupEmpties,
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	return qids, newDir, nil
+}
+
+/*
+func (mn *Mounter) Walk(names []string) ([]p9.QID, p9.File, error) {
+	return walk[*Mounter](mn, names...)
+}
+
+func (mn *Mounter) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
+}
+*/
+
+func (mn *Mounter) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9.GID) (p9.QID, error) {
 	hostAPI, err := filesystem.ParseAPI(name)
 	if err != nil {
 		return p9.QID{}, err
 	}
-	attr, err := mkdirInherit(dir, permissions, gid)
+	attr, err := mkdirInherit(mn, permissions, gid)
 	if err != nil {
 		return p9.QID{}, err
 	}
 	var (
 		metaOptions = []MetaOption{
-			WithPath(dir.path),
+			WithPath(mn.directory.path()),
 			WithBaseAttr(attr),
 			WithAttrTimestamps(true),
 		}
 		linkOptions = []LinkOption{
-			WithParent(dir, name),
+			WithParent(mn, name),
 		}
 		generatorOptions []GeneratorOption
 	)
-	if dir.cleanupEmpties {
+	if mn.cleanupEmpties {
 		generatorOptions = append(generatorOptions,
 			CleanupSelf(true),
 			CleanupEmpties(true),
@@ -82,7 +115,7 @@ func (dir *Mounter) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9
 			WithSuboptions[FuseOption](linkOptions...),
 			WithSuboptions[FuseOption](generatorOptions...),
 		)
-		return qid, dir.Link(fuseDir, name)
+		return qid, mn.Link(fuseDir, name)
 	default:
 		return p9.QID{}, errors.New("unexpected host") // TODO: msg
 	}

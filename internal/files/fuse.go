@@ -10,7 +10,7 @@ import (
 
 type (
 	FuseDir struct {
-		file
+		directory
 		path           *atomic.Uint64
 		cleanupEmpties bool
 	}
@@ -24,7 +24,7 @@ func NewFuseDir(options ...FuseOption) (p9.QID, *FuseDir) {
 	settings.RDev = p9.Dev(filesystem.Fuse)
 	var (
 		qid              p9.QID
-		fsys             file
+		fsys             directory
 		unlinkSelf       = settings.cleanupSelf
 		directoryOptions = []DirectoryOption{
 			WithSuboptions[DirectoryOption](settings.metaSettings.asOptions()...),
@@ -37,8 +37,8 @@ func NewFuseDir(options ...FuseOption) (p9.QID, *FuseDir) {
 		qid, fsys = NewDirectory(directoryOptions...)
 	}
 	return qid, &FuseDir{
-		path:           settings.path,
-		file:           fsys,
+		path:           settings.ninePath,
+		directory:      fsys,
 		cleanupEmpties: settings.cleanupElements,
 	}
 }

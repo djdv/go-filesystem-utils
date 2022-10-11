@@ -21,15 +21,15 @@ const (
 	S_IWOTH             = p9.Write
 	S_IXOTH             = p9.Exec
 
-	i_modeShift = 3
+	i_permissionModeShift = 3
 
-	S_IRGRP = S_IROTH << i_modeShift
-	S_IWGRP = S_IWOTH << i_modeShift
-	S_IXGRP = S_IXOTH << i_modeShift
+	S_IRGRP = S_IROTH << i_permissionModeShift
+	S_IWGRP = S_IWOTH << i_permissionModeShift
+	S_IXGRP = S_IXOTH << i_permissionModeShift
 
-	S_IRUSR = S_IRGRP << i_modeShift
-	S_IWUSR = S_IWGRP << i_modeShift
-	S_IXUSR = S_IXGRP << i_modeShift
+	S_IRUSR = S_IRGRP << i_permissionModeShift
+	S_IWUSR = S_IWGRP << i_permissionModeShift
+	S_IXUSR = S_IXGRP << i_permissionModeShift
 
 	S_IRWXO = S_IROTH | S_IWOTH | S_IXOTH
 	S_IRWXG = S_IRGRP | S_IWGRP | S_IXGRP
@@ -37,8 +37,12 @@ const (
 
 	// Non-standard.
 
-	S_IRWXA = S_IRWXU | S_IRWXG | S_IRWXO              // 0777
-	S_IRXA  = S_IRWXA &^ (S_IWUSR | S_IWGRP | S_IWOTH) // 0555
+	S_IXA   = S_IXUSR | S_IXGRP | S_IXOTH // POSIX: 0o111
+	S_IWA   = S_IWUSR | S_IWGRP | S_IWOTH // POSIX: 0o222
+	S_IRA   = S_IRUSR | S_IRGRP | S_IROTH // POSIX: 0o444
+	S_IRXA  = S_IRA | S_IXA               // POSIX: 0o555
+	S_IRWA  = S_IRA | S_IWA               // POSIX: 0o666
+	S_IRWXA = S_IRWXU | S_IRWXG | S_IRWXO // POSIX: 0o777
 
 	// TODO: operation masks should be configurable during node creation?
 	// Currently operations are hardcoded to use Linux umask(2) style.
@@ -54,11 +58,14 @@ const (
 	// Linux - Open(2) umask.
 
 	S_LINMSK = S_IWGRP | S_IWOTH
+
+	s_SCKMSK = S_IXA
 )
 
 type (
+	ninePath = *atomic.Uint64
 	metadata struct {
-		path ninePath
+		ninePath
 		*p9.Attr
 		*p9.QID
 	}
@@ -129,6 +136,8 @@ func (md metadata) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error
 	return qid, filled, *attr, nil
 }
 
+func (md *metadata) path() ninePath { return md.ninePath }
+
 func initMetadata(metadata *metadata, fileType p9.FileMode, withTimestamps bool) {
 	attr := metadata.Attr
 	if attr == nil {
@@ -142,10 +151,10 @@ func initMetadata(metadata *metadata, fileType p9.FileMode, withTimestamps bool)
 	if withTimestamps {
 		timestamp(timePointers(attr, true, true, true))
 	}
-	path := metadata.path
+	path := metadata.ninePath
 	if path == nil {
 		path = new(atomic.Uint64)
-		metadata.path = path
+		metadata.ninePath = path
 	}
 	var (
 		pathNum = path.Add(1)
@@ -373,10 +382,11 @@ func attrToSetAttr(source *p9.Attr) (p9.SetAttrMask, p9.SetAttr) {
 	return valid, attr
 }
 
-func mkdirMask(permissions p9.FileMode) p9.FileMode { return (permissions &^ S_LINMSK) & S_IRWXA }
-func mknodMask(permissions p9.FileMode) p9.FileMode { return permissions &^ S_LINMSK }
+func mkdirMask(permissions p9.FileMode) p9.FileMode  { return (permissions &^ S_LINMSK) & S_IRWXA }
+func mknodMask(permissions p9.FileMode) p9.FileMode  { return permissions &^ S_LINMSK }
+func socketMask(permissions p9.FileMode) p9.FileMode { return permissions &^ (S_LINMSK | s_SCKMSK) }
 
-func maybeInheritUID(parent file) (*p9.Attr, error) {
+func maybeInheritUID(parent p9.File) (*p9.Attr, error) {
 	var (
 		want     = p9.AttrMask{UID: true}
 		required = p9.AttrMask{}
@@ -387,7 +397,7 @@ func maybeInheritUID(parent file) (*p9.Attr, error) {
 // TODO: better name. mkdirFillAttr?
 // TODO: 9P2000.L does not define UID as part of mkdir messages.
 // The library/fork we're using should probably remove it from the method interface.
-func mkdirInherit(parent file, permissions p9.FileMode, gid p9.GID) (*p9.Attr, error) {
+func mkdirInherit(parent p9.File, permissions p9.FileMode, gid p9.GID) (*p9.Attr, error) {
 	attr, err := maybeInheritUID(parent)
 	if err != nil {
 		return nil, err
@@ -401,7 +411,7 @@ func mkdirInherit(parent file, permissions p9.FileMode, gid p9.GID) (*p9.Attr, e
 
 // TODO: 9P2000.L does not define UID as part of mknod messages.
 // The library/fork we're using should probably remove it from the method interface.
-func mknodInherit(parent file, permissions p9.FileMode, gid p9.GID) (*p9.Attr, error) {
+func mknodInherit(parent p9.File, permissions p9.FileMode, gid p9.GID) (*p9.Attr, error) {
 	attr, err := maybeInheritUID(parent)
 	if err != nil {
 		return nil, err

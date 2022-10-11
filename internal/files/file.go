@@ -2,18 +2,16 @@ package files
 
 import (
 	"sync"
-	"sync/atomic"
 
 	"github.com/hugelgupf/p9/fsimpl/templatefs"
 	"github.com/hugelgupf/p9/p9"
 )
 
 type (
-	file     = p9.File
 	noopFile = templatefs.NoopFile
-	ninePath = *atomic.Uint64
-
-	File struct {
+	link     = linkSettings
+	file     = p9.File
+	File     struct {
 		noopFile
 		metadata
 		link

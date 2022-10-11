@@ -297,6 +297,10 @@ func shutdownWithCounter(ctx context.Context, cancel context.CancelFunc,
 		for {
 			select {
 			case signalCount := <-counter:
+				// FIXME: timeout+force signals are not canceling properly?
+				// ^ the context for sure is, but the callsite may be blocking somewhere it shouldn't.
+				// TODO: Mocking tests for this is going to be annoying, but necessary.
+				// It may require some API changes for this whole callgraph.
 				switch signalCount {
 				case waitForConns:
 					var connectionsCtx context.Context

@@ -125,7 +125,7 @@ func safeMount(host *fuselib.FileSystemHost, fsid filesystem.ID, target string) 
 
 		// log.Println("calling fuse mount with args:", target, fuseArgs)
 		if !host.Mount(target, fuseArgs) {
-			errChan <- fmt.Errorf("%s: mount failed for an unknown reason", target)
+			errChan <- fmt.Errorf("failed to mount \"%s\" for an unknown reason - system log may have more information", target)
 		}
 	}()
 	return errChan

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -60,12 +61,20 @@ func ConnectOrLaunchLocal(options ...ClientOption) (*Client, error) {
 	return SelfConnect([]string{"daemon"}, options...)
 }
 
-
 func (c *Client) Shutdown(maddr multiaddr.Multiaddr) error {
 	if c.p9Client == nil {
 		// TODO: better message; maybe better logic?
 		// Can we prevent this from being possible without unexporting [Client]?
 		return fmt.Errorf("client is not connected")
+	}
+
+	/* TODO: we're probably going to want this. But selectively.
+	Unmount by default, but allow socket close without unmounting via flags.
+	As-is you can lock yourself out of an active remote daemon
+	(requires sending an OS signal for graceful stop at that point).
+	*/
+	if err := c.Unmount(context.TODO(), UnmountAll(true)); err != nil {
+		return nil
 	}
 
 	// TODO: const name in files pkg?

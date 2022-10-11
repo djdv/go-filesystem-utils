@@ -1,19 +1,42 @@
 package files
 
 import (
+	"fmt"
+
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/hugelgupf/p9/p9"
 	"github.com/hugelgupf/p9/perrors"
 )
 
+const errNotDirectory = generic.ConstError("type does not implement directory interface extensions")
+
 type (
-	Directory struct {
-		File
+	directory interface {
+		p9.File
 		fileTable
+		placeholderName
+		// entry(name string) (p9.File, error)
+		// TODO: can we eliminate this?
+		path() ninePath
+		//
+	}
+	Directory struct {
+		fileTable
+		File
 	}
 	ephemeralDir struct {
 		*Directory
 	}
 )
+
+func assertDirectory(dir p9.File) (directory, error) {
+	typedDir, ok := dir.(directory)
+	if !ok {
+		err := fmt.Errorf("%T: %w", dir, errNotDirectory)
+		return nil, err
+	}
+	return typedDir, nil
+}
 
 func NewDirectory(options ...DirectoryOption) (p9.QID, *Directory) {
 	var settings directorySettings
@@ -44,37 +67,34 @@ func newEphemeralDirectory(options ...DirectoryOption) (_ p9.QID, directory *eph
 
 func (dir *Directory) Attach() (p9.File, error) { return dir, nil }
 
-func (dir *Directory) clone(withQID bool) ([]p9.QID, *Directory, error) {
-	var (
-		qids   []p9.QID
-		newDir = &Directory{
-			fileTable: dir.fileTable,
-			File: File{
-				metadata: dir.metadata,
-				link:     dir.link,
-			},
-		}
-	)
-	if withQID {
-		qids = []p9.QID{*newDir.QID}
+func (dir *Directory) clone(withQID bool) (qs []p9.QID, clone *Directory, _ error) {
+	clone = &Directory{
+		fileTable: dir.fileTable,
+		File: File{
+			metadata: dir.metadata,
+			link:     dir.link,
+		},
 	}
-	return qids, newDir, nil
+	if withQID {
+		qs = []p9.QID{*clone.QID}
+	}
+	return
 }
 
 func (dir *Directory) Walk(names []string) ([]p9.QID, p9.File, error) {
 	return walk[*Directory](dir, names...)
 }
 
-func (dir *Directory) Open(mode p9.OpenFlags) (p9.QID, uint32, error) {
+func (dir *Directory) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
 	if mode.Mode() != p9.ReadOnly {
 		// TODO: [spec] correct evalue?
-		return p9.QID{}, 0, perrors.EINVAL
+		return p9.QID{}, noIOUnit, perrors.EINVAL
 	}
 	if dir.fidOpened() {
-		return p9.QID{}, 0, perrors.EBADF
+		return p9.QID{}, noIOUnit, perrors.EBADF
 	}
 	dir.openFlag = true
-	return *dir.QID, 0, nil
+	return *dir.QID, noIOUnit, nil
 }
 
 func (dir *Directory) files() fileTable { return dir.fileTable }
@@ -99,7 +119,7 @@ func (dir *Directory) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid 
 	}
 	directoryOptions := []DirectoryOption{
 		WithSuboptions[DirectoryOption](
-			WithPath(dir.path),
+			WithPath(dir.ninePath),
 			WithBaseAttr(&p9.Attr{
 				Mode: mkdirMask(permissions),
 				UID:  dir.UID,
@@ -133,14 +153,14 @@ func rename(oldDir, newDir, file p9.File, oldName, newName string) error {
 
 func (dir *Directory) Rename(newDir p9.File, newName string) error {
 	var (
-		parent  = dir.parent
-		oldName = dir.name
+		parent  = dir.link.parent
+		oldName = dir.link.name
 	)
 	return rename(parent, newDir, dir, oldName, newName)
 }
 
 func (dir *Directory) RenameAt(oldName string, newDir p9.File, newName string) error {
-	parent := dir.parent
+	parent := dir.link.parent
 	return rename(parent, newDir, dir, oldName, newName)
 }
 
@@ -149,10 +169,7 @@ func (eDir *ephemeralDir) clone(withQID bool) ([]p9.QID, *ephemeralDir, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	newDir := &ephemeralDir{
-		Directory: dir,
-	}
-	return qids, newDir, nil
+	return qids, &ephemeralDir{Directory: dir}, nil
 }
 
 func (eDir *ephemeralDir) UnlinkAt(name string, flags uint32) error {
@@ -164,7 +181,12 @@ func (eDir *ephemeralDir) UnlinkAt(name string, flags uint32) error {
 		return err
 	}
 	if len(ents) == 0 {
-		return eDir.parent.UnlinkAt(eDir.name, flags)
+		var (
+			link   = eDir.link
+			parent = link.parent
+			self   = link.name
+		)
+		return parent.UnlinkAt(self, flags)
 	}
 	return nil
 }

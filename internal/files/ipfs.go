@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -29,8 +28,9 @@ type (
 		dataMu sync.Locker
 		ipfsDataBuffer
 		*ipfsMountData
-		mountpoint io.Closer
-		mount      mountFunc // TODO: placeholder name.
+		// TODO: unmount should have its own mutex, and probably abstraction.
+		unmount *detachFunc // NOTE: Shared R/W access across all FIDs.
+		mount   mountFunc   // TODO: placeholder name.
 	}
 	ipfsMountData struct {
 		ApiMaddr ipfsAPIMultiaddr
@@ -61,41 +61,28 @@ func newIPFSMounter(fsid filesystem.ID, mountFn mountFunc, options ...IPFSOption
 		dataMu:        new(sync.Mutex),
 		ipfsMountData: new(ipfsMountData),
 		mount:         mountFn,
-		// dataBufferMu: new(sync.Mutex),
-		// dataBuffer:   new(bytes.Buffer),
+		unmount:       new(detachFunc),
 	}, nil
 }
-
-/*
-func withAPIMaddr(serverMaddr multiaddr.Multiaddr) ipfsTargetOption {
-	return func(it *ipfsTarget) error {
-		it.options.ApiMaddr.Multiaddr = serverMaddr
-		return nil
-	}
-}
-
-// TODO: this might become a shared+exported option
-func withMountTarget(target string) ipfsTargetOption {
-	return func(it *ipfsTarget) error {
-		it.options.Target = target
-		return nil
-	}
-}
-*/
 
 func (im *ipfsMounter) clone(withQID bool) ([]p9.QID, *ipfsMounter, error) {
 	var (
 		qids []p9.QID
 		// TODO: audit; struct changed, what fields specifically need to be copied.
 		newIt = &ipfsMounter{
-			File:           im.File,
+			// File:           im.File,
+			File: File{
+				metadata: im.File.metadata,
+				link:     im.File.link,
+			},
+			fsid: im.fsid,
+			// TODO: can we wrap this up into a (general) type? *bufferedWriterSync?
+			dataMu:         im.dataMu,
 			ipfsDataBuffer: im.ipfsDataBuffer,
 			ipfsMountData:  im.ipfsMountData,
-			// data:       it.data,
-			mount:      im.mount,
-			mountpoint: im.mountpoint,
-			dataMu:     im.dataMu,
-			// dataBuffer: it.write,
+			//
+			mount:   im.mount,
+			unmount: im.unmount,
 		}
 	)
 	if withQID {
@@ -112,7 +99,7 @@ func (im *ipfsMounter) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
 	if im.fidOpened() {
 		return p9.QID{}, noIOUnit, perrors.EBADF
 	}
-	im.openFlag = true
+	im.File.openFlag = true
 	return *im.QID, noIOUnit, nil
 }
 
@@ -151,6 +138,7 @@ func (im *ipfsMounter) Close() error {
 	defer im.dataMu.Unlock()
 	if writer := im.write; writer != nil &&
 		writer.Len() != 0 {
+		defer writer.Reset() // TODO: review where this should happen.
 		var (
 			targetData = writer.Bytes()
 			targetPtr  = im.ipfsMountData
@@ -171,28 +159,34 @@ func (im *ipfsMounter) Close() error {
 		if err != nil {
 			return err
 		}
+		// FIXME: ping IPFS node here. If it's not alive, don't even try to mount it.
+		// ^ Don't do this; file system calls should not depend on connection state
+		// (system-wide, per-call may error, but not total failure).
 		closer, err := im.mount(goFS, targetPtr.Target)
 		if err != nil {
-			return err
-		}
-		im.mountpoint = closer
-		/*
-			// TODO: structure; fsh should have Attach-like method.
-			// Not passed back to its package function.
-			fsh, err := cgofuse.GoToFuse(goFS)
-			if err != nil {
-				return err
+			// TODO: We do this for now in case the CLI call fails
+			// but should handle this differently for API callers.
+			// Add some flag like `unlink-on-failure` or something.
+			// (The reason for this is so the background process doesn't hang around forever
+			// thinking it has an active mountpoint when it doesn't)
+			if parent := im.File.link.parent; parent != nil {
+				// TODO: We'll need to handle the error too.
+				parent.UnlinkAt(im.File.link.name, 0)
 			}
-			cgofuse.AttachToHost(fsh.FileSystemHost, fsid, targetPtr.Target)
-			it.mountpoint = fsh
-		*/
-		/*
-			fuse := cgofuse.NewFuseInterface(goFS, )
-			closer, err := cgofuse.AttachToHost(fuse, fsid, targetPtr.Target)
-			it.mountpoint = fuse
-		*/
+			// TODO: error format
+			return fmt.Errorf("%w: %s", perrors.EIO, err)
+		}
+		*im.unmount = closer.Close
 	}
 	return nil
+}
+
+func (im *ipfsMounter) Detach() error {
+	detach := *im.unmount
+	if detach == nil {
+		return errors.New("not attached") // TODO: error message+value
+	}
+	return detach()
 }
 
 func ipfsToGoFS(fsid filesystem.ID, ipfsMaddr multiaddr.Multiaddr) (fs.FS, error) {
@@ -220,42 +214,6 @@ func ipfsToGoFS(fsid filesystem.ID, ipfsMaddr multiaddr.Multiaddr) (fs.FS, error
 		return nil, fmt.Errorf("%s has no handler", fsid)
 	}
 }
-
-/*
-func mountFuseIPFS(ipfsMaddr multiaddr.Multiaddr, fsid filesystem.ID, target string) (io.Closer, error) {
-	client, err := ipfsClient(ipfsMaddr)
-	if err != nil {
-		return nil, err
-	}
-	var goFS fs.FS
-	// TODO [de-dupe]: convert PinFS to fallthrough to IPFS if possible.
-	// Both need a client+IPFS-FS.
-	switch fsid { // TODO: add all cases
-	case filesystem.IPFS,
-		filesystem.IPNS:
-		goFS = filesystem.NewIPFS(client, fsid)
-	case filesystem.IPFSPins:
-		ipfs := filesystem.NewIPFS(client, filesystem.IPFS)
-		goFS = filesystem.NewPinFS(client.Pin(),
-			filesystem.WithIPFS[filesystem.PinfsOption](ipfs),
-		)
-	case filesystem.IPFSKeys:
-		ipns := filesystem.NewIPFS(client, filesystem.IPNS)
-		goFS = filesystem.NewKeyFS(client.Key(),
-			filesystem.WithIPNS[filesystem.KeyfsOption](ipns),
-		)
-	default:
-		return nil, errors.New("not supported yet")
-	}
-
-	// TODO: 1 interface per subsystem directory, not 1 per mountpoint
-	// I.e. 1 for /fuse/ipfs, 1 for /fuse/ipns, etc. not /fuse/ipfs/m1, /fuse/ipfs/m2
-	// const dbgLog = false // TODO: plumbing from options.
-	// ^ Still needed but as funcopts
-	fsi := cgofuse.NewFuseInterface(goFS)
-	return cgofuse.AttachToHost(fsi, fsid, target)
-}
-*/
 
 func ipfsClient(apiMaddr multiaddr.Multiaddr) (*httpapi.HttpApi, error) {
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 10*time.Second)
