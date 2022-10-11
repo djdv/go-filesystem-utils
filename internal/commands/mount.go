@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
 	"github.com/djdv/go-filesystem-utils/internal/daemon"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
-	giconfig "github.com/ipfs/kubo/config"
 	"github.com/multiformats/go-multiaddr"
 )
 
@@ -44,20 +42,11 @@ func (set *mountFuseSettings) BindFlags(fs *flag.FlagSet) {
 
 func (set *mountIPFSSettings) BindFlags(fs *flag.FlagSet) {
 	set.clientSettings.BindFlags(fs)
-	const apiFile = "api"
-	var (
-		envAPI  = filepath.Join(giconfig.EnvDir, apiFile)
-		fileAPI = filepath.Join(giconfig.DefaultPathRoot, apiFile)
-	)
 	// TODO: this should be a string, not parsed client-side
 	// (server may have different namespaces registered + double parse;
 	// just passthrough argv[x] as-is)
-	// TODO: default string option. Currently mocked.
 	multiaddrVar(fs, &set.ipfsAPI, "ipfs",
-		nil, fmt.Sprintf(
-			"IPFS API node `maddr`. (default: \"$%s\", \"%s\")",
-			envAPI, fileAPI,
-		))
+		defaultIPFSMaddr{}, "IPFS API node `maddr`.")
 }
 
 func Mount() command.Command {
@@ -145,28 +134,39 @@ func makeFuseIPFSExec(host filesystem.API, fsid filesystem.ID) func(context.Cont
 func ipfsExecute(ctx context.Context, host filesystem.API, fsid filesystem.ID,
 	set *mountIPFSSettings, args ...string,
 ) error {
+	// FIXME: [command] Doesn't the command library check for this already?
+	// We're seeing connections to the client when passed no args.
+	// ^ could also be our subcommand generator in this pkg.
+	if len(args) == 0 {
+		return command.ErrUsage
+	}
 	var (
 		err          error
 		serviceMaddr = set.serviceMaddr
+		ipfsMaddr    = set.ipfsAPI
 
 		client     *daemon.Client
 		clientOpts []daemon.ClientOption
 
 		// TODO: quick hack; do better
-		defaultMaddrs bool
+		defaultServiceMaddr bool
 		//
 	)
 	// TODO: [31f421d5-cb4c-464e-9d0f-41963d0956d1]
 	if lazy, ok := serviceMaddr.(lazyFlag[multiaddr.Multiaddr]); ok {
 		serviceMaddr = lazy.get()
-		defaultMaddrs = true
+		defaultServiceMaddr = true
+	}
+	// TODO: [31f421d5-cb4c-464e-9d0f-41963d0956d1]
+	if lazy, ok := ipfsMaddr.(lazyFlag[multiaddr.Multiaddr]); ok {
+		ipfsMaddr = lazy.get()
 	}
 	if set.verbose {
 		// TODO: less fancy prefix and/or out+prefix from CLI flags
 		clientLog := log.New(os.Stdout, "⬇️ client - ", log.Lshortfile)
 		clientOpts = append(clientOpts, daemon.WithLogger(clientLog))
 	}
-	if defaultMaddrs {
+	if defaultServiceMaddr {
 		client, err = daemon.ConnectOrLaunchLocal(clientOpts...)
 	} else {
 		client, err = daemon.Connect(serviceMaddr, clientOpts...)
@@ -175,9 +175,8 @@ func ipfsExecute(ctx context.Context, host filesystem.API, fsid filesystem.ID,
 		return err
 	}
 
-	var mountOpts []daemon.MountOption
-	if ipfsMaddr := set.ipfsAPI; ipfsMaddr != nil {
-		mountOpts = append(mountOpts, daemon.WithIPFS(ipfsMaddr))
+	mountOpts := []daemon.MountOption{
+		daemon.WithIPFS(ipfsMaddr),
 	}
 	if err := client.Mount(host, fsid, args, mountOpts...); err != nil {
 		return err

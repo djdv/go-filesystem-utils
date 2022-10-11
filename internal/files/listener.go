@@ -18,7 +18,7 @@ import (
 type (
 	ListenerCallback = func(manet.Listener)
 	Listener         struct {
-		file
+		directory
 		path           ninePath
 		mknodCallback  ListenerCallback
 		prefix         multiaddr.Multiaddr
@@ -51,7 +51,7 @@ func NewListener(callback ListenerCallback, options ...ListenerOption) (p9.QID, 
 	// TODO: rdev value?
 	var (
 		qid              p9.QID
-		fsys             file
+		fsys             directory
 		unlinkSelf       = settings.cleanupSelf
 		directoryOptions = []DirectoryOption{
 			WithSuboptions[DirectoryOption](settings.metaSettings.asOptions()...),
@@ -64,8 +64,8 @@ func NewListener(callback ListenerCallback, options ...ListenerOption) (p9.QID, 
 		qid, fsys = NewDirectory(directoryOptions...)
 	}
 	return qid, &Listener{
-		path:           settings.path,
-		file:           fsys,
+		path:           settings.ninePath,
+		directory:      fsys,
 		mknodCallback:  callback,
 		cleanupEmpties: settings.cleanupElements,
 	}
@@ -76,12 +76,16 @@ func (ld *Listener) clone(withQID bool) ([]p9.QID, *Listener, error) {
 	if withQID {
 		wnames = []string{selfWName}
 	}
-	qids, dirClone, err := ld.file.Walk(wnames)
+	qids, dirClone, err := ld.directory.Walk(wnames)
+	if err != nil {
+		return nil, nil, err
+	}
+	typedDir, err := assertDirectory(dirClone)
 	if err != nil {
 		return nil, nil, err
 	}
 	newDir := &Listener{
-		file:          dirClone,
+		directory:     typedDir,
 		path:          ld.path,
 		mknodCallback: ld.mknodCallback,
 		prefix:        ld.prefix,
@@ -98,7 +102,7 @@ func (ld *Listener) fidOpened() bool { return false } // TODO need to store stat
 
 func (ld *Listener) files() fileTable {
 	// XXX: Magic; We need to change something to eliminate this.
-	return ld.file.(interface {
+	return ld.directory.(interface {
 		files() fileTable
 	}).files()
 }
@@ -128,7 +132,7 @@ func (ld *Listener) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9
 	}
 	var (
 		qid              p9.QID
-		fsys             file
+		fsys             directory
 		directoryOptions = []DirectoryOption{
 			WithSuboptions[DirectoryOption](
 				WithPath(ld.path),
@@ -150,7 +154,7 @@ func (ld *Listener) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9
 	// withPrefix, withProtocol, ...
 	newDir := &Listener{
 		path:           ld.path,
-		file:           fsys,
+		directory:      fsys,
 		mknodCallback:  ld.mknodCallback,
 		prefix:         prefix,
 		protocol:       protocolName,
@@ -229,14 +233,11 @@ func (ld *Listener) Mknod(name string, mode p9.FileMode,
 func (ld *Listener) makeListenerFile(listener manet.Listener,
 	name string, attr *p9.Attr,
 ) *listenerFile {
-	// TODO: this should probably be done somewhere else; files in general need a proper design
-	// neglected in favour of directories for now.
 	attr.Size = uint64(len(listener.Multiaddr().Bytes()))
-	//
 	listenerFile := &listenerFile{
 		metadata: metadata{
-			path: ld.path,
-			Attr: attr,
+			ninePath: ld.path,
+			Attr:     attr,
 		},
 		Listener: listener,
 	}
@@ -256,30 +257,31 @@ func (ld *Listener) Listen(maddr multiaddr.Multiaddr) (manet.Listener, error) {
 			GID:  true,
 		}
 		required  = p9.AttrMask{Mode: true}
-		attr, err = maybeGetAttrs(ld.file, want, required)
+		attr, err = maybeGetAttrs(ld.directory, want, required)
 	)
 	if err != nil {
 		return nil, err
 	}
-	// TODO: move this to a constant + wrapperFunc;
-	// double check that it's compliant with whatever standard we need to conform to (styx|.L)
-	const socketMask = S_IXOTH | S_IXGRP | S_IXUSR
-	var (
-		permissions = (attr.Mode.Permissions() &^ S_LINMSK) & S_IRWXA
-		uid         = attr.UID
-		gid         = attr.GID
-	)
-	protocolDir, err := MkdirAll(ld, components, permissions, uid, gid)
-	if err != nil {
-		return nil, err
-	}
-	attr.Mode = (permissions &^ S_LINMSK) &^ socketMask
 
-	// TODO: Close the listener in the event of an FS/link err
+	var (
+		basePermissions = attr.Mode.Permissions()
+		dirPermissions  = mkdirMask(basePermissions)
+		sockPermissions = socketMask(basePermissions)
+		uid             = attr.UID
+		gid             = attr.GID
+	)
+	protocolDir, err := MkdirAll(ld, components, dirPermissions, uid, gid)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO: Close the listener in the event of an FS/link err?
 	listener, err := listen(maddr)
 	if err != nil {
 		return nil, err
 	}
+
+	attr.Mode = sockPermissions
 	listenerFile := ld.makeListenerFile(listener, socket, attr)
 	return listener, protocolDir.Link(listenerFile, socket)
 }
@@ -335,47 +337,6 @@ func listen(maddr multiaddr.Multiaddr) (manet.Listener, error) {
 	return listener, nil
 }
 
-/*
-func createListenerFile(listener manet.Listener, name string, permissions p9.FileMode,
-	parent p9.File, path *atomic.Uint64,
-	uid p9.UID, gid p9.GID,
-) (p9.QID, error) {
-	var (
-		listenerFile, err = makeListenerFile(listener,
-			permissions, uid, gid, WithPath(path))
-		qid = *listenerFile.QID
-	)
-	if err != nil {
-		return qid, err
-	}
-	return qid, parent.Link(listenerFile, name)
-}
-
-func makeListenerFile(listener manet.Listener,
-	permissions p9.FileMode, uid p9.UID, gid p9.GID,
-	options ...MetaOption,
-) (*listenerFile, error) {
-	const withTimestamps = true
-	var metadata metadata
-	initMetadata(&metadata, p9.ModeRegular, withTimestamps)
-	metadata, err := makeMetadata(p9.ModeRegular, options...)
-	if err != nil {
-		return nil, err
-	}
-	listenerFile := &listenerFile{
-		metadata: metadata,
-		Listener: listener,
-	}
-	const withServerTimes = true
-	return listenerFile, setAttr(listenerFile, &p9.Attr{
-		Mode: permissions,
-		UID:  uid,
-		GID:  gid,
-		Size: uint64(len(listener.Multiaddr().Bytes())),
-	}, withServerTimes)
-}
-*/
-
 func splitMaddr(maddr multiaddr.Multiaddr) (components []*multiaddr.Component, names []string) {
 	multiaddr.ForEach(maddr, func(c multiaddr.Component) bool {
 		components = append(components, &c)
@@ -412,7 +373,7 @@ func (ld *Listener) UnlinkAt(name string, flags uint32) error {
 	// then unlink from our table,
 	// then return the result of file.Close (which itself calls listener.Close)
 
-	ulErr := ld.file.UnlinkAt(name, flags)
+	ulErr := ld.directory.UnlinkAt(name, flags)
 	if lf, ok := lFile.(*listenerFile); ok {
 		if listener := lf.Listener; listener != nil {
 			if err := listener.Close(); err != nil {
@@ -450,7 +411,7 @@ func (lf *listenerFile) Walk(names []string) ([]p9.QID, p9.File, error) {
 	return walk[*listenerFile](lf, names...)
 }
 
-func (lf *listenerFile) Open(mode p9.OpenFlags) (p9.QID, uint32, error) {
+func (lf *listenerFile) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
 	if lf.fidOpened() {
 		return p9.QID{}, 0, perrors.EBADF
 	}

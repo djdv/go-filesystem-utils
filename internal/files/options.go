@@ -30,7 +30,6 @@ type (
 	}
 	MetaOption func(*metaSettings) error
 
-	link         = linkSettings
 	linkSettings struct {
 		parent p9.File
 		name   string
@@ -117,7 +116,7 @@ func WithSuboptions[
 }
 
 func WithPath(path *atomic.Uint64) MetaOption {
-	return func(set *metaSettings) error { set.path = path; return nil }
+	return func(set *metaSettings) error { set.ninePath = path; return nil }
 }
 
 // TODO: docs
@@ -139,18 +138,6 @@ func WithAttrTimestamps(b bool) MetaOption {
 	return func(ms *metaSettings) error { ms.withTimestamps = true; return nil }
 }
 
-/* TODO: lint?
-func WithQID(qid *p9.QID) MetaOption {
-	return func(set *metaSettings) error { set.QID = qid; return nil }
-}
-*/
-
-/*
-func WithParent(parent p9.File) LinkOption {
-	return func(ls *linkSettings) error { ls.parent = parent; return nil }
-}
-*/
-
 // TODO: name is the name of the child, in relation to the parent, not the parent node's name.
 // We need a good variable-name for this. selfName? ourName?
 func WithParent(parent p9.File, name string) LinkOption {
@@ -167,18 +154,12 @@ func CleanupEmpties(b bool) GeneratorOption {
 	return func(set *generatorSettings) error { set.cleanupElements = b; return nil }
 }
 
-/*
-func WithHost(api filesystem.API) FSIDOption {
-	return func(fs *fsidSettings) error { fs.hostAPI = api; return nil }
-}
-*/
-
 // TODO: we should either export these settings reflectors or make a comparable function.
 // Even better would be to eliminate the need for them all together.
 
 func (settings *metaSettings) asOptions() []MetaOption {
 	return []MetaOption{
-		WithPath(settings.path),
+		WithPath(settings.ninePath),
 		WithBaseAttr(settings.Attr),
 		WithAttrTimestamps(settings.withTimestamps),
 	}

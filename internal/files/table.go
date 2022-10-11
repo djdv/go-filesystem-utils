@@ -11,15 +11,12 @@ import (
 type (
 	// TODO: [audit] We probably don't need all these table methods. This is what we had already.
 	fileTable interface {
-		store(name string, file p9.File)
-		upsert(name string, file p9.File)
 		exclusiveStore(name string, file p9.File) bool
 		load(name string) (p9.File, bool)
 		length() int
 		flatten(offset uint64, count uint32) ([]string, []p9.File)
 		to9Ents(offset uint64, count uint32) (p9.Dirents, error)
 		delete(name string) bool
-		pop(name string) p9.File
 	}
 	tableSync struct {
 		mu    sync.RWMutex
@@ -31,18 +28,6 @@ type (
 // TODO: alloc hint? Lots of device directories will have single to few entries.
 // Some user dirs may store their element count so it is known ahead of time.
 func newFileTable() *tableSync { return &tableSync{table: make(mapTable)} }
-
-func (ft *tableSync) store(name string, file p9.File) {
-	ft.mu.Lock()
-	defer ft.mu.Unlock()
-	ft.table[name] = file
-}
-
-func (ft *tableSync) upsert(name string, file p9.File) {
-	ft.mu.Lock()
-	defer ft.mu.Unlock()
-	ft.table[name] = file
-}
 
 func (ft *tableSync) exclusiveStore(name string, file p9.File) bool {
 	ft.mu.Lock()
@@ -123,12 +108,4 @@ func (ft *tableSync) delete(name string) bool {
 	_, ok := ft.table[name]
 	delete(ft.table, name)
 	return ok
-}
-
-func (ft *tableSync) pop(name string) p9.File {
-	ft.mu.Lock()
-	defer ft.mu.Unlock()
-	f := ft.table[name]
-	delete(ft.table, name)
-	return f
 }

@@ -9,6 +9,8 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/daemon"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	"github.com/hugelgupf/p9/p9"
+	giconfig "github.com/ipfs/kubo/config"
+	giconfigfile "github.com/ipfs/kubo/config/serialize"
 	"github.com/multiformats/go-multiaddr"
 )
 
@@ -34,6 +36,7 @@ type (
 	// Exec function itself shouldn't need to do this.
 	lazyFlag[T any]    interface{ get() T }
 	defaultServerMaddr struct{ multiaddr.Multiaddr }
+	defaultIPFSMaddr   struct{ multiaddr.Multiaddr }
 )
 
 func (defaultServerMaddr) get() multiaddr.Multiaddr {
@@ -42,6 +45,27 @@ func (defaultServerMaddr) get() multiaddr.Multiaddr {
 		panic(err)
 	}
 	return userMaddrs[0]
+}
+
+func (defaultIPFSMaddr) get() multiaddr.Multiaddr {
+	// FIXME: we need to make it clear in the helptext that this is a dynamic value.
+	// This will probably require changes to the command library.
+	// E.g don't print `C:\some-sock` at the time of request,
+	// print the value sources `$IPFS_API, ~/.ipfs/config, ...`.
+	// ^ These are:
+	/*
+		const apiFile = "api"
+		envAPI  = filepath.Join(giconfig.EnvDir, apiFile)
+		fileAPI = filepath.Join(giconfig.DefaultPathRoot, apiFile)
+	*/
+	maddrs, err := ipfsAPIFromSystem()
+	if err != nil {
+		// FIXME: we need some way to fail gracefully.
+		// Separate value from helptext and return some text saying we can't retrieve it.
+		// Error out in the actual execute function.
+		panic(err)
+	}
+	return maddrs[0]
 }
 
 func (set *commonSettings) BindFlags(fs *flag.FlagSet) {
@@ -152,4 +176,35 @@ func fsAPIVar(fs *flag.FlagSet, fsAPIPtr *filesystem.API,
 	name string, defVal filesystem.API, usage string,
 ) {
 	containerVar(fs, fsAPIPtr, name, defVal, usage, filesystem.ParseAPI)
+}
+
+
+func ipfsAPIFromSystem() ([]multiaddr.Multiaddr, error) {
+	// TODO: We don't need, nor want the full config.
+	// - IPFS doesn't declare a standard environment variable to use for the API.
+	// We should declare and document our own to avoid touching the fs at all.
+	// - The API file format is unlikely to change, we should probably just parse it by hand.
+	// (The full config file contains node secrets
+	// and I really don't want to pull those into memory at all.)
+	// ^ We should try to coordinate upstream. Something this common should really be standardized.
+	confFile, err := giconfig.Filename("", "")
+	if err != nil {
+		return nil, err
+	}
+	nodeConf, err := giconfigfile.Load(confFile)
+	if err != nil {
+		return nil, err
+	}
+	var (
+		apiMaddrStrings = nodeConf.Addresses.API
+		apiMaddrs       = make([]multiaddr.Multiaddr, len(apiMaddrStrings))
+	)
+	for i, maddrString := range apiMaddrStrings {
+		maddr, err := multiaddr.NewMultiaddr(maddrString)
+		if err != nil {
+			return nil, err
+		}
+		apiMaddrs[i] = maddr
+	}
+	return apiMaddrs, nil
 }

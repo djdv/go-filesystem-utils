@@ -10,6 +10,7 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/files"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	"github.com/hugelgupf/p9/p9"
+	"github.com/hugelgupf/p9/perrors"
 	"github.com/jaevor/go-nanoid"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -38,7 +39,27 @@ func (c *Client) Mount(host filesystem.API, fsid filesystem.ID, args []string, o
 			}
 			c.idGen = idGen
 		}
-		return handleFuse(mRoot, idGen, fsid, set, args)
+		if err := handleFuse(mRoot, idGen, fsid, set, args); err != nil {
+			if errors.Is(err, perrors.EIO) {
+				/* TODO: Unfortunately the .L variant of 9P
+				uses numbers instead of strings for errors;
+				so we lose any additional information.
+				For now we'll ambiguously decorate the error.
+				Later we can inspect args to be more precise
+				(this one only applies to IPFS targets)
+				We can also consider setting up an extension on the daemon,
+				which lets us inquire deeper.
+				E.g. before the call, request a token,
+				if we get an error, send both back to the daemon.
+				Daemon then responds with the original error string.
+				This allows us to remain compliant with .L clients
+				without compromising on clarity in our specific client.
+				*/
+				return fmt.Errorf("%w: %s", err, "IPFS node may be unreachable?")
+			}
+			return err
+		}
+		return nil
 	default:
 		return errors.New("NIY")
 	}
@@ -54,7 +75,7 @@ func handleFuse(mRoot p9.File, idGen nanoidGen, fsid filesystem.ID,
 		uid      = set.uid
 		gid      = set.gid
 	)
-	const permissions = files.S_IRWXA &^ (files.S_IWGRP | files.S_IWOTH)
+	const permissions = files.S_IRWXU | files.S_IRA | files.S_IXA
 	idRoot, err := files.MkdirAll(mRoot, wname, permissions, uid, gid)
 	if err != nil {
 		return err
