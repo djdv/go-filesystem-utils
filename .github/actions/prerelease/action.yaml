@@ -16,5 +16,5 @@ runs:
       run: |
         pushd artifact
         gh release delete --yes prerelease
-        gh release create --prerelease --generate-notes --title "Development build" prerelease *
+        gh release create --prerelease --generate-notes --title "Development build" --notes "Default args for mounting IPFS should work now if `IPFS_PATH` is initialized. Not well tested yet." prerelease *
         popd
