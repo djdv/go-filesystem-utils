@@ -91,4 +91,4 @@ require (
 
 // FIXME: Ideally we remove this replace directive when upstream merges
 // if that doesn't happen before end of review, we'll have to fork.
-replace github.com/hugelgupf/p9 => github.com/djdv/p9 v0.2.1-0.20220727204224-9a076d69a162
+replace github.com/hugelgupf/p9 => github.com/djdv/p9 v0.2.1-0.20221024045104-6b0c9ca47f00
