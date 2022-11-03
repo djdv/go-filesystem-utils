@@ -41,9 +41,10 @@ func unmountExecute(ctx context.Context, set *unmountSettings) error {
 		client     *daemon.Client
 		clientOpts []daemon.ClientOption
 	)
-	// TODO: [31f421d5-cb4c-464e-9d0f-41963d0956d1]
 	if lazy, ok := serviceMaddr.(lazyFlag[multiaddr.Multiaddr]); ok {
-		serviceMaddr = lazy.get()
+		if serviceMaddr, err = lazy.get(); err != nil {
+			return err
+		}
 	}
 	if set.verbose {
 		// TODO: less fancy prefix and/or out+prefix from CLI flags

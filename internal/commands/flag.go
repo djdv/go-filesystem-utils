@@ -1,16 +1,19 @@
 package commands
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
 	"github.com/djdv/go-filesystem-utils/internal/daemon"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	"github.com/hugelgupf/p9/p9"
 	giconfig "github.com/ipfs/kubo/config"
-	giconfigfile "github.com/ipfs/kubo/config/serialize"
 	"github.com/multiformats/go-multiaddr"
 )
 
@@ -23,49 +26,45 @@ type (
 		serviceMaddr multiaddr.Multiaddr
 		commonSettings
 	}
-
 	valueContainer[t any] struct {
 		tPtr  *t
 		parse func(string) (t, error)
 	}
-
-	// TODO: [31f421d5-cb4c-464e-9d0f-41963d0956d1]
-	// We should formalize this into the command package.
-	// So lazy flags can be defined easily, and initialized
-	// as late as possible. (Right before calling execute.)
-	// Exec function itself shouldn't need to do this.
-	lazyFlag[T any]    interface{ get() T }
+	lazyFlag[T any]    interface{ get() (T, error) }
 	defaultServerMaddr struct{ multiaddr.Multiaddr }
 	defaultIPFSMaddr   struct{ multiaddr.Multiaddr }
 )
 
-func (defaultServerMaddr) get() multiaddr.Multiaddr {
+func (defaultServerMaddr) get() (multiaddr.Multiaddr, error) {
 	userMaddrs, err := daemon.UserServiceMaddrs()
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	return userMaddrs[0]
+	return userMaddrs[0], nil
 }
 
-func (defaultIPFSMaddr) get() multiaddr.Multiaddr {
-	// FIXME: we need to make it clear in the helptext that this is a dynamic value.
-	// This will probably require changes to the command library.
-	// E.g don't print `C:\some-sock` at the time of request,
-	// print the value sources `$IPFS_API, ~/.ipfs/config, ...`.
-	// ^ These are:
-	/*
-		const apiFile = "api"
-		envAPI  = filepath.Join(giconfig.EnvDir, apiFile)
-		fileAPI = filepath.Join(giconfig.DefaultPathRoot, apiFile)
-	*/
-	maddrs, err := ipfsAPIFromSystem()
+func (ds defaultServerMaddr) String() string {
+	maddr, err := ds.get()
 	if err != nil {
-		// FIXME: we need some way to fail gracefully.
-		// Separate value from helptext and return some text saying we can't retrieve it.
-		// Error out in the actual execute function.
-		panic(err)
+		return ""
 	}
-	return maddrs[0]
+	return maddr.String()
+}
+
+func (defaultIPFSMaddr) get() (multiaddr.Multiaddr, error) {
+	maddrs, err := getIPFSAPI()
+	if err != nil {
+		return nil, err
+	}
+	return maddrs[0], nil
+}
+
+func (di defaultIPFSMaddr) String() string {
+	maddr, err := di.get()
+	if err != nil {
+		return "no IPFS API file found (must provide this argument)"
+	}
+	return maddr.String()
 }
 
 func (set *commonSettings) BindFlags(fs *flag.FlagSet) {
@@ -76,14 +75,6 @@ func (set *commonSettings) BindFlags(fs *flag.FlagSet) {
 
 func (set *clientSettings) BindFlags(fs *flag.FlagSet) {
 	set.commonSettings.BindFlags(fs)
-	// TODO: Can we format these nicely?
-	// Multiple UDS paths are long when right justified in `-help`.
-	// One way could be to truncate duplicate string prefixes:
-	// `/unix/C:\Users\...`; \dirA\1.sock dirB\2.sock`
-	// Another as a tree:
-	// /unix/
-	//   /fullPath1
-	//   /fullPath2
 	multiaddrVar(fs, &set.serviceMaddr, daemon.ServerName,
 		defaultServerMaddr{}, "File system service `maddr`.")
 }
@@ -104,14 +95,9 @@ func (vc valueContainer[T]) String() string {
 	if tPtr == nil {
 		return ""
 	}
-
 	tVal := *tPtr
-	if lazy, ok := any(tVal).(lazyFlag[T]); ok {
-		tVal = lazy.get() // TODO: [31f421d5-cb4c-464e-9d0f-41963d0956d1]
-	}
-
 	// XXX: Special cases.
-	// TODO Handle this better. Optional `defaultString` in the constructor?
+	// TODO Handle this better. Optional helptext string in the constructor?
 	const invalidID = "nobody"
 	switch valType := any(tVal).(type) {
 	case p9.UID:
@@ -178,8 +164,61 @@ func fsAPIVar(fs *flag.FlagSet, fsAPIPtr *filesystem.API,
 	containerVar(fs, fsAPIPtr, name, defVal, usage, filesystem.ParseAPI)
 }
 
+func getIPFSAPI() ([]multiaddr.Multiaddr, error) {
+	location, err := getIPFSAPIPath()
+	if err != nil {
+		return nil, err
+	}
+	if !apiFileExists(location) {
+		return nil, errors.New("IPFS API file not found") // TODO: proper error value
+	}
+	return parseIPFSAPI(location)
+}
 
-func ipfsAPIFromSystem() ([]multiaddr.Multiaddr, error) {
+func getIPFSAPIPath() (string, error) {
+	const apiFile = "api"
+	var target string
+	if ipfsPath, set := os.LookupEnv(giconfig.EnvDir); set {
+		target = filepath.Join(ipfsPath, apiFile)
+	} else {
+		target = filepath.Join(giconfig.DefaultPathRoot, apiFile)
+	}
+	return expandHomeShorthand(target)
+}
+
+func expandHomeShorthand(name string) (string, error) {
+	if !strings.HasPrefix(name, "~") {
+		return name, nil
+	}
+	homeName, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(homeName, name[1:]), nil
+}
+
+func apiFileExists(name string) bool {
+	_, err := os.Stat(name)
+	return err == nil
+}
+
+func parseIPFSAPI(name string) ([]multiaddr.Multiaddr, error) {
+	// NOTE: [upstream problem]
+	// If the config file has multiple API maddrs defined,
+	// only the first one will be contained in the API file.
+	maddrString, err := os.ReadFile(name)
+	if err != nil {
+		return nil, err
+	}
+	maddr, err := multiaddr.NewMultiaddr(string(maddrString))
+	if err != nil {
+		return nil, err
+	}
+	return []multiaddr.Multiaddr{maddr}, nil
+}
+
+/* TODO: [lint] we might still want to use this method instead. Needs consideration.
+func ipfsAPIFromConfig([]multiaddr.Multiaddr, error) {
 	// TODO: We don't need, nor want the full config.
 	// - IPFS doesn't declare a standard environment variable to use for the API.
 	// We should declare and document our own to avoid touching the fs at all.
@@ -208,3 +247,4 @@ func ipfsAPIFromSystem() ([]multiaddr.Multiaddr, error) {
 	}
 	return apiMaddrs, nil
 }
+*/
