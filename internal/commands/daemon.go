@@ -73,12 +73,15 @@ const (
 )
 
 func daemonExecute(ctx context.Context, set *daemonSettings) error {
-	var ( // TODO: [31f421d5-cb4c-464e-9d0f-41963d0956d1]
+	var (
 		serverMaddr = set.serverMaddr
 		srvLog      = makeDaemonLog(set.verbose)
 	)
 	if lazy, ok := serverMaddr.(lazyFlag[multiaddr.Multiaddr]); ok {
-		serverMaddr = lazy.get()
+		var err error
+		if serverMaddr, err = lazy.get(); err != nil {
+			return err
+		}
 	}
 	var (
 		serverWg sync.WaitGroup

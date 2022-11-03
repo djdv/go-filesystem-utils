@@ -32,9 +32,11 @@ func shutdownExecute(ctx context.Context, set *shutdownSettings, _ ...string) er
 	// TODO: signalctx + shutdown on cancel
 
 	serviceMaddr := set.serviceMaddr
-	// TODO: [31f421d5-cb4c-464e-9d0f-41963d0956d1]
 	if lazy, ok := serviceMaddr.(lazyFlag[multiaddr.Multiaddr]); ok {
-		serviceMaddr = lazy.get()
+		var err error
+		if serviceMaddr, err = lazy.get(); err != nil {
+			return err
+		}
 	}
 
 	client, err := daemon.Connect(serviceMaddr, clientOpts...)

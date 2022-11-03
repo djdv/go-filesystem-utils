@@ -152,14 +152,16 @@ func ipfsExecute(ctx context.Context, host filesystem.API, fsid filesystem.ID,
 		defaultServiceMaddr bool
 		//
 	)
-	// TODO: [31f421d5-cb4c-464e-9d0f-41963d0956d1]
 	if lazy, ok := serviceMaddr.(lazyFlag[multiaddr.Multiaddr]); ok {
-		serviceMaddr = lazy.get()
+		if serviceMaddr, err = lazy.get(); err != nil {
+			return err
+		}
 		defaultServiceMaddr = true
 	}
-	// TODO: [31f421d5-cb4c-464e-9d0f-41963d0956d1]
 	if lazy, ok := ipfsMaddr.(lazyFlag[multiaddr.Multiaddr]); ok {
-		ipfsMaddr = lazy.get()
+		if ipfsMaddr, err = lazy.get(); err != nil {
+			return fmt.Errorf("could not retrieve IPFS node maddr, provide with -ipfs flag: %w", err)
+		}
 	}
 	if set.verbose {
 		// TODO: less fancy prefix and/or out+prefix from CLI flags
