@@ -1,5 +1,5 @@
 name: "Setup Go"
-description: "Installs Go and restores a build cache"
+description: "Installs Go"
 runs:
   using: "composite"
   steps:
@@ -7,17 +7,4 @@ runs:
       with:
         go-version-file: 'go.mod'
         check-latest: true
-    - name: Get Go cache paths
-      id: cache_go
-      shell: pwsh
-      run: |
-        echo "mod=${{$(go env GOMODCACHE)}}" >> $GITHUB_OUTPUT
-        echo "build=${{$(go env GOCACHE)}}" >> $GITHUB_OUTPUT
-    - name: Restore cache
-      uses: actions/cache@v3
-      with:
-        path: |
-          ${{ steps.cache_go.outputs.mod }}
-          ${{ steps.cache_go.outputs.build }}
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: ${{ runner.os }}-go-
+        cache: true
