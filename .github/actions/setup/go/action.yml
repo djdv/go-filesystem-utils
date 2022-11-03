@@ -11,8 +11,8 @@ runs:
       id: cache_go
       shell: pwsh
       run: |
-        echo "::set-output name=mod::$(go env GOMODCACHE)"
-        echo "::set-output name=build::$(go env GOCACHE)"
+        echo "{mod}={$(go env GOMODCACHE)}" >> $GITHUB_OUTPUT
+        echo "{build}={$(go env GOCACHE)}" >> $GITHUB_OUTPUT
     - name: Restore cache
       uses: actions/cache@v3
       with:
