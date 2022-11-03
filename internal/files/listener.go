@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -23,6 +24,7 @@ type (
 		mknodCallback  ListenerCallback
 		prefix         multiaddr.Multiaddr
 		protocol       string
+		maddrPath      []string
 		cleanupEmpties bool
 	}
 	listenerDir interface {
@@ -111,7 +113,9 @@ func (ld *Listener) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9
 	var (
 		prefix       = ld.prefix
 		protocolName = ld.protocol
+		maddrPath    = ld.maddrPath
 	)
+	// TODO: try to make this less gross / split up.
 	if protocolName == "" {
 		if err := validateProtocol(name); err != nil {
 			// TODO: error value
@@ -119,12 +123,19 @@ func (ld *Listener) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9
 		}
 		protocolName = name
 	} else {
-		var err error
-		if prefix, err = appendMaddr(prefix, protocolName, name); err != nil {
-			// TODO: error value
-			return p9.QID{}, fmt.Errorf("%w - %s", perrors.EIO, err)
+		// TODO: [1413c980-2a65-4144-a679-7be1b77f01e3] generalize.
+		// multiaddr pkg should have an index with a .Path flag set
+		// for ones that need this behaviour. Right now hardcoding UDS support only.
+		if protocolName == "unix" {
+			maddrPath = append(maddrPath, name)
+		} else {
+			var err error
+			if prefix, err = appendMaddr(prefix, protocolName, name); err != nil {
+				// TODO: error value
+				return p9.QID{}, fmt.Errorf("%w - %s", perrors.EIO, err)
+			}
+			protocolName = ""
 		}
-		protocolName = ""
 	}
 	attr, err := mkdirInherit(ld, permissions, gid)
 	if err != nil {
@@ -158,6 +169,7 @@ func (ld *Listener) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9
 		mknodCallback:  ld.mknodCallback,
 		prefix:         prefix,
 		protocol:       protocolName,
+		maddrPath:      maddrPath,
 		cleanupEmpties: ld.cleanupEmpties,
 	}
 	return qid, ld.Link(newDir, name)
@@ -206,7 +218,13 @@ func (ld *Listener) Mknod(name string, mode p9.FileMode,
 	if callback == nil {
 		return p9.QID{}, perrors.ENOSYS
 	}
-	component, err := multiaddr.NewComponent(ld.protocol, name)
+
+	protocol := ld.protocol
+	// TODO: [1413c980-2a65-4144-a679-7be1b77f01e3]
+	if protocol == "unix" {
+		name = path.Join(append(ld.maddrPath, name)...)
+	}
+	component, err := multiaddr.NewComponent(protocol, name)
 	if err != nil {
 		return p9.QID{}, err
 	}
