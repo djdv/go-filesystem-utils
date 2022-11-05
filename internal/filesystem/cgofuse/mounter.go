@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	fuselib "github.com/billziss-gh/cgofuse/fuse"
+	fuselib "github.com/winfsp/cgofuse/fuse"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 )
 

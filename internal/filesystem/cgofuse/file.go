@@ -6,7 +6,7 @@ import (
 	"io"
 	"io/fs"
 
-	"github.com/billziss-gh/cgofuse/fuse"
+	"github.com/winfsp/cgofuse/fuse"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	"github.com/u-root/uio/ulog"
 )

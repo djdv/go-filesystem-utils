@@ -4,7 +4,6 @@ go 1.19
 
 require (
 	github.com/adrg/xdg v0.4.0
-	github.com/billziss-gh/cgofuse v1.5.0
 	github.com/hugelgupf/p9 v0.0.0-00010101000000-000000000000
 	github.com/ipfs/go-cid v0.2.0
 	github.com/ipfs/go-ipfs-files v0.1.1
@@ -20,6 +19,7 @@ require (
 	github.com/multiformats/go-multiaddr v0.6.0
 	github.com/multiformats/go-multiaddr-dns v0.3.1
 	github.com/u-root/uio v0.0.0-20220204230159-dac05f7d2cb4
+	github.com/winfsp/cgofuse v1.5.1-0.20221106144041-c23bd0f99a49
 	golang.org/x/exp v0.0.0-20220921023135-46d9e7742f1e
 )
 
@@ -27,7 +27,6 @@ require (
 	github.com/btcsuite/btcd/btcec/v2 v2.2.0 // indirect
 	github.com/crackcomm/go-gitignore v0.0.0-20170627025303-887ab5e44cc3 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
-	github.com/facebookgo/atomicfile v0.0.0-20151019160806-2de1f203e7d5 // indirect
 	github.com/go-logr/logr v1.2.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
