@@ -4,7 +4,7 @@ import (
 	"io/fs"
 	"log"
 
-	"github.com/billziss-gh/cgofuse/fuse"
+	"github.com/winfsp/cgofuse/fuse"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 )
 

@@ -4,7 +4,7 @@
 package cgofuse
 
 import (
-	fuselib "github.com/billziss-gh/cgofuse/fuse"
+	fuselib "github.com/winfsp/cgofuse/fuse"
 )
 
 // metadata methods that don't apply to our systems

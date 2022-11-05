@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	fuselib "github.com/billziss-gh/cgofuse/fuse"
+	fuselib "github.com/winfsp/cgofuse/fuse"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 )
 

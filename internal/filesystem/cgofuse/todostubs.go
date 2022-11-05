@@ -1,6 +1,6 @@
 package cgofuse
 
-import fuselib "github.com/billziss-gh/cgofuse/fuse"
+import fuselib "github.com/winfsp/cgofuse/fuse"
 
 func (fs *goWrapper) Create(path string, flags int, mode uint32) (int, uint64) {
 	fs.log.Printf("Create - {%X|%X}%q", flags, mode, path)
