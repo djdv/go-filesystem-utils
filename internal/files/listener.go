@@ -102,13 +102,6 @@ func (ld *Listener) Walk(names []string) ([]p9.QID, p9.File, error) {
 
 func (ld *Listener) fidOpened() bool { return false } // TODO need to store state or read &.dir's
 
-func (ld *Listener) files() fileTable {
-	// XXX: Magic; We need to change something to eliminate this.
-	return ld.directory.(interface {
-		files() fileTable
-	}).files()
-}
-
 func (ld *Listener) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9.GID) (p9.QID, error) {
 	var (
 		prefix       = ld.prefix

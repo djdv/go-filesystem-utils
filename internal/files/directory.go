@@ -97,8 +97,6 @@ func (dir *Directory) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
 	return *dir.QID, noIOUnit, nil
 }
 
-func (dir *Directory) files() fileTable { return dir.fileTable }
-
 func (dir *Directory) Link(file p9.File, name string) error {
 	if !dir.exclusiveStore(name, file) {
 		return perrors.EEXIST // TODO: spec; evalue
