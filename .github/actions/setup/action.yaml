@@ -1,0 +1,12 @@
+name: "Setup OS"
+description: "Installs build dependencies"
+runs:
+  using: "composite"
+  steps:
+    - uses: ./.github/actions/setup/go
+    - if: runner.os == 'Windows'
+      uses: ./.github/actions/setup/winfsp
+    - if: runner.os == 'Linux'
+      uses: ./.github/actions/setup/fuse
+    - if: runner.os == 'macOS'
+      uses: ./.github/actions/setup/fuse-t

@@ -1,0 +1,20 @@
+name: "Prerelease"
+description: "Publish a GitHub (pre-)release"
+inputs:
+  github-token:
+    description: "Token used to publish releases"
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      # TODO: --notes-file something.md; install instructions + mhash of release dir
+      # TODO: some kind of coordination between artifact / directory names. inputs<=>outputs?
+      # TODO: use `gh release list` to check if our tag exist first, delete if so. Right now we assume it exists.
+      run: |
+        pushd artifact
+        gh release delete --yes prerelease
+        gh release create --prerelease --generate-notes --title "Development build" --notes 'Default args for mounting IPFS should work now if `$IPFS_PATH` is initialized and the IPFS daemon is running. Not well tested yet.' prerelease *
+        popd

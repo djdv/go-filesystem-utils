@@ -1,0 +1,7 @@
+name: "Setup FUSE"
+description: "Installs FUSE development headers"
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      run: sudo apt-get -qq install libfuse-dev libacl1-dev

@@ -1,0 +1,37 @@
+name: "Archive"
+description: "Archive program binaries"
+runs:
+  using: "composite"
+  steps:
+    - shell: pwsh
+      run: mkdir archive
+    - name: Archive
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: Compress-Archive -Path '.\build\*' -DestinationPath '.\archive\go-fs-windows-amd64.zip'
+    - if: runner.os == 'Windows'
+      uses: actions/upload-artifact@v3
+      with:
+        path: '.\archive\go-fs-windows-amd64.zip'
+    - name: Archive
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        pushd build
+        tar czf ../archive/go-fs-macos-amd64.tar.gz *
+        popd
+    - if: runner.os == 'macOS'
+      uses: actions/upload-artifact@v3
+      with:
+        path: './archive/go-fs-macos-amd64.tar.gz'
+    - name: Archive
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        pushd build
+        tar czf ../archive/go-fs-linux-amd64.tar.gz *
+        popd
+    - if: runner.os == 'Linux'
+      uses: actions/upload-artifact@v3
+      with:
+        path: './archive/go-fs-linux-amd64.tar.gz'
