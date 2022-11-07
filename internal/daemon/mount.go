@@ -81,8 +81,6 @@ func handleFuse(mRoot p9.File, idGen nanoidGen, fsid filesystem.ID,
 		return err
 	}
 
-	// TODO: make target file, write opts, close.
-	// ^ triggers mount on the server.
 	name := fmt.Sprintf("%s.json", idGen())
 	targetFile, _, _, err := idRoot.Create(name, p9.ReadWrite, permissions, uid, gid)
 	if err != nil {
