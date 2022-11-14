@@ -22,8 +22,8 @@ import (
 
 type (
 	ipfsCoreAPI struct {
-		root     rootDirectory
 		core     coreiface.CoreAPI
+		root     rootDirectory
 		systemID ID
 	}
 
@@ -78,10 +78,12 @@ func (ci *ipfsCoreAPI) Open(name string) (fs.File, error) {
 	}
 
 	// TODO: OpenFile + read-only checking on flags
-	var (
-		corePath    = goToIPFSCore(ci.systemID, name)
-		ctx, cancel = context.WithTimeout(context.Background(), ipfsCoreTimeout)
-	)
+	corePath, err := goToIPFSCore(ci.systemID, name)
+	if err != nil {
+		// TODO: double check what error kind we should use for path errors.
+		return nil, fserrors.New(fserrors.NotExist, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), ipfsCoreTimeout)
 	defer cancel()
 	ipldNode, err := ci.core.ResolveNode(ctx, corePath)
 	if err != nil {
@@ -90,13 +92,6 @@ func (ci *ipfsCoreAPI) Open(name string) (fs.File, error) {
 		// when looking for their sidecar files
 		// (E.g. file.exe.manifest, file.exe.config)
 		return nil, fserrors.New(fserrors.NotExist, err)
-		/*
-			return nil, fserrors.New(
-				fserrors.Permission, // TODO: check POSIX spec; this should probably be IO
-				fserrors.Path(name),
-				err,
-			)
-		*/
 	}
 	return ci.openNode(name, corePath, ipldNode)
 }
@@ -171,12 +166,15 @@ func (ci *ipfsCoreAPI) OpenDir(name string) (fs.ReadDirFile, error) {
 		)
 	}
 
+	corePath, err := goToIPFSCore(ci.systemID, name)
+	if err != nil {
+		// TODO: double check what error kind we should use for path errors.
+		return nil, fserrors.New(fserrors.NotExist, err)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), ipfsCoreTimeout)
 	defer cancel()
-	var (
-		corePath      = goToIPFSCore(ci.systemID, name)
-		ipldNode, err = ci.core.ResolveNode(ctx, corePath)
-	)
+	ipldNode, err := ci.core.ResolveNode(ctx, corePath)
 	if err != nil {
 		return nil, fserrors.New(op,
 			fserrors.Permission, // TODO: check POSIX spec; this should probably be IO
