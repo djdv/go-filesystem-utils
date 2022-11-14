@@ -43,23 +43,6 @@ func goToIPFSCore(fsid ID, goPath string) corepath.Path {
 		rootCID, rootCID, ""),
 		pathComponents[1:]...,
 	)
-
-	/*
-		newRoot := gopath.Path(path.Join(
-			"/",
-			strings.ToLower(fsid.String()), // "ipfs", "ipns", ...
-			rootCID.String(),
-		))
-		return corepath.Join(newRoot, pathComponents[1:]...)
-	*/
-	/*
-		return corepath.New(
-			path.Join("/",
-				strings.ToLower(fsid.String()), // "ipfs", "ipns", ...
-				goPath,
-			),
-		)
-	*/
 }
 
 func statNode(name string, modtime time.Time, permissions fs.FileMode,
