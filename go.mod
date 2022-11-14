@@ -19,7 +19,7 @@ require (
 	github.com/multiformats/go-multiaddr v0.6.0
 	github.com/multiformats/go-multiaddr-dns v0.3.1
 	github.com/u-root/uio v0.0.0-20220204230159-dac05f7d2cb4
-	github.com/winfsp/cgofuse v1.5.1-0.20221106144041-c23bd0f99a49
+	github.com/winfsp/cgofuse v1.5.1-0.20221118130120-84c0898ad2e0
 	golang.org/x/exp v0.0.0-20220921023135-46d9e7742f1e
 )
 

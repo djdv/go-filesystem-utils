@@ -7,7 +7,3 @@ runs:
       run: |
         brew tap macos-fuse-t/homebrew-cask
         brew install fuse-t
-
-        sudo mkdir /usr/local/include/osxfuse
-        sudo ln -s /usr/local/include/fuse /usr/local/include/osxfuse/fuse
-        sudo ln -s /usr/local/lib/libfuse-t.dylib /usr/local/lib/libosxfuse.2.dylib
