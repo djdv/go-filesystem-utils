@@ -27,21 +27,14 @@ func goToIPFSCore(fsid ID, goPath string) corepath.Path {
 	var (
 		pathComponents = strings.Split(goPath, "/")
 		cidStr         = pathComponents[0]
+		rootCID, err   = cid.Decode(cidStr)
 	)
-	rootCID, err := cid.Decode(cidStr)
 	if err != nil {
 		return dbgErrPath(err)
 	}
-
 	pathPrefix := path.Join("/",
 		strings.ToLower(fsid.String()), // "ipfs", "ipns", ...
 	)
-
-	if rootCID.Version() >= 1 {
-		return corepath.New(path.Join(pathPrefix, goPath))
-	}
-
-	rootCID = upgradeCid(rootCID)
 	return corepath.Join(corepath.NewResolvedPath(
 		gopath.Path(path.Join(
 			pathPrefix,
@@ -68,8 +61,6 @@ func goToIPFSCore(fsid ID, goPath string) corepath.Path {
 		)
 	*/
 }
-
-func upgradeCid(c cid.Cid) cid.Cid { return cid.NewCidV1(c.Type(), c.Hash()) }
 
 func statNode(name string, modtime time.Time, permissions fs.FileMode,
 	ipldNode ipld.Node,

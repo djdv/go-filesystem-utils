@@ -194,20 +194,11 @@ func (pd *pinsDirectory) Close() error {
 }
 
 func (pe *pinDirEntry) Name() string {
-	pinCid := pe.Pin.Path().Cid()
-	if pinCid.Version() == 0 {
-		pinCid = upgradeCid(pinCid)
-	}
-	return pinCid.String()
-	// return path.Base(pe.Pin.Path().String())
+	return pe.Pin.Path().Cid().String()
 }
 
 func (pe *pinDirEntry) Info() (fs.FileInfo, error) {
 	pinCid := pe.Pin.Path().Cid()
-	if pinCid.Version() == 0 {
-		pinCid = upgradeCid(pinCid)
-	}
-
 	if ipfs := pe.ipfs; ipfs != nil {
 		return fs.Stat(pe.ipfs, pinCid.String())
 	}
