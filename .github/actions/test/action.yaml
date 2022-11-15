@@ -3,7 +3,6 @@ description: "Runs the standard Golang test suite"
 runs:
   using: "composite"
   steps:
-    - uses: ./.github/actions/setup
     - if: runner.os == 'Windows'
       shell: pwsh
       run: |
