@@ -30,7 +30,7 @@ type (
 		*ipfsMountData
 		// TODO: unmount should have its own mutex, and probably abstraction.
 		unmount *detachFunc // NOTE: Shared R/W access across all FIDs.
-		mount   mountFunc   // TODO: placeholder name.
+		mountFn MountFunc
 	}
 	ipfsMountData struct {
 		ApiMaddr ipfsAPIMultiaddr
@@ -42,7 +42,7 @@ type (
 	}
 )
 
-func newIPFSMounter(fsid filesystem.ID, mountFn mountFunc, options ...IPFSOption) (p9.QID, *ipfsMounter, error) {
+func newIPFSMounter(fsid filesystem.ID, mountFn MountFunc, options ...IPFSOption) (p9.QID, *ipfsMounter, error) {
 	var settings ipfsSettings
 	if err := parseOptions(&settings, options...); err != nil {
 		return p9.QID{}, nil, err
@@ -60,7 +60,7 @@ func newIPFSMounter(fsid filesystem.ID, mountFn mountFunc, options ...IPFSOption
 		fsid:          fsid,
 		dataMu:        new(sync.Mutex),
 		ipfsMountData: new(ipfsMountData),
-		mount:         mountFn,
+		mountFn:       mountFn,
 		unmount:       new(detachFunc),
 	}, nil
 }
@@ -81,7 +81,7 @@ func (im *ipfsMounter) clone(withQID bool) ([]p9.QID, *ipfsMounter, error) {
 			ipfsDataBuffer: im.ipfsDataBuffer,
 			ipfsMountData:  im.ipfsMountData,
 			//
-			mount:   im.mount,
+			mountFn: im.mountFn,
 			unmount: im.unmount,
 		}
 	)
@@ -162,7 +162,7 @@ func (im *ipfsMounter) Close() error {
 		// FIXME: ping IPFS node here. If it's not alive, don't even try to mount it.
 		// ^ Don't do this; file system calls should not depend on connection state
 		// (system-wide, per-call may error, but not total failure).
-		closer, err := im.mount(goFS, targetPtr.Target)
+		closer, err := im.mountFn(goFS, targetPtr.Target)
 		if err != nil {
 			// TODO: We do this for now in case the CLI call fails
 			// but should handle this differently for API callers.
