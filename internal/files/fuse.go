@@ -1,6 +1,8 @@
 package files
 
 import (
+	"io"
+	"io/fs"
 	"sync/atomic"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
@@ -69,10 +71,12 @@ func (dir *FuseDir) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9
 			CleanupEmpties(true),
 		)
 	}
-	qid, fsiDir := NewFSIDDir(fsid, cgofuse.MountFuse,
+	qid, fsiDir := NewFSIDDir(fsid, mountFuse,
 		WithSuboptions[FSIDOption](metaOptions...),
 		WithSuboptions[FSIDOption](linkOptions...),
 		WithSuboptions[FSIDOption](generatorOptions...),
 	)
 	return qid, dir.Link(fsiDir, name)
 }
+
+func mountFuse(fsys fs.FS, target string) (io.Closer, error) { return cgofuse.MountFuse(fsys, target) }
