@@ -2,10 +2,9 @@ package cgofuse
 
 import (
 	"io/fs"
-	"log"
 
-	"github.com/winfsp/cgofuse/fuse"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
+	"github.com/winfsp/cgofuse/fuse"
 )
 
 type goDirWrapper struct {
@@ -86,92 +85,6 @@ func (gw *goWrapper) Releasedir(path string, fh uint64) int {
 	return errNo
 }
 
-/*
-func (fuse *hostBinding) Readdir(path string,
-	fill func(name string, stat *fuselib.Stat_t, ofst int64) bool,
-	ofst int64,
-	fh uint64,
-) int {
-	defer fuse.systemLock.Access(path)()
-	fuse.log.Printf("Readdir - {%X|%d}%q", fh, ofst, path)
-
-	if fh == errorHandle {
-		fuse.log.Print(fuselib.Error(-fuselib.EBADF))
-		return -fuselib.EBADF
-	}
-
-	directory, err := fuse.fileTable.Get(fh)
-	if err != nil {
-		fuse.log.Print(fuselib.Error(-fuselib.EBADF))
-		return -fuselib.EBADF
-	}
-
-	const buffSize = 4 // TODO: figure out a good one
-	var (
-		// TODO: We should inherit a context from the host binding
-		// guarantee that we die on destroy at least.
-		readCtx, readCancel = context.WithCancel(context.TODO())
-		entries             = make(chan fs.DirEntry, buffSize)
-		// TODO: type safety; revert this when the indexes are split
-		errs = filesystem.StreamDir(directory.goFile.(fs.ReadDirFile), readCtx, entries)
-	)
-	defer readCancel()
-
-	statFn := func(ent fs.DirEntry) *fuselib.Stat_t {
-		if !canReaddirPlus {
-			return nil
-		}
-
-		goStat, err := ent.Info()
-		if err != nil {
-			fuse.log.Print(err)
-			return nil
-		}
-		mTime := fuselib.NewTimespec(goStat.ModTime())
-
-		// FIXME: We need to obtain these values during Opendir.
-		// And assign them here.
-		// They are NOT guaranteed to be valid within calls to Readdir.
-		// (some platforms may return data here)
-		// stat.Uid, stat.Gid, _ = fuselib.Getcontext()
-		return &fuselib.Stat_t{
-			Mode: goToFuseFileType(goStat.Mode()) |
-				IRXA&^(fuselib.S_IXOTH), // TODO: const permissions; used here and in getattr
-			Size:     goStat.Size(),
-			Atim:     mTime,
-			Mtim:     mTime,
-			Ctim:     mTime,
-			Birthtim: mTime,
-		}
-	}
-
-	// TODO: The flow control here isn't as obvious or direct as it probably could be.
-	for entries != nil {
-		select {
-		case ent, ok := <-entries:
-			if !ok {
-				entries = nil
-				break
-			}
-			// TODO: fill in offset if we have persistent|consistent ordering.
-			// Right now we delegate offset responsibility to libfuse.
-			if !fill(ent.Name(), statFn(ent), 0) {
-				// fill asked us to stop filling
-				readCancel()
-			}
-		case err := <-errs:
-			fuse.log.Print(err)
-			return -fuselib.EIO // TODO: check spec
-
-		case <-readCtx.Done():
-			entries = nil
-		}
-	}
-
-	return operationSuccess
-}
-*/
-
 func (gw *goWrapper) Readdir(path string,
 	fill func(name string, stat *fuse.Stat_t, ofst int64) bool,
 	ofst int64,
@@ -181,20 +94,17 @@ func (gw *goWrapper) Readdir(path string,
 	gw.log.Printf("Readdir - {%X|%d}%q", fh, ofst, path)
 
 	if fh == errorHandle {
-		log.Println("fuse readdir hit 1")
 		gw.log.Print(fuse.Error(-fuse.EBADF))
 		return -fuse.EBADF
 	}
 
 	directory, err := gw.fileTable.Get(fh)
 	if err != nil {
-		log.Println("fuse readdir hit 2")
 		gw.log.Print(fuse.Error(-fuse.EBADF))
 		return -fuse.EBADF
 	}
 	dir, ok := directory.goFile.(goDirWrapper)
 	if !ok {
-		log.Println("fuse readdir hit 3")
 		// TODO: error message; unexpected type was stored in file table.
 		gw.log.Print(fuse.Error(-fuse.EBADF))
 		return -fuse.EBADF
@@ -203,43 +113,13 @@ func (gw *goWrapper) Readdir(path string,
 	// TODO: inefficient, store these on open? Use stream?
 	ents, err := dir.ReadDir(0)
 	if err != nil {
-		log.Println("fuse readdir hit 4")
 		gw.log.Print(fuse.Error(-fuse.EIO))
 		return -fuse.EIO
 	}
 
-	statFn := func(ent fs.DirEntry) *fuse.Stat_t {
-		if !canReaddirPlus {
-			return nil
-		}
-		goStat, err := ent.Info()
-		if err != nil {
-			gw.log.Print(err)
-			return nil
-		}
-		mTime := fuse.NewTimespec(goStat.ModTime())
-
-		// FIXME: We need to obtain these values during Opendir.
-		// And assign them here.
-		// They are NOT guaranteed to be valid within calls to Readdir.
-		// (some platforms may return data here)
-		// stat.Uid, stat.Gid, _ = fuselib.Getcontext()
-		return &fuse.Stat_t{
-			Mode: goToFuseFileType(goStat.Mode()) |
-				IRXA&^(fuse.S_IXOTH), // TODO: const permissions; used here and in getattr
-			Uid:      dir.uid,
-			Gid:      dir.gid,
-			Size:     goStat.Size(),
-			Atim:     mTime,
-			Mtim:     mTime,
-			Ctim:     mTime,
-			Birthtim: mTime,
-		}
-	}
 	for _, ent := range ents {
-		if !fill(ent.Name(), statFn(ent), 0) {
-			// fill asked us to stop filling
-			break
+		if !fill(ent.Name(), dirStat(ent), 0) {
+			break // fill asked us to stop filling.
 		}
 	}
 	return operationSuccess

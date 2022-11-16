@@ -6,55 +6,40 @@ package cgofuse
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"runtime"
 	"strings"
 	"time"
 
-	fuselib "github.com/winfsp/cgofuse/fuse"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
+	fuselib "github.com/winfsp/cgofuse/fuse"
 )
 
 type closer func() error
 
 func (close closer) Close() error { return close() }
 
-// NOTE: [b7952c54-1614-45ea-a042-7cfae90c5361] cgofuse only supports ReaddirPlus on Windows
-// if this ever changes (bumps libfuse from 2.8 -> 3.X+), add platform support here (and to any other tags with this UUID)
-// TODO: this would be best in the fuselib itself; make a patch upstream
-const canReaddirPlus bool = runtime.GOOS == "windows"
-
-// TODO: unexport this? Investigate callsite and maybe invert them.
-/*
-func AttachToHost(fsi fuselib.FileSystemInterface, fsid filesystem.ID, target string) (io.Closer, error) {
-	hostInterface := fuselib.NewFileSystemHost(fsi)
-	hostInterface.SetCapReaddirPlus(canReaddirPlus)
-	hostInterface.SetCapCaseInsensitive(false)
-
-	// This is how long we'll wait for `Mount` to fail
-	// before assume it's running as expected (blocking forever).
-	const failureThreasehold = 200 * time.Millisecond
-
-	errChan := safeMount(hostInterface, fsid, target)
-	select {
-	case err := <-errChan:
+// TODO: types
+// TODO: signature / interface may need to change. We're going to want extensions to FS,
+// and we have to decide if we want to use Go standard FS form, or explicitly typed interfaces.
+func MountFuse(fsys fs.FS, target string) (*Fuse, error) {
+	fuse, err := GoToFuse(fsys)
+	if err != nil {
 		return nil, err
-	case <-time.After(failureThreasehold):
-		// `Mount` hasn't panicked or returned an error yet
-		// assume `Mount` is running forever (as intended)
 	}
 
-	instanceDetach := closer(func() error {
-		if !hostInterface.Unmount() {
-			return fmt.Errorf("%s: unmount failed for an unknown reason", target)
-		}
-		return <-errChan
-	})
+	var fsid filesystem.ID
+	// TODO: define this interface within [filesystem] pkg.
+	if idFS, ok := fsys.(interface {
+		ID() filesystem.ID
+	}); ok {
+		fsid = idFS.ID()
+	}
 
-	return instanceDetach, nil
+	return fuse, AttachToHost(fuse.FileSystemHost, fsid, target)
 }
-*/
 
-// TODO: this code an deeper is ancient and likely needs a redesign.
+// TODO: this code and deeper is ancient and likely needs a redesign.
 func AttachToHost(hostInterface *fuselib.FileSystemHost, fsid filesystem.ID, target string) error {
 	// This is how long we'll wait for `Mount` to fail
 	// before assume it's running as expected (blocking forever).
