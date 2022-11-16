@@ -13,7 +13,7 @@ import (
 
 type (
 	detachFunc = func() error                                    // TODO: placehold name.
-	mountFunc  = func(_ fs.FS, target string) (io.Closer, error) // TODO: placeholder name.
+	MountFunc  = func(_ fs.FS, target string) (io.Closer, error) // TODO: placeholder name. Signature not finalized.
 
 	detacher interface {
 		Detach() error
@@ -21,13 +21,13 @@ type (
 
 	FSIDDir struct {
 		directory
-		mount          mountFunc // TODO: placeholder name
+		mountFn        MountFunc
 		path           *atomic.Uint64
 		cleanupEmpties bool
 	}
 )
 
-func NewFSIDDir(fsid filesystem.ID, mountFn mountFunc, options ...FSIDOption) (p9.QID, *FSIDDir) {
+func NewFSIDDir(fsid filesystem.ID, mountFn MountFunc, options ...FSIDOption) (p9.QID, *FSIDDir) {
 	var settings fsidSettings
 	if err := parseOptions(&settings, options...); err != nil {
 		panic(err)
@@ -52,7 +52,7 @@ func NewFSIDDir(fsid filesystem.ID, mountFn mountFunc, options ...FSIDOption) (p
 		path:           settings.ninePath,
 		directory:      fsys,
 		cleanupEmpties: settings.cleanupElements,
-		mount:          mountFn,
+		mountFn:        mountFn,
 	}
 }
 
@@ -147,7 +147,7 @@ func (mn *FSIDDir) Mknod(name string, mode p9.FileMode,
 				WithSuboptions[IPFSOption](linkOptions...),
 			}
 		)
-		qid, ipfsFile, err := newIPFSMounter(fsid, mn.mount, ipfsOptions...)
+		qid, ipfsFile, err := newIPFSMounter(fsid, mn.mountFn, ipfsOptions...)
 		if err != nil {
 			return p9.QID{}, err
 		}
