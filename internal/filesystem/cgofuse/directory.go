@@ -18,10 +18,7 @@ func (gw *goWrapper) Opendir(path string) (int, uint64) {
 
 	openDirFS, ok := gw.FS.(filesystem.OpenDirFS)
 	if !ok {
-		// TODO: proper interface IDFS?
-		if idFS, ok := gw.FS.(interface {
-			ID() filesystem.ID
-		}); ok {
+		if idFS, ok := gw.FS.(filesystem.IDer); ok {
 			gw.log.Print("Opendir not supported by provided ", idFS.ID()) // TODO: better message
 		} else {
 			gw.log.Print("Opendir not supported by provided fs.FS") // TODO: better message
