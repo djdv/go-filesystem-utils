@@ -12,6 +12,10 @@ type (
 	// ID represents a particular file system implementation
 	// (IPFS, IPNS, et al.)
 	ID uint
+
+	IDer interface {
+		ID() ID
+	}
 )
 
 const (
