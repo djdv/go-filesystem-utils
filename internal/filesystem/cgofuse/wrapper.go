@@ -25,13 +25,13 @@ func (fs *goWrapper) Init() {
 	defer fs.log.Print("Init finished")
 }
 
-func (fuse *goWrapper) Getattr(path string, stat *fuse.Stat_t, fh uint64) int {
-	defer fuse.systemLock.Access(path)()
-	fuse.log.Printf("Getattr - {%X}%q", fh, path)
+func (fsys *goWrapper) Getattr(path string, stat *fuse.Stat_t, fh uint64) int {
+	defer fsys.systemLock.Access(path)()
+	fsys.log.Printf("Getattr - {%X}%q", fh, path)
 
 	goPath, err := fuseToGo(path)
 	if err != nil {
-		fuse.log.Print(err)
+		fsys.log.Print(err)
 		// TODO: review; should we return the value raw or send err to a converter?
 		// ^ send a stacked err to a converter*
 		// (so that the trace contains both ops, parent-op+path-lexer+reason)
@@ -41,12 +41,12 @@ func (fuse *goWrapper) Getattr(path string, stat *fuse.Stat_t, fh uint64) int {
 	// TODO: fh lookup
 
 	// TODO: review
-	goStat, err := fs.Stat(fuse.FS, goPath)
+	goStat, err := fs.Stat(fsys.FS, goPath)
 	if err != nil {
 		errNo := interpretError(err)
 		// Don't flood the logs with "not found" errors.
 		if errNo != -fuse.ENOENT {
-			fuse.log.Print(err)
+			fsys.log.Print(err)
 		}
 		return errNo
 	}

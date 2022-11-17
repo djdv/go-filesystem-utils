@@ -12,15 +12,6 @@ import (
 
 // TODO: review whole file; quickly ported
 
-type (
-	handle     = uint64
-	fileHandle struct {
-		goFile fs.File
-		ioMu   sync.Mutex // TODO: name and responsibility; currently applies to the position cursor
-	}
-	fMap map[handle]*fileHandle
-)
-
 /*
 type (
 	handle       = uint64
@@ -51,14 +42,14 @@ var (
 	errFull          = errors.New("all slots filled")
 )
 
-func newFileTable() fileTable { return &fileTableStruct{files: make(fMap)} }
+func newFileTable() fileTable { return &fileTableStruct{files: make(fileMap)} }
 
 type (
 	fileTable interface {
-		Add(fs.File) (handle, error)
-		Exists(handle) bool
-		Get(handle) (*fileHandle, error)
-		Remove(handle) error
+		Add(fs.File) (fileDescriptor, error)
+		Exists(fileDescriptor) bool
+		Get(fileDescriptor) (*fileHandle, error)
+		Remove(fileDescriptor) error
 		Length() int
 		Close() error
 	}
@@ -66,11 +57,11 @@ type (
 		sync.RWMutex
 		index   uint64
 		wrapped bool // if true; we start reclaiming dead index values
-		files   fMap
+		files   fileMap
 	}
 )
 
-func (ft *fileTableStruct) Add(f fs.File) (handle, error) {
+func (ft *fileTableStruct) Add(f fs.File) (fileDescriptor, error) {
 	ft.Lock()
 	defer ft.Unlock()
 
@@ -80,7 +71,7 @@ func (ft *fileTableStruct) Add(f fs.File) (handle, error) {
 	}
 
 	if ft.wrapped { // switch from increment mode to "search for free slot" mode
-		for index := handle(0); index != handleMax; index++ {
+		for index := fileDescriptor(0); index != handleMax; index++ {
 			if _, ok := ft.files[index]; ok {
 				// handle is in use
 				continue
@@ -101,14 +92,14 @@ func (ft *fileTableStruct) Add(f fs.File) (handle, error) {
 	return ft.index, nil
 }
 
-func (ft *fileTableStruct) Exists(fh handle) bool {
+func (ft *fileTableStruct) Exists(fh fileDescriptor) bool {
 	ft.RLock()
 	defer ft.RUnlock()
 	_, exists := ft.files[fh]
 	return exists
 }
 
-func (ft *fileTableStruct) Get(fh handle) (*fileHandle, error) {
+func (ft *fileTableStruct) Get(fh fileDescriptor) (*fileHandle, error) {
 	ft.RLock()
 	defer ft.RUnlock()
 	f, exists := ft.files[fh]
@@ -118,7 +109,7 @@ func (ft *fileTableStruct) Get(fh handle) (*fileHandle, error) {
 	return f, nil
 }
 
-func (ft *fileTableStruct) Remove(fh handle) error {
+func (ft *fileTableStruct) Remove(fh fileDescriptor) error {
 	ft.Lock()
 	defer ft.Unlock()
 	if _, exists := ft.files[fh]; !exists {

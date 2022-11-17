@@ -118,7 +118,20 @@ func (gw *goWrapper) Readdir(path string,
 	}
 
 	for _, ent := range ents {
-		if !fill(ent.Name(), dirStat(ent), 0) {
+		entStat, err := dirStat(ent)
+		if err != nil {
+			gw.log.Print(err)
+			return -fuse.EIO
+		}
+		if entStat != nil {
+			if entStat.Uid == posixOmittedID {
+				entStat.Uid = dir.uid
+			}
+			if entStat.Gid == posixOmittedID {
+				entStat.Uid = dir.uid
+			}
+		}
+		if !fill(ent.Name(), entStat, 0) {
 			break // fill asked us to stop filling.
 		}
 	}

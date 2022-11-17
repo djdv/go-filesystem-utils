@@ -15,10 +15,6 @@ import (
 	fuselib "github.com/winfsp/cgofuse/fuse"
 )
 
-type closer func() error
-
-func (close closer) Close() error { return close() }
-
 // TODO: types
 // TODO: signature / interface may need to change. We're going to want extensions to FS,
 // and we have to decide if we want to use Go standard FS form, or explicitly typed interfaces.

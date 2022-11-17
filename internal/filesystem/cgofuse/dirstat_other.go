@@ -1,4 +1,4 @@
-// go:build !windows
+//go:build !windows
 
 package cgofuse
 
@@ -13,4 +13,4 @@ import (
 // metadata should be returned within `readdir` in this project as well.
 // This function is a no-op since FUSE will use `getattr` instead
 // to retrieve metadata on systems without the readdir-plus capability.
-func dirStat(fs.DirEntry) *fuse.Stat_t { return nil }
+func dirStat(fs.DirEntry) (*fuse.Stat_t, error) { return nil, nil }

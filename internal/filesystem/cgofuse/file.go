@@ -1,10 +1,11 @@
 package cgofuse
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 
-	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	"github.com/winfsp/cgofuse/fuse"
 )
 
@@ -61,50 +62,61 @@ func (hb *goWrapper) Open(path string, flags int) (int, uint64) {
 }
 
 func (fs *goWrapper) Release(path string, fh uint64) int {
-	fs.log.Printf("Release - {%X}%q", fh, path)
-
 	errNo, err := releaseFile(fs.fileTable, fh)
 	if err != nil {
 		fs.log.Print(err)
 	}
-
 	return errNo
 }
 
-func (hb *goWrapper) Read(path string, buff []byte, ofst int64, fh uint64) int {
-	defer hb.systemLock.Access(path)()
-	hb.log.Printf("Read {%X|%d}%q", fh, ofst, path)
+func (fsys *goWrapper) Read(path string, buff []byte, ofst int64, fh uint64) int {
+	defer fsys.systemLock.Access(path)()
 
-	// TODO: [review] we need to do things on failure
-	// the OS typically triggers a close, but we shouldn't expect it to invalidate this record for us
-	// we also might want to store a file cursor to reduce calls to seek
-	// the same thing already happens internally so it's at worst the overhead of a call right now
-
-	file, err := hb.fileTable.Get(fh)
+	handle, err := fsys.fileTable.Get(fh)
 	if err != nil {
-		hb.log.Print(fuse.Error(-fuse.EBADF))
+		fsys.log.Print(err)
 		return -fuse.EBADF
 	}
+	handle.ioMu.Lock()
+	defer handle.ioMu.Unlock()
 
-	file.ioMu.Lock()
-	defer file.ioMu.Unlock()
-
-	fsFile, ok := file.goFile.(filesystem.File)
-	if !ok {
-		err := fmt.Errorf("file is unexpected type:"+
-			"\n\tgot: %T"+
-			"\n\twant: %T",
-			file.goFile, fsFile,
-		)
-		hb.log.Print(err)
-		return -fuse.EIO
-	}
-
-	retVal, err := readFile(fsFile, buff, ofst)
-	if err != nil && err != io.EOF {
-		hb.log.Print(err)
+	retVal, err := readFile(handle.goFile, buff, ofst)
+	if err != nil {
+		fsys.log.Printf("%s - %s", err, path)
 	}
 	return retVal
+}
+
+func readFile(file fs.File, buff []byte, ofst int64) (int, error) {
+	seekerFile, ok := file.(seekerFile)
+	if !ok {
+		return -fuse.EIO, errors.New("file does not implement seeking")
+	}
+	if len(buff) == 0 {
+		return 0, nil
+	}
+	if ofst < 0 {
+		return -fuse.EINVAL, fmt.Errorf("invalid offset %d", ofst)
+	}
+	stat, err := file.Stat()
+	if err != nil {
+		return -fuse.EIO, err
+	}
+	if ofst >= stat.Size() {
+		return 0, nil
+	}
+	if _, err := seekerFile.Seek(ofst, io.SeekStart); err != nil {
+		return -fuse.EIO, err
+	}
+	n, err := io.ReadFull(file, buff)
+	if err != nil {
+		isEof := errors.Is(err, io.EOF) ||
+			errors.Is(err, io.ErrUnexpectedEOF)
+		if !isEof {
+			return -fuse.EIO, err
+		}
+	}
+	return n, nil
 }
 
 func (hb *goWrapper) Write(path string, buff []byte, ofst int64, fh uint64) int {

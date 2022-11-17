@@ -1,17 +1,18 @@
 package cgofuse
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
+	"runtime"
 
-	"github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/u-root/uio/ulog"
 	"github.com/winfsp/cgofuse/fuse"
 )
 
 // TODO: better name
-func GoToFuse(fs fs.FS) (Fuse, error) {
+func GoToFuse(fs fs.FS) (*Fuse, error) {
 	fsh := fuse.NewFileSystemHost(&goWrapper{
 		FS:         fs,
 		fileTable:  newFileTable(),
@@ -19,10 +20,11 @@ func GoToFuse(fs fs.FS) (Fuse, error) {
 		log:        ulog.Null, // TODO: from options
 	})
 	// TODO: from options.
+	canReaddirPlus := runtime.GOOS == "windows"
 	fsh.SetCapReaddirPlus(canReaddirPlus)
 	fsh.SetCapCaseInsensitive(false)
 	//
-	return Fuse{FileSystemHost: fsh}, nil
+	return &Fuse{FileSystemHost: fsh}, nil
 	// TODO: WithLog(...) option.
 	// var eLog logging.EventLogger
 	// if idFs, ok := fs.(filesystem.IdentifiedFS); ok {
@@ -46,12 +48,12 @@ func GoToFuse(fs fs.FS) (Fuse, error) {
 // fuseToGo converts a FUSE absolute path
 // to a relative [fs.FS] name.
 func fuseToGo(path string) (string, error) {
-	const op errors.Op = "path lexer"
+	const op fserrors.Op = "path lexer"
 	switch path {
 	case "":
-		return "", errors.New(op,
-			errors.Path("{empty-string}"),
-			errors.InvalidItem,
+		return "", fserrors.New(op,
+			fserrors.Path("{empty-string}"),
+			fserrors.InvalidItem,
 		)
 	case posixRoot:
 		return goRoot, nil
@@ -62,7 +64,7 @@ func fuseToGo(path string) (string, error) {
 }
 
 // [FileMode] to FUSE mode bits.
-func goToFuseFileType(m fs.FileMode) fuseFileType {
+func goToFuseFileType(m fs.FileMode) fileType {
 	switch m.Type() {
 	case fs.ModeDir:
 		return fuse.S_IFDIR
