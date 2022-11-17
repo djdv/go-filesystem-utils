@@ -62,9 +62,9 @@ func (gw *goWrapper) Opendir(path string) (int, uint64) {
 		gid:         gid,
 	}
 
-	handle, err := gw.fileTable.Add(wrappedDir)
-	if err != nil { // TODO: transform error
-		gw.log.Print(fuse.Error(-fuse.EMFILE))
+	handle, err := gw.fileTable.add(wrappedDir)
+	if err != nil {
+		gw.log.Print(err)
 		return -fuse.EMFILE, errorHandle
 	}
 
@@ -72,13 +72,10 @@ func (gw *goWrapper) Opendir(path string) (int, uint64) {
 }
 
 func (gw *goWrapper) Releasedir(path string, fh uint64) int {
-	gw.log.Printf("Releasedir - {%X}%q", fh, path)
-
-	errNo, err := releaseFile(gw.fileTable, fh)
+	errNo, err := gw.fileTable.release(fh)
 	if err != nil {
 		gw.log.Print(err)
 	}
-
 	return errNo
 }
 
@@ -88,14 +85,13 @@ func (gw *goWrapper) Readdir(path string,
 	fh uint64,
 ) int {
 	defer gw.systemLock.Access(path)()
-	gw.log.Printf("Readdir - {%X|%d}%q", fh, ofst, path)
 
 	if fh == errorHandle {
 		gw.log.Print(fuse.Error(-fuse.EBADF))
 		return -fuse.EBADF
 	}
 
-	directory, err := gw.fileTable.Get(fh)
+	directory, err := gw.fileTable.get(fh)
 	if err != nil {
 		gw.log.Print(fuse.Error(-fuse.EBADF))
 		return -fuse.EBADF

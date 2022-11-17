@@ -12,7 +12,7 @@ const (
 )
 
 type goWrapper struct {
-	fileTable
+	*fileTable
 	systemLock operationsLock
 	fs.FS
 	log ulog.Logger

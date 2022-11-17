@@ -24,7 +24,6 @@ type (
 		goFile fs.File
 		ioMu   sync.Mutex // TODO: name and responsibility; currently applies to the position cursor
 	}
-	fileMap map[fileDescriptor]*fileHandle
 
 	seekerFile interface {
 		fs.File
@@ -43,8 +42,6 @@ const (
 	posixOmittedID id = math.MaxUint32
 
 	operationSuccess = 0
-	errorHandle      = math.MaxUint64
-	handleMax        = errorHandle - 1
 
 	S_IRWXO = fuse.S_IROTH | fuse.S_IWOTH | fuse.S_IXOTH
 	S_IRWXG = fuse.S_IRGRP | fuse.S_IWGRP | fuse.S_IXGRP

@@ -52,7 +52,7 @@ func (hb *goWrapper) Open(path string, flags int) (int, uint64) {
 		return interpretError(err), errorHandle
 	}
 
-	handle, err := hb.fileTable.Add(file)
+	handle, err := hb.fileTable.add(file)
 	if err != nil {
 		hb.log.Print(fuse.Error(-fuse.EMFILE))
 		return -fuse.EMFILE, errorHandle
@@ -62,7 +62,7 @@ func (hb *goWrapper) Open(path string, flags int) (int, uint64) {
 }
 
 func (fs *goWrapper) Release(path string, fh uint64) int {
-	errNo, err := releaseFile(fs.fileTable, fh)
+	errNo, err := fs.fileTable.release(fh)
 	if err != nil {
 		fs.log.Print(err)
 	}
@@ -72,7 +72,7 @@ func (fs *goWrapper) Release(path string, fh uint64) int {
 func (fsys *goWrapper) Read(path string, buff []byte, ofst int64, fh uint64) int {
 	defer fsys.systemLock.Access(path)()
 
-	handle, err := fsys.fileTable.Get(fh)
+	handle, err := fsys.fileTable.get(fh)
 	if err != nil {
 		fsys.log.Print(err)
 		return -fuse.EBADF
