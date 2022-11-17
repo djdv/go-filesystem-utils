@@ -17,7 +17,7 @@ import (
 type (
 	IPFSKeyAPI struct {
 		keyAPI coreiface.KeyAPI
-		ipns   FS
+		ipns   OpenDirFS
 	}
 	keyDirectory struct {
 		ipns    fs.FS

@@ -1,31 +1,29 @@
 package filesystem
 
 import (
-	"io"
 	"io/fs"
+	"time"
 )
 
-// TODO: name?
-type FS interface {
-	fs.FS
-	// fs.StatFS
-	// fs.ReadDirFS
-	// fs.SubFS ?
-	OpenDirFS
-}
+type (
+	AccessTimer interface {
+		AccessTime() time.Time
+	}
+	ChangeTimer interface {
+		ChangeTime() time.Time
+	}
+	CreationTimer interface {
+		CreationTime() time.Time
+	}
+	POSIXInfo interface {
+		fs.FileInfo
+		AccessTimer
+		ChangeTimer
+		// TODO: We'll should probably add the full set from SUSv4;BSi7.
+	}
 
-type File interface {
-	fs.File
-	io.Seeker
-}
-
-type OpenDirFS interface {
-	fs.FS
-	OpenDir(name string) (fs.ReadDirFile, error)
-}
-
-/*
-type Directory interface {
-	fs.ReadDirFile
-}
-*/
+	OpenDirFS interface {
+		fs.FS
+		OpenDir(name string) (fs.ReadDirFile, error)
+	}
+)

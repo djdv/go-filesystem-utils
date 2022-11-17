@@ -16,7 +16,7 @@ import (
 type (
 	IPFSPinAPI struct {
 		pinAPI coreiface.PinAPI
-		ipfs   FS // TODO: subsys should be handled via `bind` instead? fs.Subsys?
+		ipfs   OpenDirFS // TODO: subsys should be handled via `bind` instead? fs.Subsys?
 	}
 
 	pinsDirectory struct {
@@ -113,7 +113,7 @@ func (pfs *IPFSPinAPI) makePinsDir(permissions fs.FileMode) *pinsDirectory {
 }
 
 func getPinSliceChan(ctx context.Context,
-	pinAPI coreiface.PinAPI, ipfs FS,
+	pinAPI coreiface.PinAPI, ipfs fs.FS,
 ) (<-chan []fs.DirEntry, error) {
 	pins, err := getPinEntries(ctx, pinAPI)
 	if err != nil {
