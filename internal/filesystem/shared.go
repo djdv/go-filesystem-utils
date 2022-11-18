@@ -62,8 +62,6 @@ type (
 		ents []fs.DirEntry
 	}
 
-	entsByName []fs.DirEntry
-
 	statFunc func() (fs.FileInfo, error)
 )
 
@@ -136,10 +134,6 @@ func (rs rootStat) ModTime() time.Time { return rs.modtime }
 func (rs rootStat) IsDir() bool        { return rs.Mode().IsDir() }
 func (rs rootStat) Sys() interface{}   { return rs }
 
-func (ents entsByName) Len() int           { return len(ents) }
-func (ents entsByName) Swap(i, j int)      { ents[i], ents[j] = ents[j], ents[i] }
-func (ents entsByName) Less(i, j int) bool { return ents[i].Name() < ents[j].Name() }
-
 func (se staticStat) Name() string               { return se.name }
 func (se staticStat) Size() int64                { return se.size }
 func (se staticStat) Mode() fs.FileMode          { return se.mode }
@@ -148,40 +142,3 @@ func (se staticStat) ModTime() time.Time         { return se.modTime }
 func (se staticStat) IsDir() bool                { return se.mode.IsDir() }
 func (se staticStat) Sys() any                   { return se }
 func (se staticStat) Info() (fs.FileInfo, error) { return se, nil }
-
-/*
-func (de staticDirEnt) Stat() (fs.FileInfo, error) {
-	log.Println("de Stat - type:", de.Type())
-	log.Println("de Stat - perm:", fs.ModePerm)
-	log.Println("de Stat - mode:", de.Mode())
-	return de, nil
-}
-*/
-
-/*
-func ReadDir(count int, entries <-chan fs.DirEntry) ([]fs.DirEntry, error) {
-	var ents []fs.DirEntry
-	if count > 0 {
-		ents = make([]fs.DirEntry, 0, count)
-	} else {
-		// NOTE: [spec] This will cause the loop below to become infinite.
-		// This is intended by the fs.FS spec
-		count = -1
-	}
-
-	var err error
-	for ent := range entries {
-		if count == 0 {
-			break
-		}
-		ents = append(ents, ent)
-		count--
-	}
-	if count > 0 {
-		err = io.EOF
-	}
-
-	sort.Sort(entsByName(ents))
-	return ents, err
-}
-*/
