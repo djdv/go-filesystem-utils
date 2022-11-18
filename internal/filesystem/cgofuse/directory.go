@@ -14,7 +14,6 @@ type goDirWrapper struct {
 
 func (gw *goWrapper) Opendir(path string) (int, uint64) {
 	defer gw.systemLock.Access(path)()
-	gw.log.Printf("Opendir - %q", path)
 
 	openDirFS, ok := gw.FS.(filesystem.OpenDirFS)
 	if !ok {
@@ -23,8 +22,6 @@ func (gw *goWrapper) Opendir(path string) (int, uint64) {
 		} else {
 			gw.log.Print("Opendir not supported by provided fs.FS") // TODO: better message
 		}
-		// NOTE: Most fuse implementations consider this to be final.
-		// And will never try this operation again.
 		return -fuse.ENOSYS, errorHandle
 	}
 
@@ -34,20 +31,6 @@ func (gw *goWrapper) Opendir(path string) (int, uint64) {
 		gw.log.Print(err)
 		return interpretError(err), errorHandle
 	}
-
-	// Comment below is outdated. We should see if it's possible to to interface with dotnet
-	// as a FS provider. Like `env:` is in `pwsh`.
-	// FIXME: (add common option like fakeRootEntries or something)
-	// on Windows, (specifically in Powerhshell) when mounted to a UNC path
-	// operations like `Get-ChildItem "\\servername\share\Qm..."` work fine, but
-	// `Set-Location "\\servername\share\Qm..."` always fail
-	// this seems to do with the fact the share's root does not actually contain the target
-	// (pwsh seems to read the root to verify existence before attempting to changing into it)
-	// the same behaviour is not present when mounted to a drivespec like `I:`
-	// or in other applications (namely Explorer)
-	// We could probably fix this by caching the first component of the last getattr call
-	// and `fill`ing it in during Readdir("/")
-	// failing this, a more persistent LRU cache could be shown in the root
 
 	directory, err := openDirFS.OpenDir(goPath)
 	if err != nil {

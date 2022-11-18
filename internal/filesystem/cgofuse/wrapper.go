@@ -27,8 +27,6 @@ func (fs *goWrapper) Init() {
 
 func (fsys *goWrapper) Getattr(path string, stat *fuse.Stat_t, fh uint64) int {
 	defer fsys.systemLock.Access(path)()
-	fsys.log.Printf("Getattr - {%X}%q", fh, path)
-
 	goPath, err := fuseToGo(path)
 	if err != nil {
 		fsys.log.Print(err)
