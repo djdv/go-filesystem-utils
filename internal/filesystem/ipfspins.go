@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"io/fs"
-	"sort"
 	"time"
 
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
@@ -18,17 +17,16 @@ type (
 		pinAPI coreiface.PinAPI
 		ipfs   OpenDirFS // TODO: subsys should be handled via `bind` instead? fs.Subsys?
 	}
-
-	pinsDirectory struct {
-		stat   fs.FileInfo
-		ipfs   fs.FS
-		pinAPI coreiface.PinAPI
-		ents   <-chan []fs.DirEntry
+	pinStream struct {
+		stat fs.FileInfo
+		pins <-chan coreiface.Pin
+		context.Context
+		context.CancelFunc
+		ipfs fs.FS
 	}
-
 	pinDirEntry struct {
 		coreiface.Pin
-		ipfs fs.FS
+		ipfs fs.FS // TODO: replace this with statfunc or something. We shouldn't need the whole FS.
 	}
 )
 
@@ -57,16 +55,9 @@ func (pfs *IPFSPinAPI) Open(name string) (fs.File, error) {
 				Err:  fserrors.New(fserrors.InvalidItem), // TODO: convert old-style errors.
 			}
 	}
-
 	if subsys := pfs.ipfs; subsys != nil {
 		return subsys.Open(name)
 	}
-	// TODO: stub pin-file here that can at least Stat itself.
-	// As-is, ReadDir returns good ents,
-	// but they can't be opened+stat'd, or fs.Stat'd
-	// Either needs to be implemented.
-	// Probably the latter.
-
 	return nil, &fs.PathError{
 		Op:   op,
 		Path: name,
@@ -86,56 +77,103 @@ func (pfs *IPFSPinAPI) OpenDir(name string) (fs.ReadDirFile, error) {
 		}
 	}
 	const op fserrors.Op = "pinfs.OpenDir"
-	ctx := context.TODO() // TODO: cancel on close.
-	pinEnts, err := getPinSliceChan(ctx, pfs.pinAPI, pfs.ipfs)
+	var (
+		ctx, cancel = context.WithCancel(context.Background())
+		lsOpts      = []coreoptions.PinLsOption{
+			coreoptions.Pin.Ls.Recursive(),
+		}
+		pins, err = pfs.pinAPI.Ls(ctx, lsOpts...)
+	)
 	if err != nil {
-		err := fserrors.New(op,
-			fserrors.IO,
-			err,
-		)
-		return nil, err
+		cancel()
+		return nil, &fs.PathError{ // TODO old-style err; convert to wrapped, defined, const errs.
+			Op:   "open", // TODO: what does the fs.FS spec say for extensions? `opendir`?
+			Path: name,
+			Err: fserrors.New(op,
+				fserrors.IO,
+				err),
+		}
 	}
-	pinDir := pfs.makePinsDir(s_IRXA)
-	pinDir.ents = pinEnts
-	return pinDir, nil
-}
-
-func (pfs *IPFSPinAPI) makePinsDir(permissions fs.FileMode) *pinsDirectory {
-	return &pinsDirectory{
+	// TODO: retrieve permission from somewhere else. (Passed into FS constructor)
+	const permissions = s_IRXA
+	stream := &pinStream{
+		ipfs:       pfs.ipfs,
+		pins:       pins,
+		Context:    ctx,
+		CancelFunc: cancel,
 		stat: staticStat{
 			name:    rootName,
 			mode:    fs.ModeDir | permissions,
 			modTime: time.Now(), // Not really modified, but pin-set as-of right now.
 		},
-		ipfs:   pfs.ipfs,
-		pinAPI: pfs.pinAPI,
+	}
+	return stream, nil
+}
+
+func (ps *pinStream) Stat() (fs.FileInfo, error) { return ps.stat, nil }
+
+func (*pinStream) Read([]byte) (int, error) {
+	const op fserrors.Op = "pinStream.Read"
+	return -1, fserrors.New(op, fserrors.IsDir)
+}
+
+// TODO: also implement StreamDirFile
+func (ps *pinStream) ReadDir(count int) ([]fs.DirEntry, error) {
+	const (
+		upperBound             = 64
+		op         fserrors.Op = "pinStream.ReadDir"
+	)
+	var (
+		ctx       = ps.Context
+		pins      = ps.pins
+		ipfs      = ps.ipfs
+		entries   = make([]fs.DirEntry, 0, generic.Min(count, upperBound))
+		returnAll = count <= 0
+	)
+	if ctx == nil {
+		return nil, fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
+	}
+	if pins == nil {
+		return nil, fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return entries, ctx.Err()
+		case pin, ok := <-pins:
+			if !ok {
+				var err error
+				if !returnAll {
+					err = io.EOF
+				}
+				return entries, err
+			}
+			if err := pin.Err(); err != nil {
+				return entries, err
+			}
+			entry := &pinDirEntry{
+				Pin:  pin,
+				ipfs: ipfs,
+			}
+			entries = append(entries, entry)
+			if !returnAll {
+				if count--; count == 0 {
+					return entries, nil
+				}
+			}
+		}
 	}
 }
 
-func getPinSliceChan(ctx context.Context,
-	pinAPI coreiface.PinAPI, ipfs fs.FS,
-) (<-chan []fs.DirEntry, error) {
-	pins, err := getPinEntries(ctx, pinAPI)
-	if err != nil {
-		return nil, err
+func (ps *pinStream) checkInitalized() error {
+	const op fserrors.Op = "pinStream.checkInitalized"
+	if pins := ps.pins; pins == nil {
+		return fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
 	}
-	entSlices := make(chan []fs.DirEntry, 1)
-	go func() {
-		defer close(entSlices)
-		ents, _ := pinsToDirEnts(ipfs, pins)
-		// TODO: We need to do something about the errors here.
-		// We could log them, or do this synchronously before OpenDir returns.
-		// Or pass them to ReadDir somehow.
-		entSlices <- ents
-	}()
-	return entSlices, nil
-}
-
-func getPinEntries(ctx context.Context, pinAPI coreiface.PinAPI) (<-chan coreiface.Pin, error) {
-	lsOpts := []coreoptions.PinLsOption{
-		coreoptions.Pin.Ls.Recursive(),
+	if ctx := ps.Context; ctx == nil {
+		return fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
 	}
-	return pinAPI.Ls(ctx, lsOpts...)
+	return nil
 }
 
 func pinsToDirEnts(ipfs fs.FS, pins <-chan coreiface.Pin) ([]fs.DirEntry, error) {
@@ -146,50 +184,21 @@ func pinsToDirEnts(ipfs fs.FS, pins <-chan coreiface.Pin) ([]fs.DirEntry, error)
 		}
 		ents = append(ents, &pinDirEntry{Pin: pin, ipfs: ipfs})
 	}
-	sort.Sort(entsByName(ents))
 	return ents, nil
 }
 
-func (pd *pinsDirectory) Stat() (fs.FileInfo, error) { return pd.stat, nil }
-
-func (*pinsDirectory) Read([]byte) (int, error) {
-	const op fserrors.Op = "pinDirectory.Read"
-	return -1, fserrors.New(op, fserrors.IsDir)
-}
-
-func (pd *pinsDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
-	const op fserrors.Op = "pinDirectory.ReadDir"
-	entsCh := pd.ents
-	if entsCh == nil {
-		return nil, fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
-	}
-	ents := make([]fs.DirEntry, 0, generic.Max(count, 64)) // TODO: arbitrary cap
-	if count == 0 {
-		count-- // Intentionally bypass break condition / append all ents.
-	}
-	// TODO: entsCh should return a pair of channels or 2 values; {pin-converted-dir:pin-ls-err}
-	for _, ent := range <-entsCh {
-		if count == 0 {
-			break
-		}
-		ents = append(ents, ent)
-		count--
-	}
-	if count > 0 {
-		return ents, io.EOF
-	}
-	return ents, nil
-}
-
-func (pd *pinsDirectory) Close() error {
-	const op fserrors.Op = "pinfs.Close"
-	if pd.ents != nil {
-		pd.ents = nil
+func (ps *pinStream) Close() error {
+	const op fserrors.Op = "pinStream.Close"
+	if cancel := ps.CancelFunc; cancel != nil {
+		cancel()
+		ps.Context = nil
+		ps.CancelFunc = nil
+		ps.pins = nil
 		return nil
 	}
 	return fserrors.New(op,
 		fserrors.InvalidItem, // TODO: Check POSIX expected values
-		"directory was not open",
+		"directory stream was not open",
 	)
 }
 
@@ -203,9 +212,8 @@ func (pe *pinDirEntry) Info() (fs.FileInfo, error) {
 		return fs.Stat(pe.ipfs, pinCid.String())
 	}
 	return staticStat{
-		name: pinCid.String(),
-		// mode:    s_IRXA,
-		mode:    fs.ModeDir | s_IRWXA,
+		name:    pinCid.String(),
+		mode:    fs.ModeDir | s_IRWXA, // TODO: permission come from somewhere else.
 		modTime: time.Now(),
 	}, nil
 }
@@ -219,5 +227,3 @@ func (pe *pinDirEntry) Type() fs.FileMode {
 }
 
 func (pe *pinDirEntry) IsDir() bool { return pe.Type().IsDir() }
-
-type pinDummyEnt struct{}
