@@ -9,15 +9,20 @@ import (
 
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
-	"github.com/hugelgupf/p9/p9"
 )
 
 const (
 	rootName = "."
 
-	s_IROTH os.FileMode = os.FileMode(p9.Read)
-	s_IWOTH             = os.FileMode(p9.Write)
-	s_IXOTH             = os.FileMode(p9.Exec)
+	// Go permission bits,
+	// defined with POSIX naming convention.
+	//
+	// TODO: We have no requirement to conform to POSIX here.
+	// These names should be changed to something practical instead.
+
+	s_IROTH os.FileMode = 0o4
+	s_IWOTH             = 0o2
+	s_IXOTH             = 0o1
 
 	i_modeShift = 3
 
