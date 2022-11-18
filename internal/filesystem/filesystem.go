@@ -1,6 +1,7 @@
 package filesystem
 
 import (
+	"context"
 	"io/fs"
 	"time"
 )
@@ -25,5 +26,20 @@ type (
 	OpenDirFS interface {
 		fs.FS
 		OpenDir(name string) (fs.ReadDirFile, error)
+	}
+	/* TODO: consider if we want/need this. Standard extension pattern encourages it.
+	 But it's probably unnecessary right now.
+	StreamDirFS interface {
+		fs.FS
+		OpenDirStream(name string) (StreamDirFile, error)
+	}
+	*/
+	DirStreamEntry interface {
+		fs.DirEntry
+		Error() error
+	}
+	StreamDirFile interface {
+		fs.ReadDirFile
+		StreamDir(ctx context.Context) <-chan DirStreamEntry
 	}
 )
