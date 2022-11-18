@@ -26,25 +26,21 @@ type (
 		root     rootDirectory
 		systemID ID
 	}
-
 	coreDirectory struct {
-		stat       fs.FileInfo
-		ents       <-chan fs.DirEntry
-		entErrs    <-chan error
-		entsCancel context.CancelFunc
+		stat    fs.FileInfo
+		entries <-chan coreiface.DirEntry
+		context.Context
+		context.CancelFunc
 	}
-
 	coreFile struct {
 		stat fs.FileInfo
 		files.File
 		cancel context.CancelFunc
 	}
-
 	ufsDirEntry struct {
 		stat fs.FileInfo
 		coreiface.DirEntry
 	}
-
 	cborFile struct {
 		stat   fs.FileInfo
 		node   *cbor.Node
@@ -76,7 +72,6 @@ func (ci *ipfsCoreAPI) Open(name string) (fs.File, error) {
 				Err:  fserrors.New(fserrors.InvalidItem), // TODO: convert old-style errors.
 			}
 	}
-
 	// TODO: OpenFile + read-only checking on flags
 	corePath, err := goToIPFSCore(ci.systemID, name)
 	if err != nil {
@@ -130,7 +125,6 @@ func (ci *ipfsCoreAPI) openNode(name string,
 		// TODO: real error value+message
 		fErr = fserrors.New("unsupported type")
 	}
-
 	if fErr != nil {
 		return nil, fserrors.New(op,
 			fserrors.Path(name),
@@ -141,24 +135,11 @@ func (ci *ipfsCoreAPI) openNode(name string,
 	return file, nil
 }
 
-/*
-func (ci *ipfsCoreAPI) stat(name string, ipldNode ipld.Node) (*ipfsCoreStat, error) {
-	stat := new(ipfsCoreStat)
-	if err := statNode(ipldNode, stat); err != nil {
-		return nil, err
-	}
-	stat.modtime = ci.root.stat.ModTime()
-	stat.name = path.Base(name)
-	return stat, nil
-}
-*/
-
 func (ci *ipfsCoreAPI) OpenDir(name string) (fs.ReadDirFile, error) {
 	const op fserrors.Op = "ipfscore.OpenDir"
 	if name == rootName {
 		return ci.root, nil
 	}
-
 	if !fs.ValidPath(name) {
 		return nil, fserrors.New(op,
 			fserrors.Path(name),
@@ -182,7 +163,6 @@ func (ci *ipfsCoreAPI) OpenDir(name string) (fs.ReadDirFile, error) {
 			err,
 		)
 	}
-	// TODO: filemode check; isdir - UFS should do this anyway internally, don't duplicate that check.
 	const (
 		defaultPermissions = s_IRXA
 	)
@@ -250,53 +230,67 @@ func (*coreDirectory) Read([]byte) (int, error) {
 	return -1, fserrors.New(op, fserrors.IsDir)
 }
 
+// TODO: also implement StreamDirFile
+// TODO: [676aa3d1-00ea-480b-9c1c-b9b4667cb0f7] - These functions overlap a lot.
+// We could probably generalize this by just having a `transformFn`
+// parameter to a generic version of this; `T => DirEntry; err`
 func (cd *coreDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
-	const op fserrors.Op = "coreDirectory.ReadDir"
-	entries := cd.ents
-	if entries == nil {
+	const (
+		upperBound             = 64
+		op         fserrors.Op = "coreDirectory.ReadDir"
+	)
+	var (
+		ctx         = cd.Context
+		coreEntries = cd.entries
+		entries     = make([]fs.DirEntry, 0, generic.Min(count, upperBound))
+		returnAll   = count <= 0
+	)
+	if ctx == nil {
 		return nil, fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
 	}
-
-	var (
-		ents      = make([]fs.DirEntry, 0, generic.Max(count, 64)) // TODO: arbitrary cap
-		entryErrs = cd.entErrs
-	)
-	if count == 0 {
-		count-- // Intentionally bypass break condition / append all ents.
+	if coreEntries == nil {
+		return nil, fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
 	}
-loop:
-	for entries != nil ||
-		entryErrs != nil {
+	for {
 		select {
-		case ent, ok := <-entries:
+		case <-ctx.Done():
+			return entries, ctx.Err()
+		case coreEntry, ok := <-coreEntries:
 			if !ok {
-				entries = nil
-				continue
+				var err error
+				if !returnAll {
+					err = io.EOF
+				}
+				return entries, err
 			}
-			if count == 0 {
-				break loop
+			if err := coreEntry.Err; err != nil {
+				return entries, err
 			}
-			ents = append(ents, ent)
-			count--
-		case err, ok := <-entryErrs:
-			if !ok {
-				entryErrs = nil
-				continue
+			// TODO: this typing is kind of weird. It should at least have an xEntry alias.
+			entry := staticStat{
+				name: coreEntry.Name,
+				size: int64(coreEntry.Size),
+				mode: coreTypeToGoType(coreEntry.Type) |
+					s_IRXA, // TODO: from root.
+				modTime: time.Now(), // TODO: from root.
 			}
-			return nil, err
+			entries = append(entries, entry)
+			if !returnAll {
+				if count--; count == 0 {
+					return entries, nil
+				}
+			}
 		}
 	}
-	if count > 0 {
-		return ents, io.EOF
-	}
-	return ents, nil
 }
 
 func (cd *coreDirectory) Close() error {
 	const op fserrors.Op = "coredir.Close"
-	if cancel := cd.entsCancel; cancel != nil {
-		cd.entsCancel = nil
+	if cancel := cd.CancelFunc; cancel != nil {
 		cancel()
+		cd.Context = nil
+		cd.CancelFunc = nil
+		cd.entries = nil
 		return nil
 	}
 	return fserrors.New(op,
@@ -362,46 +356,16 @@ func (cio *cborFile) Seek(offset int64, whence int) (int64, error) {
 
 func openIPFSDir(unixfs coreiface.UnixfsAPI, corePath corepath.Path, stat fs.FileInfo) (fs.ReadDirFile, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	uEnts, err := unixfs.Ls(ctx, corePath)
+	entries, err := unixfs.Ls(ctx, corePath)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
-	var (
-		errs = make(chan error)
-		ents = make(chan fs.DirEntry, generic.Max(cap(uEnts), 64)) // TODO: arbitrary cap.
-	)
-	go func() {
-		defer close(ents)
-		defer close(errs)
-		defer cancel()
-		for uEnt := range uEnts {
-			if err := uEnt.Err; err != nil {
-				select {
-				case errs <- err:
-				case <-ctx.Done():
-				}
-				return
-			}
-
-			select {
-			case ents <- staticStat{
-				name: uEnt.Name,
-				size: int64(uEnt.Size),
-				mode: coreTypeToGoType(uEnt.Type) |
-					s_IRXA, // TODO: from root.
-				modTime: time.Now(), // TODO: from root.
-			}:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
 	return &coreDirectory{
 		stat:       stat,
-		ents:       ents,
-		entErrs:    errs,
-		entsCancel: cancel,
+		entries:    entries,
+		Context:    ctx,
+		CancelFunc: cancel,
 	}, nil
 }
 
