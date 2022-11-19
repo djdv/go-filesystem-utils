@@ -20,11 +20,15 @@ type (
 	Fuse           struct {
 		*fuse.FileSystemHost
 	}
-	fileHandle struct {
-		goFile fs.File
-		ioMu   sync.Mutex // TODO: name and responsibility; currently applies to the position cursor
+	fuseContext struct {
+		uid
+		gid
+		// NOTE: PID omitted as not used.
 	}
-
+	fileHandle struct {
+		ioMu   sync.Mutex // TODO: name and responsibility; currently applies to the position cursor
+		goFile fs.File
+	}
 	seekerFile interface {
 		fs.File
 		io.Seeker

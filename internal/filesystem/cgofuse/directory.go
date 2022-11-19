@@ -8,6 +8,7 @@ import (
 	"io/fs"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
+	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/winfsp/cgofuse/fuse"
 )
 
@@ -17,116 +18,74 @@ type (
 		entries <-chan filesystem.DirStreamEntry
 		context.Context
 		context.CancelFunc
-		uid, gid uint32
+		fuseContext
 		position int64
 	}
 	dirEntryWrapper     struct{ fs.DirEntry }
 	errorDirectoryEntry struct{ error }
 )
 
-func (ds *directoryStream) Close() (err error) {
-	// TODO: can we make this less gross but still safe?
-	if cancel := ds.CancelFunc; cancel != nil {
-		cancel()
-		ds.CancelFunc = nil
-		ds.entries = nil
-	} else {
-		err = errors.New("directory canceler is missing")
-	}
-	if dirFile := ds.ReadDirFile; dirFile != nil {
-		err = errors.Join(err, ds.ReadDirFile.Close())
-		ds.ReadDirFile = nil
-	} else {
-		err = errors.Join(err, errors.New("directory interface is missing"))
-	}
-	return err
-}
-
 func (gw *goWrapper) Opendir(path string) (int, uint64) {
 	defer gw.systemLock.Access(path)()
-
-	openDirFS, ok := gw.FS.(filesystem.OpenDirFS)
-	if !ok {
-		if idFS, ok := gw.FS.(filesystem.IDer); ok {
-			gw.log.Print("Opendir not supported by provided ", idFS.ID()) // TODO: better message
-		} else {
-			gw.log.Print("Opendir not supported by provided fs.FS") // TODO: better message
-		}
-		return -fuse.ENOSYS, errorHandle
-	}
-
-	goPath, err := fuseToGo(path)
+	directory, err := openDir(gw.FS, path)
 	if err != nil {
-		// TODO: review; POSIX spec - make sure errno is appropriate for this op
-		gw.log.Print(err)
+		gw.log.Printf(`%s - "%s"`, err, path)
 		return interpretError(err), errorHandle
 	}
-
-	directory, err := openDirFS.OpenDir(goPath)
-	if err != nil {
-		gw.log.Print(err)
-		return interpretError(err), errorHandle
-	}
-
-	/* TODO: [Ame]
-	Convert the markdown section from [filesystem.md] into a smaller remark. And/or link to it.
-	The remark about "needing" IDs is only true for systems where we synthesize them.
-	(I.e. for systems that don't natively have/store them; e.g. IPFS' UFS)
-	That needs to be stated/corrected.
-
-	## Misc Notes
-
-	### FUSE
-
-	It should be noted somewhere, the behaviour of (Go)`fuse.Getcontext`/(C)`fuse_get_context`.
-	None of the implementations have useful documentation for this call, other than saying the pointer to the structure should not be held past the operation call that invoked it.
-	The various implementations have varying results. For example, consider the non-exhaustive table below.
-
-	| FreeBSD (fusefs)<br>NetBSD (PUFFS)<br>macOS (FUSE for macOS) | Linux (fuse)       | Windows (WinFSP)   |
-	| ------------------------------------------------------------ | ------------------ | ------------------ |
-	| opendir: populated                                           | opendir: populated | opendir: populated |
-	| readdir: populated                                           | readdir: populated | readdir: NULL      |
-	| releasedir: populated                                        | releasedir: NULL   | releasedir: NULL   |
-
-	Inherently, but not via any spec, the context is only required to be populated within operations that create system files and/or check system access. (Without them, you wouldn't be able to implement file systems that adhere to POSIX specifications.)
-	i.e. `opendir` must know the UID/GID of the caller in order to check access permissions, but `readdir` does not, since `readdir` implies that the check was already done in `opendir` (as it must receive a valid reference that was previously returned from `opendir`).
-
-	As such, for our `readdir` implementations, we obtain the context during `opendir`, and bind it with the associated handle construct, if it's needed.
-	During normal operation it's not, but for systems that support FUSE's "readdirplus" capability, we need the context of the caller who opened the directory at the time of `readdir` operation.
-	*/
 	var (
+		// NOTE: `fuse_get_context` is only required to
+		// return valid data within certain operations.
+		// `openddir` is one such operation.
+		// Some implementations may return valid data within `readdir`
+		// but this can not be relied on.
+		// As such, we store it with the stream here, for re-use there.
+		// TODO: We should accept these values as options
+		// and only use the fuse context if not provided.
+		// I.e. caller of the wrapper constructor can define what UID+GID we should use.
 		uid, gid, _ = fuse.Getcontext()
 		ctx, cancel = context.WithCancel(context.Background())
 		dirStream   = &directoryStream{
-			ReadDirFile: directory,
-			uid:         uid,
-			gid:         gid,
 			Context:     ctx,
 			CancelFunc:  cancel,
+			ReadDirFile: directory,
+			entries:     getDirStream(ctx, directory),
+			fuseContext: fuseContext{
+				uid: uid,
+				gid: gid,
+			},
 		}
 	)
-	extended, ok := directory.(filesystem.StreamDirFile)
-	if ok {
-		dirStream.entries = extended.StreamDir(ctx)
-	} else {
-		dirStream.entries = streamStandardDir(ctx, directory)
-	}
-
 	handle, err := gw.fileTable.add(dirStream)
 	if err != nil {
 		gw.log.Print(err)
+		// TODO: the file table should return an error value
+		// that maps to this POSIX error.
 		return -fuse.EMFILE, errorHandle
 	}
-
 	return operationSuccess, handle
 }
 
-func (gw *goWrapper) Releasedir(path string, fh uint64) int {
-	errNo, err := gw.fileTable.release(fh)
+func openDir(fsys fs.FS, path string) (fs.ReadDirFile, error) {
+	goPath, err := fuseToGo(path)
 	if err != nil {
-		gw.log.Print(err)
+		return nil, err
 	}
-	return errNo
+	file, err := fsys.Open(goPath)
+	if err != nil {
+		return nil, err
+	}
+	directory, ok := file.(fs.ReadDirFile)
+	if !ok {
+		return nil, fserrors.New(fserrors.NotDir)
+	}
+	return directory, nil
+}
+
+func getDirStream(ctx context.Context, directory fs.ReadDirFile) <-chan filesystem.DirStreamEntry {
+	if dirStreamer, ok := directory.(filesystem.StreamDirFile); ok {
+		return dirStreamer.StreamDir(ctx)
+	}
+	return streamStandardDir(ctx, directory)
 }
 
 func (gw *goWrapper) Readdir(path string,
@@ -135,12 +94,10 @@ func (gw *goWrapper) Readdir(path string,
 	fh uint64,
 ) int {
 	defer gw.systemLock.Access(path)()
-
 	if fh == errorHandle {
 		gw.log.Print(fuse.Error(-fuse.EBADF))
 		return -fuse.EBADF
 	}
-
 	directoryHandle, err := gw.fileTable.get(fh)
 	if err != nil {
 		gw.log.Print(fuse.Error(-fuse.EBADF))
@@ -148,8 +105,23 @@ func (gw *goWrapper) Readdir(path string,
 	}
 	stream, ok := directoryHandle.goFile.(*directoryStream)
 	if !ok {
-		gw.log.Printf(`Directory from file table is not a type from our system: {%T} "%s"`, path)
+		// TODO: [Ame] better wording; include the expected type as well (got, want).
+		// ^ Remember that fmt is funny about interface types and will print a literal `nil`.
+		// I forget the trick to coerce it into printing the type. Requires reflection?
+		gw.log.Printf(`Directory from file table is not a type from our system: {%T} "%s"`,
+			directoryHandle.goFile, path,
+		)
+		// TODO: [leaks] [S&P]
+		// Trace what FUSE does here when it encounters `EBADF`.
+		// If it doesn't call `close` itself, we will have to
+		// remove this descriptor manually from the file table.
 		return -fuse.EBADF
+	}
+	streamOffset := stream.position
+	if ofst == 0 && streamOffset != 0 {
+		if errorCode := gw.rewinddir(stream, path); errorCode != operationSuccess {
+			return errorCode
+		}
 	}
 	var (
 		entries = stream.entries
@@ -162,10 +134,6 @@ func (gw *goWrapper) Readdir(path string,
 	if entries == nil {
 		gw.log.Printf(`Directory from file table is missing stream entries "%s"`, path)
 		return -fuse.EIO
-	}
-	streamOffset := stream.position
-	if ofst == 0 && streamOffset != 0 {
-		// TODO: re-open the stream
 	}
 	for {
 		select {
@@ -188,10 +156,10 @@ func (gw *goWrapper) Readdir(path string,
 			}
 			if entStat != nil {
 				if entStat.Uid == posixOmittedID {
-					entStat.Uid = stream.uid
+					entStat.Uid = stream.fuseContext.uid
 				}
 				if entStat.Gid == posixOmittedID {
-					entStat.Uid = stream.uid
+					entStat.Uid = stream.fuseContext.uid
 				}
 			}
 			if !fill(entry.Name(), entStat, streamOffset) {
@@ -199,6 +167,59 @@ func (gw *goWrapper) Readdir(path string,
 			}
 		}
 	}
+}
+
+// TODO: clean this up. Error handling need to be less wonky.
+// Field assignment could probably be handled differently.
+// NOTE: See SUSv4;BSi7 `rewinddir`.
+// FUSE should translate those into (FUSE) `readdir` with offset 0
+// ^ TODO: (Re)validate that this is true. Include it in CGO tests as well.
+// ^^ With funny business. Directory contents should change between calls.
+// opendidr; readdir; modify dir contents; rewinddir; readdir; closedir
+func (gw *goWrapper) rewinddir(stream *directoryStream, path string) int {
+	if cancel := stream.CancelFunc; cancel != nil {
+		cancel()
+	} else {
+		gw.log.Printf(`Directory from file table is missing stream context CancelFunc "%s"`, path)
+		return -fuse.EIO
+	}
+	directory, err := openDir(gw.FS, path)
+	if err != nil {
+		return interpretError(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	stream.ReadDirFile = directory
+	stream.Context = ctx
+	stream.CancelFunc = cancel
+	stream.entries = getDirStream(ctx, directory)
+	stream.position = 0
+	return operationSuccess
+}
+
+func (gw *goWrapper) Releasedir(path string, fh uint64) int {
+	errNo, err := gw.fileTable.release(fh)
+	if err != nil {
+		gw.log.Print(err)
+	}
+	return errNo
+}
+
+func (ds *directoryStream) Close() (err error) {
+	// TODO: can we make this less gross but still safe?
+	if cancel := ds.CancelFunc; cancel != nil {
+		cancel()
+		ds.CancelFunc = nil
+		ds.entries = nil
+	} else {
+		err = errors.New("directory canceler is missing")
+	}
+	if dirFile := ds.ReadDirFile; dirFile != nil {
+		err = errors.Join(err, ds.ReadDirFile.Close())
+		ds.ReadDirFile = nil
+	} else {
+		err = errors.Join(err, errors.New("directory interface is missing"))
+	}
+	return err
 }
 
 func (dirEntryWrapper) Error() error { return nil }
