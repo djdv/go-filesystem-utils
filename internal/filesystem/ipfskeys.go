@@ -17,7 +17,7 @@ import (
 type (
 	IPFSKeyAPI struct {
 		keyAPI coreiface.KeyAPI
-		ipns   OpenDirFS
+		ipns   fs.FS
 	}
 	keyDirectory struct {
 		ipns    fs.FS
@@ -69,7 +69,7 @@ func (ki *IPFSKeyAPI) translateName(name string) (string, error) {
 func (kfs *IPFSKeyAPI) Open(name string) (fs.File, error) {
 	const op = "open"
 	if name == rootName {
-		return kfs.OpenDir(name)
+		return kfs.openRoot()
 	}
 	translated, err := kfs.translateName(name)
 	if err != nil {
@@ -90,21 +90,7 @@ func (kfs *IPFSKeyAPI) Open(name string) (fs.File, error) {
 	}
 }
 
-func (kfs *IPFSKeyAPI) OpenDir(name string) (fs.ReadDirFile, error) {
-	if name != rootName {
-		if subsys := kfs.ipns; subsys != nil {
-			translated, err := kfs.translateName(name)
-			if err != nil {
-				return nil, err
-			}
-			return subsys.OpenDir(translated)
-		}
-		return nil, &fs.PathError{
-			Op:   "open", // TODO: what does the fs.FS spec say for extensions? `opendir`?
-			Path: name,
-			Err:  fserrors.New(fserrors.NotExist), // TODO old-style err; convert to wrapped, defined, const errs.
-		}
-	}
+func (kfs *IPFSKeyAPI) openRoot() (fs.ReadDirFile, error) {
 	var (
 		ctx, cancel = context.WithCancel(context.Background())
 		keys        []coreiface.Key

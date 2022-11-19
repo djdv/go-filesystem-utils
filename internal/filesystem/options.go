@@ -1,5 +1,7 @@
 package filesystem
 
+import "io/fs"
+
 type (
 	IPFSOption interface { // TODO: might not need this
 		PinfsOption | KeyfsOption
@@ -17,7 +19,7 @@ func WithIPFS[OT IPFSOption](ipfs OpenDirFS) (option OT) {
 	return option
 }
 
-func WithIPNS[OT IPFSOption](ipns OpenDirFS) (option OT) {
+func WithIPNS[OT IPFSOption](ipns fs.FS) (option OT) {
 	switch fnPtrPtr := any(&option).(type) {
 	case *KeyfsOption:
 		*fnPtrPtr = func(ka *IPFSKeyAPI) error { ka.ipns = ipns; return nil }
