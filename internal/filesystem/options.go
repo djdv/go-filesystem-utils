@@ -1,5 +1,7 @@
 package filesystem
 
+import "io/fs"
+
 type (
 	IPFSOption interface { // TODO: might not need this
 		PinfsOption | KeyfsOption
@@ -20,7 +22,7 @@ type (
 // or leverage the type system to check it at compile time
 // (make the option constructors accept only our interfaces, not the broad standard one).
 
-func WithIPFS[OT IPFSOption](ipfs OpenDirFS) (option OT) {
+func WithIPFS[OT IPFSOption](ipfs fs.FS) (option OT) {
 	switch fnPtrPtr := any(&option).(type) {
 	case *PinfsOption:
 		*fnPtrPtr = func(pa *IPFSPinAPI) error { pa.ipfs = ipfs; return nil }
@@ -28,7 +30,7 @@ func WithIPFS[OT IPFSOption](ipfs OpenDirFS) (option OT) {
 	return option
 }
 
-func WithIPNS[OT IPFSOption](ipns OpenDirFS) (option OT) {
+func WithIPNS[OT IPFSOption](ipns fs.FS) (option OT) {
 	switch fnPtrPtr := any(&option).(type) {
 	case *KeyfsOption:
 		*fnPtrPtr = func(ka *IPFSKeyAPI) error { ka.ipns = ipns; return nil }

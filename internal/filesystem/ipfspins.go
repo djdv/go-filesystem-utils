@@ -15,7 +15,7 @@ import (
 type (
 	IPFSPinAPI struct {
 		pinAPI coreiface.PinAPI
-		ipfs   OpenDirFS // TODO: subsys should be handled via `bind` instead? fs.Subsys?
+		ipfs   fs.FS // TODO: subsys should be handled via `bind` instead? fs.Subsys?
 	}
 	pinStream struct {
 		stat fs.FileInfo
@@ -45,15 +45,7 @@ func (*IPFSPinAPI) ID() ID { return IPFSPins }
 func (pfs *IPFSPinAPI) Open(name string) (fs.File, error) {
 	const op = "open"
 	if name == rootName {
-		return pfs.OpenDir(name)
-	}
-	if !fs.ValidPath(name) {
-		return nil,
-			&fs.PathError{
-				Op:   op,
-				Path: name,
-				Err:  fserrors.New(fserrors.InvalidItem), // TODO: convert old-style errors.
-			}
+		return pfs.openRoot()
 	}
 	if subsys := pfs.ipfs; subsys != nil {
 		return subsys.Open(name)
@@ -65,18 +57,8 @@ func (pfs *IPFSPinAPI) Open(name string) (fs.File, error) {
 	}
 }
 
-func (pfs *IPFSPinAPI) OpenDir(name string) (fs.ReadDirFile, error) {
-	if name != rootName {
-		if subsys := pfs.ipfs; subsys != nil {
-			return subsys.OpenDir(name)
-		}
-		return nil, &fs.PathError{
-			Op:   "open", // TODO: what does the fs.FS spec say for extensions? `opendir`?
-			Path: name,
-			Err:  fserrors.New(fserrors.NotExist), // TODO old-style err; convert to wrapped, defined, const errs.
-		}
-	}
-	const op fserrors.Op = "pinfs.OpenDir"
+func (pfs *IPFSPinAPI) openRoot() (fs.ReadDirFile, error) {
+	const op fserrors.Op = "pinfs.openRoot"
 	var (
 		ctx, cancel = context.WithCancel(context.Background())
 		lsOpts      = []coreoptions.PinLsOption{
@@ -88,7 +70,7 @@ func (pfs *IPFSPinAPI) OpenDir(name string) (fs.ReadDirFile, error) {
 		cancel()
 		return nil, &fs.PathError{ // TODO old-style err; convert to wrapped, defined, const errs.
 			Op:   "open", // TODO: what does the fs.FS spec say for extensions? `opendir`?
-			Path: name,
+			Path: rootName,
 			Err: fserrors.New(op,
 				fserrors.IO,
 				err),
@@ -163,17 +145,6 @@ func (ps *pinStream) ReadDir(count int) ([]fs.DirEntry, error) {
 			}
 		}
 	}
-}
-
-func (ps *pinStream) checkInitalized() error {
-	const op fserrors.Op = "pinStream.checkInitalized"
-	if pins := ps.pins; pins == nil {
-		return fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
-	}
-	if ctx := ps.Context; ctx == nil {
-		return fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
-	}
-	return nil
 }
 
 func pinsToDirEnts(ipfs fs.FS, pins <-chan coreiface.Pin) ([]fs.DirEntry, error) {
