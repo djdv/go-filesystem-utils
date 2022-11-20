@@ -65,7 +65,7 @@ func (ci *ipfsCoreAPI) ID() ID { return ci.systemID }
 
 func (ci *ipfsCoreAPI) Open(name string) (fs.File, error) {
 	if name == rootName {
-		return ci.OpenDir(name)
+		return ci.root, nil
 	}
 	if !fs.ValidPath(name) {
 		return nil,
@@ -136,59 +136,6 @@ func (ci *ipfsCoreAPI) openNode(name string,
 		)
 	}
 	return file, nil
-}
-
-func (ci *ipfsCoreAPI) OpenDir(name string) (fs.ReadDirFile, error) {
-	const op fserrors.Op = "ipfscore.OpenDir"
-	if name == rootName {
-		return ci.root, nil
-	}
-	if !fs.ValidPath(name) {
-		return nil, fserrors.New(op,
-			fserrors.Path(name),
-			fserrors.InvalidItem,
-		)
-	}
-
-	corePath, err := goToIPFSCore(ci.systemID, name)
-	if err != nil {
-		// TODO: double check what error kind we should use for path errors.
-		return nil, fserrors.New(fserrors.NotExist, err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), ipfsCoreTimeout)
-	defer cancel()
-	ipldNode, err := ci.core.ResolveNode(ctx, corePath)
-	if err != nil {
-		return nil, fserrors.New(op,
-			fserrors.Permission, // TODO: check POSIX spec; this should probably be IO
-			fserrors.Path(name),
-			err,
-		)
-	}
-	const (
-		defaultPermissions = s_IRXA
-	)
-	// stat, err := ci.stat(name, ipldNode)
-	defaultMtime := ci.root.stat.ModTime()
-	stat, err := statNode(name, defaultMtime, defaultPermissions, ipldNode)
-	if err != nil {
-		return nil, fserrors.New(op,
-			fserrors.Path(name),
-			fserrors.IO, // TODO: [review] double check this Kind makes sense for this.
-			err,
-		)
-	}
-
-	directory, err := openIPFSDir(ci.core.Unixfs(), corePath, stat)
-	if err != nil {
-		return nil, fserrors.New(op,
-			fserrors.Path(name),
-			fserrors.IO, // TODO: [review] double check this Kind makes sense for this.
-			err,
-		)
-	}
-	return directory, nil
 }
 
 /*
