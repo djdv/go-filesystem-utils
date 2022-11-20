@@ -4,35 +4,31 @@ import (
 	"io"
 	"io/fs"
 	"log"
-	"os"
 	"time"
 
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 )
 
-const (
-	rootName = "."
+const rootName = "."
 
+const (
 	// Go permission bits,
 	// defined with POSIX naming convention.
 	//
 	// TODO: We have no requirement to conform to POSIX here.
 	// These names should be changed to something practical instead.
+	s_IXOTH fs.FileMode = 1 << iota
+	s_IWOTH
+	s_IROTH
 
-	s_IROTH os.FileMode = 0o4
-	s_IWOTH             = 0o2
-	s_IXOTH             = 0o1
+	s_IXGRP
+	s_IWGRP
+	s_IRGRP
 
-	i_modeShift = 3
-
-	s_IRGRP = s_IROTH << i_modeShift
-	s_IWGRP = s_IWOTH << i_modeShift
-	s_IXGRP = s_IXOTH << i_modeShift
-
-	s_IRUSR = s_IRGRP << i_modeShift
-	s_IWUSR = s_IWGRP << i_modeShift
-	s_IXUSR = s_IXGRP << i_modeShift
+	s_IXUSR
+	s_IWUSR
+	s_IRUSR
 
 	s_IRWXO = s_IROTH | s_IWOTH | s_IXOTH
 	s_IRWXG = s_IRGRP | s_IWGRP | s_IXGRP
@@ -40,8 +36,12 @@ const (
 
 	// Non-standard.
 
-	s_IRWXA = s_IRWXU | s_IRWXG | s_IRWXO              // 0777
-	s_IRXA  = s_IRWXA &^ (s_IWUSR | s_IWGRP | s_IWOTH) // 0555
+	s_IXA   = s_IXUSR | s_IXGRP | s_IXOTH
+	s_IWA   = s_IWUSR | s_IWGRP | s_IWOTH
+	s_IRA   = s_IRUSR | s_IRGRP | s_IROTH
+	s_IRXA  = s_IRA | s_IXA
+	s_IRWA  = s_IRA | s_IWA
+	s_IRWXA = s_IRWXU | s_IRWXG | s_IRWXO
 )
 
 type (
