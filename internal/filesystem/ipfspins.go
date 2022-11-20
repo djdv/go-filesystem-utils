@@ -12,6 +12,9 @@ import (
 	coreoptions "github.com/ipfs/interface-go-ipfs-core/options"
 )
 
+// TODO: move this to a test file
+var _ StreamDirFile = (*pinStream)(nil)
+
 type (
 	IPFSPinAPI struct {
 		pinAPI coreiface.PinAPI
@@ -101,23 +104,22 @@ func (*pinStream) Read([]byte) (int, error) {
 
 // TODO: also implement StreamDirFile
 func (ps *pinStream) ReadDir(count int) ([]fs.DirEntry, error) {
-	const (
-		upperBound             = 64
-		op         fserrors.Op = "pinStream.ReadDir"
-	)
+	const op fserrors.Op = "pinStream.ReadDir"
 	var (
-		ctx       = ps.Context
-		pins      = ps.pins
+		ctx  = ps.Context
+		pins = ps.pins
+	)
+	if ctx == nil ||
+		pins == nil {
+		return nil, fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
+	}
+
+	const upperBound = 64
+	var (
 		ipfs      = ps.ipfs
 		entries   = make([]fs.DirEntry, 0, generic.Min(count, upperBound))
 		returnAll = count <= 0
 	)
-	if ctx == nil {
-		return nil, fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
-	}
-	if pins == nil {
-		return nil, fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
-	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -133,11 +135,7 @@ func (ps *pinStream) ReadDir(count int) ([]fs.DirEntry, error) {
 			if err := pin.Err(); err != nil {
 				return entries, err
 			}
-			entry := &pinDirEntry{
-				Pin:  pin,
-				ipfs: ipfs,
-			}
-			entries = append(entries, entry)
+			entries = append(entries, translatePinEntry(pin, ipfs))
 			if !returnAll {
 				if count--; count == 0 {
 					return entries, nil
@@ -147,15 +145,53 @@ func (ps *pinStream) ReadDir(count int) ([]fs.DirEntry, error) {
 	}
 }
 
-func pinsToDirEnts(ipfs fs.FS, pins <-chan coreiface.Pin) ([]fs.DirEntry, error) {
-	ents := make([]fs.DirEntry, 0, cap(pins))
-	for pin := range pins {
-		if pin.Err() != nil {
-			return nil, pin.Err()
-		}
-		ents = append(ents, &pinDirEntry{Pin: pin, ipfs: ipfs})
+func translatePinEntry(pin coreiface.Pin, ipfs fs.FS) fs.DirEntry {
+	return &pinDirEntry{
+		Pin:  pin,
+		ipfs: ipfs,
 	}
-	return ents, nil
+}
+
+func (ps *pinStream) StreamDir(ctx context.Context) <-chan DirStreamEntry {
+	var (
+		pins    = ps.pins
+		ipfs    = ps.ipfs
+		entries = make(chan DirStreamEntry, cap(pins))
+	)
+	go func() {
+		defer close(entries)
+		if pins != nil {
+			translatePinEntries(ctx, pins, entries, ipfs)
+			return
+		}
+		const op fserrors.Op = "pinStream.StreamDir"
+		err := fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
+		select {
+		case entries <- newErrorEntry(err):
+		case <-ctx.Done():
+		}
+	}()
+	return entries
+}
+
+func translatePinEntries(ctx context.Context,
+	pins <-chan coreiface.Pin,
+	entries chan<- DirStreamEntry,
+	ipfs fs.FS,
+) {
+	for pin := range pins {
+		var entry DirStreamEntry
+		if err := pin.Err(); err != nil {
+			entry = newErrorEntry(err)
+		} else {
+			entry = wrapDirEntry(translatePinEntry(pin, ipfs))
+		}
+		select {
+		case entries <- entry:
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func (ps *pinStream) Close() error {

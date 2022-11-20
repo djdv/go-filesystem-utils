@@ -56,13 +56,13 @@ type (
 		mode    fs.FileMode
 		modTime time.Time
 	}
-
 	rootDirectory struct { // TODO: remove
 		stat fs.FileInfo
 		ents []fs.DirEntry
 	}
-
-	statFunc func() (fs.FileInfo, error)
+	statFunc            func() (fs.FileInfo, error)
+	dirEntryWrapper     struct{ fs.DirEntry }
+	errorDirectoryEntry struct{ error }
 )
 
 func newRoot(permissions fs.FileMode, ents []fs.DirEntry) rootDirectory {
@@ -127,6 +127,9 @@ func newRootStat(permissions fs.FileMode) rootStat {
 	}
 }
 
+func newErrorEntry(err error) DirStreamEntry        { return &errorDirectoryEntry{error: err} }
+func wrapDirEntry(entry fs.DirEntry) DirStreamEntry { return dirEntryWrapper{DirEntry: entry} }
+
 func (rs rootStat) Name() string       { return rs.name }
 func (rs rootStat) Size() int64        { return 0 }
 func (rs rootStat) Mode() fs.FileMode  { return fs.ModeDir | rs.permissions }
@@ -142,3 +145,11 @@ func (se staticStat) ModTime() time.Time         { return se.modTime }
 func (se staticStat) IsDir() bool                { return se.mode.IsDir() }
 func (se staticStat) Sys() any                   { return se }
 func (se staticStat) Info() (fs.FileInfo, error) { return se, nil }
+
+func (ed *errorDirectoryEntry) Name() string               { return "" }
+func (ed *errorDirectoryEntry) Error() error               { return ed.error }
+func (ed *errorDirectoryEntry) Info() (fs.FileInfo, error) { return nil, ed.error }
+func (*errorDirectoryEntry) Type() fs.FileMode             { return fs.ModeDir }
+func (*errorDirectoryEntry) IsDir() bool                   { return true }
+
+func (dirEntryWrapper) Error() error { return nil }

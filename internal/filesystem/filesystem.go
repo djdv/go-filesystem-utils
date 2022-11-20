@@ -2,6 +2,9 @@ package filesystem
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"time"
 )
@@ -31,3 +34,42 @@ type (
 		StreamDir(ctx context.Context) <-chan DirStreamEntry
 	}
 )
+
+func StreamDir(ctx context.Context, directory fs.ReadDirFile) <-chan DirStreamEntry {
+	if dirStreamer, ok := directory.(StreamDirFile); ok {
+		return dirStreamer.StreamDir(ctx)
+	}
+	stream := make(chan DirStreamEntry)
+	go func() {
+		defer close(stream)
+		for {
+			var (
+				entry     DirStreamEntry
+				ents, err = directory.ReadDir(1)
+			)
+			switch {
+			case err != nil:
+				if errors.Is(err, io.EOF) {
+					return
+				}
+				entry = &errorDirectoryEntry{error: err}
+			case len(ents) != 1:
+				// TODO: real error message
+				err := fmt.Errorf("unexpected count for [fs.ReadDir]"+
+					"\n\tgot: %d"+
+					"\n\twant: %d",
+					len(ents), 1,
+				)
+				entry = &errorDirectoryEntry{error: err}
+			default:
+				entry = dirEntryWrapper{DirEntry: ents[0]}
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case stream <- entry:
+			}
+		}
+	}()
+	return stream
+}
