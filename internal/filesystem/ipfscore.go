@@ -20,6 +20,9 @@ import (
 	corepath "github.com/ipfs/interface-go-ipfs-core/path"
 )
 
+// TODO: move this to a test file
+var _ StreamDirFile = (*coreDirectory)(nil)
+
 type (
 	ipfsCoreAPI struct {
 		core     coreiface.CoreAPI
@@ -235,51 +238,93 @@ func (*coreDirectory) Read([]byte) (int, error) {
 // We could probably generalize this by just having a `transformFn`
 // parameter to a generic version of this; `T => DirEntry; err`
 func (cd *coreDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
-	const (
-		upperBound             = 64
-		op         fserrors.Op = "coreDirectory.ReadDir"
-	)
+	const op fserrors.Op = "coreDirectory.ReadDir"
 	var (
 		ctx         = cd.Context
 		coreEntries = cd.entries
-		entries     = make([]fs.DirEntry, 0, generic.Min(count, upperBound))
-		returnAll   = count <= 0
 	)
-	if ctx == nil {
+	if ctx == nil ||
+		coreEntries == nil {
 		return nil, fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
 	}
-	if coreEntries == nil {
-		return nil, fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
-	}
+
+	const upperBound = 64
+	var (
+		entries   = make([]fs.DirEntry, 0, generic.Min(count, upperBound))
+		returnAll = count <= 0
+	)
 	for {
 		select {
-		case <-ctx.Done():
-			return entries, ctx.Err()
 		case coreEntry, ok := <-coreEntries:
 			if !ok {
-				var err error
-				if !returnAll {
-					err = io.EOF
+				if returnAll {
+					return entries, nil
 				}
-				return entries, err
+				return entries, io.EOF
 			}
 			if err := coreEntry.Err; err != nil {
 				return entries, err
 			}
-			// TODO: this typing is kind of weird. It should at least have an xEntry alias.
-			entry := staticStat{
-				name: coreEntry.Name,
-				size: int64(coreEntry.Size),
-				mode: coreTypeToGoType(coreEntry.Type) |
-					s_IRXA, // TODO: from root.
-				modTime: time.Now(), // TODO: from root.
-			}
-			entries = append(entries, entry)
+			entries = append(entries, translateCoreEntry(&coreEntry))
 			if !returnAll {
 				if count--; count == 0 {
 					return entries, nil
 				}
 			}
+		case <-ctx.Done():
+			return entries, ctx.Err()
+		}
+	}
+}
+
+func translateCoreEntry(entry *coreiface.DirEntry) fs.DirEntry {
+	// TODO: this typing is kind of weird.
+	// It should at least have an xEntry alias instead of xStat. Maybe.
+	return &staticStat{
+		name: entry.Name,
+		size: int64(entry.Size),
+		mode: coreTypeToGoType(entry.Type) |
+			s_IRXA, // TODO: from root.
+		modTime: time.Now(), // TODO: from root.
+	}
+}
+
+func (cd *coreDirectory) StreamDir(ctx context.Context) <-chan DirStreamEntry {
+	var (
+		coreEntries = cd.entries
+		goEntries   = make(chan DirStreamEntry, cap(coreEntries))
+	)
+	go func() {
+		defer close(goEntries)
+		if coreEntries != nil {
+			translateCoreEntries(ctx, coreEntries, goEntries)
+			return
+		}
+		const op fserrors.Op = "coreDirectory.StreamDir"
+		err := fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
+		select {
+		case goEntries <- newErrorEntry(err):
+		case <-ctx.Done():
+		}
+	}()
+	return goEntries
+}
+
+func translateCoreEntries(ctx context.Context,
+	coreEntries <-chan coreiface.DirEntry,
+	goEntries chan<- DirStreamEntry,
+) {
+	for coreEntry := range coreEntries {
+		var entry DirStreamEntry
+		if err := coreEntry.Err; err != nil {
+			entry = newErrorEntry(err)
+		} else {
+			entry = wrapDirEntry(translateCoreEntry(&coreEntry))
+		}
+		select {
+		case goEntries <- entry:
+		case <-ctx.Done():
+			return
 		}
 	}
 }
