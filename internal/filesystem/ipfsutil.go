@@ -6,16 +6,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ipfs/go-cid"
 	ipld "github.com/ipfs/go-ipld-format" // TODO: migrate to new standard
 	dag "github.com/ipfs/go-merkledag"
-	ipfspath "github.com/ipfs/go-path"
 	"github.com/ipfs/go-unixfs"
 	unixpb "github.com/ipfs/go-unixfs/pb"
 	corepath "github.com/ipfs/interface-go-ipfs-core/path"
 )
 
 func goToIPFSCore(fsid ID, goPath string) (corepath.Path, error) {
+	return corepath.New(
+		path.Join("/",
+			strings.ToLower(fsid.String()), // "ipfs", "ipns", ...
+			goPath,
+		)), nil
+	/* TODO: This is only valid for IPFS. And likely isn't worth the fragility to save a resolve elsewhere.
 	var (
 		namespace    = strings.ToLower(fsid.String()) // "ipfs", "ipns", ...
 		prefix       = path.Join("/", namespace)
@@ -33,6 +37,7 @@ func goToIPFSCore(fsid ID, goPath string) (corepath.Path, error) {
 		remainder   = components[1:]
 	)
 	return corepath.Join(resolvedCID, remainder...), nil
+	*/
 }
 
 func statNode(name string, modtime time.Time, permissions fs.FileMode,
