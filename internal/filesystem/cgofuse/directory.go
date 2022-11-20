@@ -3,8 +3,6 @@ package cgofuse
 import (
 	"context"
 	"errors"
-	"fmt"
-	"io"
 	"io/fs"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
@@ -15,14 +13,21 @@ import (
 type (
 	directoryStream struct {
 		fs.ReadDirFile
+		// TODO: it might be better to use the fs.DirEntry type for this whole chain
+		// and only check the type where these are used.
+		// E.g. expect standard directory entries, but check if they're extended
+		// with an Error method within readdir.
+		// This would eliminate the need for us to wrap the types, higher in the chain.
+		// And not depend on extensions as much.
+		// ^ The downside of this is that callers might not check for this,
+		// and thus miss an error value. So it may not be better.
+		// Needs consideration.
 		entries <-chan filesystem.DirStreamEntry
 		context.Context
 		context.CancelFunc
 		fuseContext
 		position int64
 	}
-	dirEntryWrapper     struct{ fs.DirEntry }
-	errorDirectoryEntry struct{ error }
 )
 
 func (gw *goWrapper) Opendir(path string) (int, uint64) {
@@ -48,7 +53,7 @@ func (gw *goWrapper) Opendir(path string) (int, uint64) {
 			Context:     ctx,
 			CancelFunc:  cancel,
 			ReadDirFile: directory,
-			entries:     getDirStream(ctx, directory),
+			entries:     filesystem.StreamDir(ctx, directory),
 			fuseContext: fuseContext{
 				uid: uid,
 				gid: gid,
@@ -79,13 +84,6 @@ func openDir(fsys fs.FS, path string) (fs.ReadDirFile, error) {
 		return nil, fserrors.New(fserrors.NotDir)
 	}
 	return directory, nil
-}
-
-func getDirStream(ctx context.Context, directory fs.ReadDirFile) <-chan filesystem.DirStreamEntry {
-	if dirStreamer, ok := directory.(filesystem.StreamDirFile); ok {
-		return dirStreamer.StreamDir(ctx)
-	}
-	return streamStandardDir(ctx, directory)
 }
 
 func (gw *goWrapper) Readdir(path string,
@@ -191,7 +189,7 @@ func (gw *goWrapper) rewinddir(stream *directoryStream, path string) int {
 	stream.ReadDirFile = directory
 	stream.Context = ctx
 	stream.CancelFunc = cancel
-	stream.entries = getDirStream(ctx, directory)
+	stream.entries = filesystem.StreamDir(ctx, directory)
 	stream.position = 0
 	return operationSuccess
 }
@@ -220,51 +218,4 @@ func (ds *directoryStream) Close() (err error) {
 		err = errors.Join(err, errors.New("directory interface is missing"))
 	}
 	return err
-}
-
-func (dirEntryWrapper) Error() error { return nil }
-
-func (ed *errorDirectoryEntry) Name() string               { return "" }
-func (ed *errorDirectoryEntry) Error() error               { return ed.error }
-func (ed *errorDirectoryEntry) Info() (fs.FileInfo, error) { return nil, ed.error }
-func (*errorDirectoryEntry) Type() fs.FileMode             { return fs.ModeDir }
-func (*errorDirectoryEntry) IsDir() bool                   { return true }
-
-// TODO: different name? something wrapDir? transform something-something?
-func streamStandardDir(ctx context.Context,
-	directory fs.ReadDirFile,
-) <-chan filesystem.DirStreamEntry {
-	stream := make(chan filesystem.DirStreamEntry)
-	go func() {
-		defer close(stream)
-		for {
-			var (
-				entry     filesystem.DirStreamEntry
-				ents, err = directory.ReadDir(1)
-			)
-			switch {
-			case err != nil:
-				if errors.Is(err, io.EOF) {
-					return
-				}
-				entry = &errorDirectoryEntry{error: err}
-			case len(ents) != 1:
-				// TODO: real error message
-				err := fmt.Errorf("unexpected count for [fs.ReadDir]"+
-					"\n\tgot: %d"+
-					"\n\twant: %d",
-					len(ents), 1,
-				)
-				entry = &errorDirectoryEntry{error: err}
-			default:
-				entry = dirEntryWrapper{DirEntry: ents[0]}
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case stream <- entry:
-			}
-		}
-	}()
-	return stream
 }
