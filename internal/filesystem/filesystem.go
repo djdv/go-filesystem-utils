@@ -44,7 +44,10 @@ func StreamDir(ctx context.Context, directory fs.ReadDirFile) <-chan DirStreamEn
 		defer close(stream)
 		for {
 			var (
-				entry     DirStreamEntry
+				entry DirStreamEntry
+				// TODO: this is very inefficient.
+				// We should probably port the old entry cache over,
+				// and read batches at a time.
 				ents, err = directory.ReadDir(1)
 			)
 			switch {
