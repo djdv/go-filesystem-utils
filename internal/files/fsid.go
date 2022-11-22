@@ -132,7 +132,8 @@ func (mn *FSIDDir) Mknod(name string, mode p9.FileMode,
 	attr.GID = gid
 	switch fsid := filesystem.ID(attr.RDev); fsid {
 	case filesystem.IPFS, filesystem.IPFSPins,
-		filesystem.IPNS, filesystem.IPFSKeys:
+		filesystem.IPNS, filesystem.IPFSKeys,
+		filesystem.MFS:
 		var (
 			metaOptions = []MetaOption{
 				WithPath(mn.path),

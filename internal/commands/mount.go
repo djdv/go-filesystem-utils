@@ -102,7 +102,7 @@ func makeMountFuseSubcommands() []command.Command {
 			filesystem.IPFSPins,
 			filesystem.IPNS,
 			filesystem.IPFSKeys,
-			// TODO: ...
+			filesystem.MFS,
 		}
 		subcommands = make([]command.Command, len(targetAPIs))
 	)
@@ -114,7 +114,8 @@ func makeMountFuseSubcommands() []command.Command {
 		)
 		switch fsid {
 		case filesystem.IPFS, filesystem.IPFSPins,
-			filesystem.IPNS, filesystem.IPFSKeys:
+			filesystem.IPNS, filesystem.IPFSKeys,
+			filesystem.MFS:
 			subcommands[i] = command.MakeCommand[*mountIPFSSettings](subcmdName, synopsis, usage,
 				makeFuseIPFSExec(filesystem.Fuse, fsid),
 			)
