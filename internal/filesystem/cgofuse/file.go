@@ -6,9 +6,9 @@ import (
 	"io"
 	"io/fs"
 
-	"github.com/winfsp/cgofuse/fuse"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	"github.com/u-root/uio/ulog"
+	"github.com/winfsp/cgofuse/fuse"
 )
 
 type Fuse struct {
@@ -50,7 +50,6 @@ func GoToFuse(fs fs.FS) (Fuse, error) {
 	fsh := fuse.NewFileSystemHost(&goWrapper{
 		FS:         fs,
 		fileTable:  newFileTable(),
-		systemLock: newOperationsLock(),
 		log:        ulog.Null, // TODO: from options
 	})
 	// TODO: from options.

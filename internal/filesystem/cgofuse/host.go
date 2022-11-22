@@ -5,9 +5,10 @@ import (
 	"log"
 	"math"
 
-	fuselib "github.com/winfsp/cgofuse/fuse"
+	"github.com/djdv/go-filesystem-utils/internal/filesystem/cgofuse/lock"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/u-root/uio/ulog"
+	fuselib "github.com/winfsp/cgofuse/fuse"
 )
 
 const (
@@ -25,7 +26,7 @@ const (
 
 type goWrapper struct {
 	fileTable
-	systemLock operationsLock
+	systemLock lock.PathLocker
 	fs.FS
 	log ulog.Logger // general operations log
 }
@@ -71,7 +72,6 @@ func goToFuseFileType(m fs.FileMode) fuseFileType {
 func (fs *goWrapper) Init() {
 	fs.log.Print("Init")
 	fs.fileTable = newFileTable()
-	fs.systemLock = newOperationsLock()
 	defer fs.log.Print("Init finished")
 }
 
