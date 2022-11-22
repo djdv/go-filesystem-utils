@@ -1,3 +1,5 @@
+//go:build !nofuse
+
 package cgofuse
 
 import (
@@ -14,10 +16,11 @@ import (
 // TODO: better name
 func GoToFuse(fs fs.FS) (*Fuse, error) {
 	fsh := fuse.NewFileSystemHost(&goWrapper{
-		FS:         fs,
-		fileTable:  newFileTable(),
-		systemLock: newOperationsLock(),
-		log:        ulog.Null, // TODO: from options
+		FS: fs,
+		// fileTable:  newFileTable(),
+		// systemLock: newOperationsLock(),
+		// log:        ulog.Null, // TODO: from options
+		log: ulog.Log,
 	})
 	// TODO: from options.
 	canReaddirPlus := runtime.GOOS == "windows"

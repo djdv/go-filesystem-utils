@@ -1,28 +1,17 @@
+//go:build !nofuse
+
 package cgofuse
 
 import (
 	"io/fs"
 
-	"github.com/u-root/uio/ulog"
 	"github.com/winfsp/cgofuse/fuse"
 )
 
-const (
-	goRoot = "."
-)
-
-type goWrapper struct {
-	*fileTable
-	systemLock operationsLock
-	fs.FS
-	log ulog.Logger
-}
-
-func (fs *goWrapper) Init() {
-	fs.log.Print("Init")
-	fs.fileTable = newFileTable()
-	fs.systemLock = newOperationsLock()
-	defer fs.log.Print("Init finished")
+func (fs *goWrapper) Statfs(path string, stat *fuse.Statfs_t) int {
+	fs.log.Printf("Statfs %q", path)
+	defer fs.systemLock.Access(path)()
+	return -fuse.ENOSYS
 }
 
 func (fsys *goWrapper) Getattr(path string, stat *fuse.Stat_t, fh uint64) int {
@@ -33,10 +22,14 @@ func (fsys *goWrapper) Getattr(path string, stat *fuse.Stat_t, fh uint64) int {
 		// TODO: review; should we return the value raw or send err to a converter?
 		// ^ send a stacked err to a converter*
 		// (so that the trace contains both ops, parent-op+path-lexer+reason)
-		return 0
+		// TODO: re-read spec. This is the closest value that seemed appropriate
+		// but maybe ACCESS or NOENT makes more sense.
+		return -fuse.EINVAL
 	}
 
-	// TODO: fh lookup
+	if fh != errorHandle {
+		// TODO: fh lookup
+	}
 
 	// TODO: review
 	goStat, err := fs.Stat(fsys.FS, goPath)
@@ -44,10 +37,13 @@ func (fsys *goWrapper) Getattr(path string, stat *fuse.Stat_t, fh uint64) int {
 		errNo := interpretError(err)
 		// Don't flood the logs with "not found" errors.
 		if errNo != -fuse.ENOENT {
-			fsys.log.Print(err)
+			// TODO: [DBG] reduce this format
+			fsys.log.Printf("path: %s\ngoPath: %s\nerr:%s", path, goPath, err)
 		}
 		return errNo
 	}
+
+	// fsys.log.Printf("stat for %s\n%#v", path, goStat)
 
 	// TODO: don't change stat on the fuse object
 	// push changes back to fs.FS via extension
@@ -90,25 +86,32 @@ func (fsys *goWrapper) Getattr(path string, stat *fuse.Stat_t, fh uint64) int {
 	return operationSuccess
 }
 
-func (fs *goWrapper) Destroy() {
-	// TODO: dbg lint
-	fs.log.Print("Destroy")
-	defer fs.log.Print("Destroy finished")
-	/* TODO: something like this for the new system
-	tell the Go FS we're leaving, which itself should have some reference counter.
-	we also need to track and close our handles again.
-	Old code:
-	defer func() {
-		if fs.destroySignal != nil {
-			// TODO: close all file/dir indices, stream errors out to destroy chan
-			close(fs.destroySignal)
-			fs.destroySignal = nil
-		}
-		fs.log.Debugf("Destroy finished")
-	}()
-	*/
+func (fs *goWrapper) Utimens(path string, tmsp []fuse.Timespec) int {
+	fs.log.Printf("Utimens {%v}%q", tmsp, path)
+	defer fs.systemLock.Modify(path)()
+	return -fuse.ENOSYS
+}
 
-	if err := fs.fileTable.Close(); err != nil {
-		fs.log.Print("failed to close:", err)
-	}
+func (fs *goWrapper) Setxattr(path, name string, value []byte, flags int) int {
+	fs.log.Printf("Setxattr {%X|%s|%d}%q", flags, name, len(value), path)
+	defer fs.systemLock.Modify(path)()
+	return -fuse.ENOSYS
+}
+
+func (fs *goWrapper) Listxattr(path string, fill func(name string) bool) int {
+	fs.log.Printf("Listxattr %q", path)
+	defer fs.systemLock.Access(path)()
+	return -fuse.ENOSYS
+}
+
+func (fs *goWrapper) Getxattr(path, name string) (int, []byte) {
+	fs.log.Printf("Getxattr {%s}%q", name, path)
+	defer fs.systemLock.Access(path)()
+	return -fuse.ENOSYS, nil
+}
+
+func (fs *goWrapper) Removexattr(path, name string) int {
+	fs.log.Printf("Removexattr {%s}%q", name, path)
+	defer fs.systemLock.Modify(path)()
+	return -fuse.ENOSYS
 }

@@ -1,5 +1,4 @@
 //go:build !nofuse
-// +build !nofuse
 
 package cgofuse
 
@@ -23,15 +22,12 @@ func MountFuse(fsys fs.FS, target string) (*Fuse, error) {
 	if err != nil {
 		return nil, err
 	}
-
+	// TODO: [review] what should we do if a filesystem is unidentified?
+	// expose self as a "Fuse-Go-FS" system or something?
 	var fsid filesystem.ID
-	// TODO: define this interface within [filesystem] pkg.
-	if idFS, ok := fsys.(interface {
-		ID() filesystem.ID
-	}); ok {
+	if idFS, ok := fsys.(filesystem.IDFS); ok {
 		fsid = idFS.ID()
 	}
-
 	return fuse, AttachToHost(fuse.FileSystemHost, fsid, target)
 }
 

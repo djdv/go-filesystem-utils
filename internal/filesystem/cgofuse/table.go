@@ -1,5 +1,4 @@
 //go:build !nofuse
-// +build !nofuse
 
 package cgofuse
 
@@ -10,6 +9,7 @@ import (
 	"math"
 	"sync"
 
+	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/winfsp/cgofuse/fuse"
 )
@@ -132,7 +132,7 @@ func (ft *fileTable) release(fh fileDescriptor) (errorCode errNo, err error) {
 			if errorCode == operationSuccess {
 				errorCode = -fuse.EBADF
 			}
-			err = errors.Join(err, rErr)
+			err = fserrors.Join(err, rErr)
 		}
 	}()
 	if err := file.goFile.Close(); err != nil {

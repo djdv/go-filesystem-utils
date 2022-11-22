@@ -1,3 +1,5 @@
+//go:build !nofuse
+
 package cgofuse
 
 import (
@@ -29,6 +31,21 @@ type (
 		position int64
 	}
 )
+
+func (gw *goWrapper) Mkdir(path string, mode uint32) int {
+	defer gw.systemLock.CreateOrDelete(path)()
+	if maker, ok := gw.FS.(filesystem.MakeDirectoryFS); ok {
+		goPath, err := fuseToGo(path)
+		if err != nil {
+			return interpretError(err)
+		}
+		if err := maker.MakeDirectory(goPath); err != nil {
+			return interpretError(err)
+		}
+		return operationSuccess
+	}
+	return -fuse.ENOSYS
+}
 
 func (gw *goWrapper) Opendir(path string) (int, uint64) {
 	defer gw.systemLock.Access(path)()
@@ -194,12 +211,32 @@ func (gw *goWrapper) rewinddir(stream *directoryStream, path string) int {
 	return operationSuccess
 }
 
+func (fs *goWrapper) Fsyncdir(path string, datasync bool, fh uint64) int {
+	fs.log.Printf("Fsyncdir {%X|%t}%q", fh, datasync, path)
+	return -fuse.ENOSYS
+}
+
 func (gw *goWrapper) Releasedir(path string, fh uint64) int {
 	errNo, err := gw.fileTable.release(fh)
 	if err != nil {
 		gw.log.Print(err)
 	}
 	return errNo
+}
+
+func (gw *goWrapper) Rmdir(path string) int {
+	defer gw.systemLock.CreateOrDelete(path)
+	if remover, ok := gw.FS.(filesystem.RemoveDirectoryFS); ok {
+		goPath, err := fuseToGo(path)
+		if err != nil {
+			return interpretError(err)
+		}
+		if err := remover.RemoveDirectory(goPath); err != nil {
+			return interpretError(err)
+		}
+		return operationSuccess
+	}
+	return -fuse.ENOSYS
 }
 
 func (ds *directoryStream) Close() (err error) {
@@ -212,10 +249,10 @@ func (ds *directoryStream) Close() (err error) {
 		err = errors.New("directory canceler is missing")
 	}
 	if dirFile := ds.ReadDirFile; dirFile != nil {
-		err = errors.Join(err, ds.ReadDirFile.Close())
+		err = fserrors.Join(err, ds.ReadDirFile.Close())
 		ds.ReadDirFile = nil
 	} else {
-		err = errors.Join(err, errors.New("directory interface is missing"))
+		err = fserrors.Join(err, errors.New("directory interface is missing"))
 	}
 	return err
 }
