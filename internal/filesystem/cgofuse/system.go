@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
+	"github.com/djdv/go-filesystem-utils/internal/filesystem/cgofuse/lock"
 	"github.com/u-root/uio/ulog"
 	"github.com/winfsp/cgofuse/fuse"
 )
@@ -17,7 +18,7 @@ const (
 
 type goWrapper struct {
 	*fileTable
-	systemLock operationsLock
+	systemLock lock.PathLocker
 	fs.FS
 	log ulog.Logger
 }
@@ -32,7 +33,6 @@ func (fs *goWrapper) Init() {
 	// so that the same system accessed from FUSE, 9P, Go, etc.
 	// can't collide.
 	fs.fileTable = newFileTable()
-	fs.systemLock = newOperationsLock()
 }
 
 func (fs *goWrapper) Destroy() {
