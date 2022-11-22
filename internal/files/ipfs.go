@@ -2,23 +2,16 @@ package files
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
-	"net"
-	"net/http"
 	"sync"
-	"time"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	"github.com/hugelgupf/p9/p9"
 	"github.com/hugelgupf/p9/perrors"
-	httpapi "github.com/ipfs/go-ipfs-http-client"
 	"github.com/multiformats/go-multiaddr"
-	madns "github.com/multiformats/go-multiaddr-dns"
-	manet "github.com/multiformats/go-multiaddr/net"
 )
 
 type (
@@ -210,60 +203,9 @@ func ipfsToGoFS(fsid filesystem.ID, ipfsMaddr multiaddr.Multiaddr) (fs.FS, error
 		return filesystem.NewKeyFS(client.Key(),
 			filesystem.WithIPNS[filesystem.KeyfsOption](ipns),
 		), nil
+	case filesystem.MFS:
+		return getMFSMountRoot(ipfsMaddr)
 	default:
 		return nil, fmt.Errorf("%s has no handler", fsid)
 	}
-}
-
-func ipfsClient(apiMaddr multiaddr.Multiaddr) (*httpapi.HttpApi, error) {
-	ctx, cancelFunc := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancelFunc()
-	resolvedMaddr, err := resolveMaddr(ctx, apiMaddr)
-	if err != nil {
-		return nil, err
-	}
-
-	// TODO: I think the upstream package needs a patch to handle this internally.
-	// we'll hack around it for now. Investigate later.
-	// (When trying to use a unix socket for the IPFS maddr
-	// the client returned from httpapi.NewAPI will complain on requests - forgot to copy the error lol)
-	network, dialHost, err := manet.DialArgs(resolvedMaddr)
-	if err != nil {
-		return nil, err
-	}
-	switch network {
-	default:
-		return httpapi.NewApi(resolvedMaddr)
-	case "unix":
-		// TODO: consider patching cmds-lib
-		// we want to use the URL scheme "http+unix"
-		// as-is, it prefixes the value to be parsed by pkg `url` as "http://http+unix://"
-		var (
-			clientHost = "http://file-system-socket" // TODO: const + needs real name/value
-			netDialer  = new(net.Dialer)
-		)
-		return httpapi.NewURLApiWithClient(clientHost, &http.Client{
-			Transport: &http.Transport{
-				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-					return netDialer.DialContext(ctx, network, dialHost)
-				},
-			},
-		})
-	}
-}
-
-func resolveMaddr(ctx context.Context, addr multiaddr.Multiaddr) (multiaddr.Multiaddr, error) {
-	ctx, cancelFunc := context.WithTimeout(ctx, 10*time.Second)
-	defer cancelFunc()
-
-	addrs, err := madns.DefaultResolver.Resolve(ctx, addr)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(addrs) == 0 {
-		return nil, errors.New("non-resolvable API endpoint")
-	}
-
-	return addrs[0], nil
 }
