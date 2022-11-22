@@ -16,21 +16,25 @@ func (fs *goWrapper) Access(path string, mask uint32) int {
 
 func (fs *goWrapper) Setxattr(path, name string, value []byte, flags int) int {
 	fs.log.Printf("Setxattr {%X|%s|%d}%q", flags, name, len(value), path)
+	defer fs.systemLock.Modify(path)()
 	return -fuselib.ENOSYS
 }
 
 func (fs *goWrapper) Getxattr(path, name string) (int, []byte) {
 	fs.log.Printf("Getxattr {%s}%q", name, path)
+	defer fs.systemLock.Access(path)()
 	return -fuselib.ENOSYS, nil
 }
 
 func (fs *goWrapper) Removexattr(path, name string) int {
 	fs.log.Printf("Removexattr {%s}%q", name, path)
+	defer fs.systemLock.Modify(path)()
 	return -fuselib.ENOSYS
 }
 
 func (fs *goWrapper) Listxattr(path string, fill func(name string) bool) int {
 	fs.log.Printf("Listxattr %q", path)
+	defer fs.systemLock.Access(path)()
 	return -fuselib.ENOSYS
 }
 
@@ -38,16 +42,19 @@ func (fs *goWrapper) Listxattr(path string, fill func(name string) bool) int {
 
 func (fs *goWrapper) Chmod(path string, mode uint32) int {
 	fs.log.Printf("Chmod {%X}%q", mode, path)
+	defer fs.systemLock.Modify(path)()
 	return -fuselib.ENOSYS
 }
 
 func (fs *goWrapper) Chown(path string, uid, gid uint32) int {
 	fs.log.Printf("Chown {%d|%d}%q", uid, gid, path)
+	defer fs.systemLock.Modify(path)()
 	return -fuselib.ENOSYS
 }
 
 func (fs *goWrapper) Utimens(path string, tmsp []fuselib.Timespec) int {
 	fs.log.Printf("Utimens {%v}%q", tmsp, path)
+	defer fs.systemLock.Modify(path)()
 	return -fuselib.ENOSYS
 }
 
