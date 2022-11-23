@@ -54,38 +54,44 @@ func (lm pathLockerMap) upsert(path string) *pathLockReference {
 	return lock
 }
 
-// TODO: [Ame] Does this English and notation make sense? Could it be more succinct?
-//
 // componentIndex returns indices that can be used
 // to retrieve components of a slash delimited string.
 //
 // The initial delimiter and final component are included.
 //
-// E.g. path `"/a/b/c"` produces indices `[]int{1, 2, 3, 6}`
-// path[:indices[0]] == "/"
-// path[:indices[1]] == "/a"
-// path[:indices[2]] == "/a/"
-// path[:indices[3]] == "/a/b/c"
+// E.g. path `"/a/b/c"` produces indices `[]int{1, 2, 4, 6}`
+//
+//	path[:indices[0]] == "/"
+//	path[:indices[1]] == "/a"
+//	path[:indices[2]] == "/a/b"
+//	path[:indices[3]] == "/a/b/c"
 func componentIndex(path string) []int {
 	const (
-		delimiter         = '/'
 		delimiterNotFound = -1
-		indexAlloc        = 8 // Arbitrary non-0 allocation hint.
+		delimiterByte     = '/'
+		delimiterString   = string(delimiterByte)
+		delimiterLength   = len(delimiterString)
 	)
 	var (
-		fullPath       = len(path)
-		componentIndex = make([]int, 0, indexAlloc)
-		componentEnd   = 1 // Always include the initial delimiter (if present).
+		fullPath          = len(path)
+		slashCount        = strings.Count(path, delimiterString)
+		componentIndicies = make([]int, slashCount+1)
+		cursor            int
 	)
-	for {
-		slashIndex := strings.IndexRune(path, delimiter)
-		if slashIndex == delimiterNotFound {
-			componentIndex = append(componentIndex, fullPath)
-			return componentIndex
+	for i := 0; ; i++ {
+		delimiterIndex := strings.IndexByte(path, delimiterByte)
+		if delimiterIndex == delimiterNotFound {
+			componentIndicies[len(componentIndicies)-1] = fullPath
+			return componentIndicies
 		}
-		componentEnd += slashIndex
-		componentIndex = append(componentIndex, componentEnd)
-		path = path[slashIndex+1:]
+		offset := delimiterIndex + delimiterLength
+		cursor += offset
+		path = path[offset:]
+		if i == 0 { // Special case to include the root delimiter.
+			componentIndicies[i] = cursor
+		} else {
+			componentIndicies[i] = cursor - 1
+		}
 	}
 }
 
