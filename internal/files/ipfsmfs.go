@@ -59,8 +59,7 @@ func getMFSMountRoot(ipfsAPIMultiaddr multiaddr.Multiaddr) (fs.FS, error) {
 	if err != nil {
 		return nil, err
 	}
-	// TODO: no global context; port wart
-	return filesystem.NewMFS(context.TODO(), mroot), nil
+	return filesystem.NewMFS(mroot), nil
 }
 
 func mfsPublisher(mountDirName string, oldShell *oldapi.Shell) mfs.PubFunc {

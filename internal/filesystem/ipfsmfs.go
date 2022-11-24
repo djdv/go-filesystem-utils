@@ -6,98 +6,83 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"os"
 	"path"
-	"runtime"
+	"reflect"
 	"time"
+	"unsafe"
 
 	// TODO: migrate to new standard
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/ipfs/go-cid"
+	ipld "github.com/ipfs/go-ipld-format"
 	dag "github.com/ipfs/go-merkledag"
 	"github.com/ipfs/go-mfs"
 	"github.com/ipfs/go-unixfs"
+	uio "github.com/ipfs/go-unixfs/io"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 )
 
+// TODO: move this to a test file
+var _ IDFS = (*IPFSMFS)(nil)
+
+// TODO: _ StreamDirFile = (*mfsDirectory)(nil)
+
 type (
-	mfsInterface struct {
+	IPFSMFS struct {
 		creationTime time.Time
-		ctx          context.Context
 		mroot        *mfs.Root
 	}
 	mfsDirectory struct {
-		ctx    context.Context
-		cancel context.CancelFunc
-		stat   rootStat
-		mfsDir *mfs.Directory
-		nodes  []mfs.NodeListing
-	}
-	mfsDirEntry struct {
-		creationTime time.Time
-		node         mfs.NodeListing
-	}
-	entryStat struct {
-		creationTime time.Time
-		node         mfs.NodeListing
+		ctx     context.Context
+		cancel  context.CancelFunc
+		listing <-chan unixfs.LinkResult
+		mfsDir  *mfs.Directory
+		stat    *staticStat
 	}
 	mfsFile struct {
-		f    mfs.FileDescriptor
-		stat *mfsStat
+		descriptor mfs.FileDescriptor
+		stat       *mfsStat
 	}
 	mfsStat struct {
-		creationTime time.Time
-		size         func() (int64, error)
-		name         string // TODO: make sure this is updated in a .rename method on the file
-		mode         fs.FileMode
+		sizeFn func() (int64, error)
+		staticStat
 	}
 )
 
-// TODO: this should probably not be exported; here for testing purposes
-/*
-func NewRoot(ctx context.Context, core coreiface.CoreAPI) (*mfs.Root, error) {
-	return CidToMFSRoot(ctx, unixfs.EmptyDirNode().Cid(), core, nil)
+func NewMFS(mroot *mfs.Root) fs.FS {
+	return &IPFSMFS{
+		creationTime: time.Now(), // TODO: take in metadata from options.
+		mroot:        mroot,
+	}
 }
-*/
 
 // TODO: we should probably not export this, and instead use options on the NewInterface constructor
 // E.g. `WithMFSRoot(mroot)`, `WithCID(cid)`, or none which uses an empty directory by default.
-func CidToMFSRoot(ctx context.Context, rootCid cid.Cid, core coreiface.CoreAPI, publish mfs.PubFunc) (*mfs.Root, error) {
-	if !rootCid.Defined() {
-		return nil, errors.New("root cid was not defined")
+// (unixfs.EmptyDirNode().Cid())
+func CidToMFSRoot(ctx context.Context, root cid.Cid, core coreiface.CoreAPI, publish mfs.PubFunc) (*mfs.Root, error) {
+	if !root.Defined() {
+		return nil, errors.New("root CID was not defined")
 	}
-	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second) // TODO: const timeout
 	defer cancel()
-	ipldNode, err := core.Dag().Get(callCtx, rootCid)
+	ipldNode, err := core.Dag().Get(callCtx, root)
 	if err != nil {
 		return nil, err
 	}
 	pbNode, ok := ipldNode.(*dag.ProtoNode)
 	if !ok {
-		return nil, fmt.Errorf("%q has incompatible type %T", rootCid.String(), ipldNode)
+		return nil, fmt.Errorf("%q has incompatible type %T", root.String(), ipldNode)
 	}
-
 	return mfs.NewRoot(ctx, core.Dag(), pbNode, publish)
 }
 
-func NewMFS(ctx context.Context, mroot *mfs.Root) fs.FS {
-	if mroot == nil {
-		panic(fmt.Errorf("MFS root was not provided"))
-	}
-	return &mfsInterface{
-		ctx:          ctx,
-		mroot:        mroot,
-		creationTime: time.Now(),
-	}
-}
+func (mi *IPFSMFS) ID() ID       { return MFS }
+func (mi *IPFSMFS) Close() error { return mi.mroot.Close() }
 
-func (mi *mfsInterface) ID() ID       { return MFS }
-func (mi *mfsInterface) Close() error { return mi.mroot.Close() }
-
-// TODO move this
-func (mi *mfsInterface) Rename(oldName, newName string) error {
+/* TODO
+func (mi *IPFSMFS) Rename(oldName, newName string) error {
 	const op fserrors.Op = "mfs.Rename"
 	if err := mfs.Mv(mi.mroot, oldName, newName); err != nil {
 		return fserrors.New(op,
@@ -107,180 +92,254 @@ func (mi *mfsInterface) Rename(oldName, newName string) error {
 	}
 	return nil
 }
+*/
 
-func (mi *mfsInterface) Open(name string) (fs.File, error) {
-	const op fserrors.Op = "mfs.Open"
+func (mi *IPFSMFS) Open(name string) (fs.File, error) {
 	if name == rootName {
-		return mi.OpenDir(name)
+		return mi.openRoot()
 	}
+	mfsNode, err := mi.openNode(name)
+	if err != nil {
+		return nil, &fs.PathError{
+			Op:   "open",
+			Path: name,
+			Err:  err,
+		}
+	}
+	var file fs.File
+	if mfsNode.Type() == mfs.TFile {
+		file, err = mi.openFileNode(name, mfsNode, os.O_RDONLY)
+	} else {
+		file, err = mi.openDirNode(name, mfsNode)
+	}
+	if err != nil {
+		return nil, &fs.PathError{
+			Op:   "open",
+			Path: name,
+			Err:  err,
+		}
+	}
+	return file, nil
+}
 
+func (mi *IPFSMFS) openNode(name string) (mfs.FSNode, error) {
+	const op fserrors.Op = "mfs.openNode"
 	if !fs.ValidPath(name) {
-		// TODO: [pkg-wide] We're supposed to return fs.PathErrors in these functions.
-		// We'll have to embedd these into them and then unwrap them where we expect them.
-		// (ourErrToPOSIXErrno, etc.)
-		return nil, fserrors.New(op,
-			fserrors.Path(name),
-			fserrors.InvalidItem,
-		)
+		return nil, fserrors.New(op, fserrors.InvalidItem) // TODO: convert old-style errors.
 	}
 
 	mfsNode, err := mfs.Lookup(mi.mroot, path.Join("/", name))
 	if err != nil {
+		var errKind fserrors.Kind
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fserrors.New(op,
-				fserrors.Path(name),
-				fserrors.NotExist,
-			)
-		}
-		log.Println("hit1:", path.Join("/", name))
-		log.Println("dumping callstack")
-		var i int
-		for {
-			pc, fn, line, ok := runtime.Caller(i)
-			if !ok {
-				break
-			}
-			log.Printf("/!\\ [sf{%d}] %s[%s:%d]\n", i, runtime.FuncForPC(pc).Name(), fn, line)
-			i++
+			errKind = fserrors.NotExist
+		} else {
+			errKind = fserrors.Permission // TODO: EIO? Something else?
 		}
 		return nil, fserrors.New(op,
 			fserrors.Path(name),
-			fserrors.Permission,
+			errKind,
 		)
 	}
-
-	switch mfsIntf := mfsNode.(type) {
-	case *mfs.File:
-		flags := mfs.Flags{Read: true}
-		mfsFileIntf, err := mfsIntf.Open(flags)
-		if err != nil {
-			log.Println("hit2:", path.Join("/", name))
-			log.Println("dumping callstack")
-			var i int
-			for {
-				pc, fn, line, ok := runtime.Caller(i)
-				if !ok {
-					break
-				}
-				log.Printf("/!\\ [sf{%d}] %s[%s:%d]\n", i, runtime.FuncForPC(pc).Name(), fn, line)
-				i++
-			}
-			return nil, fserrors.New(op,
-				fserrors.Path(name),
-				fserrors.Permission,
-			)
-		}
-		mStat := &mfsStat{
-			creationTime: mi.creationTime,
-			name:         path.Base(name),
-			mode:         fs.FileMode(0),
-			size:         mfsFileIntf.Size,
-		}
-
-		return &mfsFile{f: mfsFileIntf, stat: mStat}, nil
-
-	case *mfs.Directory:
-		// TODO: split up opendir and call that here
-		// e.g. mi.openDir(mfsNode) or something more optimal than full reparse
-		return mi.OpenDir(name)
-
-	default:
-		log.Println("hit3:", path.Join("/", name))
-		log.Println("dumping callstack")
-		var i int
-		for {
-			pc, fn, line, ok := runtime.Caller(i)
-			if !ok {
-				break
-			}
-			log.Printf("/!\\ [sf{%d}] %s[%s:%d]\n", i, runtime.FuncForPC(pc).Name(), fn, line)
-			i++
-		}
-		return nil, fserrors.New(op,
-			fserrors.Path(name),
-			fserrors.Permission,
-		)
-	}
+	return mfsNode, nil
 }
 
-func (md *mfsDirectory) Stat() (fs.FileInfo, error) { return &md.stat, nil }
+func (mi *IPFSMFS) openFileNode(name string, mfsNode mfs.FSNode, flag int) (fs.File, error) {
+	mfsFileIntf, ok := mfsNode.(*mfs.File)
+	if !ok {
+		// TODO: error value.
+		// What if this node is a link or something else.
+		return nil, fserrors.New(fserrors.IsDir) // TODO: convert old-style errors.
+	}
+	var mfsFlags mfs.Flags
+	switch {
+	case flag&os.O_WRONLY != 0:
+		mfsFlags.Write = true
+		mfsFlags.Sync = true
+	case flag&os.O_RDWR != 0:
+		mfsFlags.Read = true
+		mfsFlags.Write = true
+		mfsFlags.Sync = true
+	default:
+		mfsFlags.Read = true
+	}
+	descriptor, err := mfsFileIntf.Open(mfsFlags)
+	if err != nil {
+		return nil, fserrors.New(fserrors.Permission)
+	}
+	return &mfsFile{
+		descriptor: descriptor,
+		stat: &mfsStat{ // TODO: retrieve metadata from node if present; timestamps from constructor otherwise.
+			sizeFn: mfsFileIntf.Size,
+			staticStat: staticStat{
+				name:    path.Base(name),
+				mode:    s_IRXA, // TODO: perms
+				modTime: time.Now(),
+			},
+		},
+	}, nil
+}
+
+func (mi *IPFSMFS) OpenFile(name string, flag int, perm fs.FileMode) (fs.File, error) {
+	const op fserrors.Op = "mfs.OpenFile"
+	if name == rootName {
+		return nil, &fs.PathError{
+			Op:   "open", // TODO: is this right for extensions?
+			Path: name,
+			Err:  fserrors.New(op, fserrors.IsDir), // TODO: convert old-style errors.
+		}
+	}
+	mfsNode, err := mi.openNode(name)
+	if err != nil {
+		return nil, &fs.PathError{
+			Op:   "open", // TODO: is this right for extensions?
+			Path: name,
+			Err:  err,
+		}
+	}
+	file, err := mi.openFileNode(name, mfsNode, flag)
+	if err != nil {
+		return nil, &fs.PathError{
+			Op:   "open", // TODO: is this right for extensions?
+			Path: name,
+			Err:  fserrors.New(op, fserrors.IsDir), // TODO: convert old-style errors.
+		}
+	}
+	return file, nil
+}
+
+func (mi *IPFSMFS) openRoot() (fs.File, error) {
+	mfsNode, err := mfs.Lookup(mi.mroot, "/")
+	if err != nil {
+		return nil, err
+	}
+	return mi.openDirNode("/", mfsNode)
+}
+
+func (mi *IPFSMFS) openDirNode(name string, mfsNode mfs.FSNode) (fs.ReadDirFile, error) {
+	const op fserrors.Op = "mfs.openDirNode"
+	mfsDir, isDir := mfsNode.(*mfs.Directory)
+	if !isDir {
+		return nil, fserrors.New(fserrors.NotDir) // TODO: convert old-style errors.
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &mfsDirectory{
+		ctx: ctx, cancel: cancel,
+		listing: _hackListAsync(ctx, mfsDir),
+		mfsDir:  mfsDir,
+		stat: &staticStat{ // TODO: retrieve metadata from node if present; timestamps from constructor otherwise.
+			name:    path.Base(name),
+			mode:    fs.ModeDir | s_IRXA, // TODO: perms
+			modTime: time.Now(),
+		},
+	}, nil
+}
+
+func _hackListAsync(ctx context.Context, mfsDir *mfs.Directory) <-chan unixfs.LinkResult {
+	// TODO: we need to fork the mfs lib to expose [mfsDir.ListAsync()] formally.
+	// Our old hack was to reconstruct a uio.Directory from mfsdir.GetNode + dagservice.
+	// But that is extremely roundabout when that interface is already in our stack.
+	var ( // HACK: Politely ask the runtime to let us read private data.
+		field = reflect.ValueOf(mfsDir).Elem().
+			FieldByName("unixfsDir")
+		srcAddr = unsafe.Pointer(field.UnsafeAddr())
+		hax     = reflect.NewAt(field.Type(), srcAddr).Elem()
+	)
+	return hax.Interface().(uio.Directory).EnumLinksAsync(ctx)
+}
+
+// func (md *mfsDirectory) Stat() (fs.FileInfo, error) { return &md.stat, nil }
+func (md *mfsDirectory) Stat() (fs.FileInfo, error) { return md.stat, nil }
 
 func (*mfsDirectory) Read([]byte) (int, error) {
 	const op fserrors.Op = "mfsDirectory.Read"
 	return -1, fserrors.New(op, fserrors.IsDir)
 }
 
-func (mi *mfsInterface) OpenDir(name string) (fs.ReadDirFile, error) {
-	const op fserrors.Op = "mfs.OpenDir"
-	var (
-		mfsNode mfs.FSNode
-		err     error
-	)
-	if name == rootName {
-		mfsNode, err = mfs.Lookup(mi.mroot, "/")
-	} else {
-		mfsNode, err = mfs.Lookup(mi.mroot, path.Join("/", name))
-	}
-	if err != nil {
-		return nil, fserrors.New(op,
-			fserrors.Path(name),
-			err,
-		)
-	}
-
-	mfsDir, isDir := mfsNode.(*mfs.Directory)
-	if !isDir {
-		return nil, fserrors.New(op,
-			fserrors.Path(name),
-			fmt.Errorf("type %v != %v (directory)",
-				mfsNode.Type(),
-				mfs.TDir),
-			fserrors.NotDir,
-		)
-	}
-
-	ctx, cancel := context.WithCancel(mi.ctx)
-	return &mfsDirectory{
-		ctx: ctx, cancel: cancel,
-		// stat:   (*rootStat)(&mi.creationTime),
-		stat:   newRootStat(s_IRWXA), // TODO: permissions from caller.
-		mfsDir: mfsDir,
-	}, nil
-}
-
 func (md *mfsDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	const op fserrors.Op = "mfsDirectory.ReadDir"
 	var (
-		nodes     = md.nodes
-		returnAll = count <= 0
+		ctx     = md.ctx
+		listing = md.listing
+		parent  = md.mfsDir
 	)
-	if nodes == nil {
-		// TODO: this should only happen in Open?
-		listings, err := md.mfsDir.List(md.ctx)
-		if err != nil {
-			return nil, fserrors.New(op, err) // TODO we could probably add more context
-		}
-		nodes = listings
-		md.nodes = nodes
+	if ctx == nil ||
+		listing == nil ||
+		parent == nil {
+		return nil, fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
 	}
 
-	// FIXME: offset will likely be wrong; quick port
-	entries := make([]fs.DirEntry, generic.Min(count, len(nodes)))
-	for _, node := range nodes {
-		if count <= 0 {
-			if returnAll {
-				return entries, nil
+	const upperBound = 64
+	var (
+		entries   = make([]fs.DirEntry, 0, generic.Min(count, upperBound))
+		returnAll = count <= 0
+	)
+	for {
+		select {
+		case <-ctx.Done():
+			return entries, ctx.Err()
+		case link, ok := <-listing:
+			if !ok {
+				var err error
+				if !returnAll {
+					err = io.EOF
+				}
+				return entries, err
 			}
-			return entries, io.EOF
+			if err := link.Err; err != nil {
+				return entries, err
+			}
+			entry, err := translateUFSLinkEntry(parent, link.Link)
+			if err != nil {
+				return entries, err
+			}
+			entries = append(entries, entry)
+			if !returnAll {
+				if count--; count == 0 {
+					return entries, nil
+				}
+			}
 		}
-		entries = append(entries, &mfsDirEntry{
-			node: node,
-			// creationTime: *(*time.Time)(md.stat),
-			// TODO: ^ stubbed
-		})
 	}
-	return nil, nil // TODO: standard compliance check; quick port
-	// return gofs.ReadDir(count, entries)
+}
+
+func translateUFSLinkEntry(parent *mfs.Directory, link *ipld.Link) (fs.DirEntry, error) {
+	name := link.Name
+	child, err := parent.Child(name)
+	if err != nil {
+		return nil, err
+	}
+	/*
+		TODO: Symlinks are not currently supported by go-mfs / the IPFS Files API.
+		But we used to support them in our mount logic and encountered no problems.
+		We'll have to port over the code for special file types.
+		ipldNode, _ := mfsNode.GetNode()
+		ufsNode, _ := unixfs.ExtractFSNode(ipldNode)
+		nodeType := ufsNode.Type()
+		if nodeType == unixfs.TSymlink {
+			typ = fs.ModeSymlink
+		}
+	*/
+	const permissions = s_IRXA // TODO: perms from caller or node if present.
+	var (
+		mode fs.FileMode
+		size int64
+	)
+	if child.Type() == mfs.TDir {
+		mode |= fs.ModeDir
+	} else {
+		if file, ok := child.(*mfs.File); ok {
+			if size, err = file.Size(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return &staticStat{
+		name:    name,
+		size:    size,
+		mode:    mode | permissions,
+		modTime: time.Now(), // TODO: time from somewhere else
+	}, nil
 }
 
 func (md *mfsDirectory) Close() error {
@@ -296,133 +355,22 @@ func (md *mfsDirectory) Close() error {
 	)
 }
 
-func (me *mfsDirEntry) Name() string { return me.node.Name }
-
-func (me *mfsDirEntry) Info() (fs.FileInfo, error) {
-	return &entryStat{node: me.node, creationTime: me.creationTime}, nil
-}
-
-func (me *mfsDirEntry) Type() fs.FileMode {
-	info, err := me.Info()
-	if err != nil {
-		return fs.ModeIrregular
-	}
-	return info.Mode() & fs.ModeType
-}
-
-func (me *mfsDirEntry) IsDir() bool { return me.Type()&fs.ModeDir != 0 }
-
-func (es *entryStat) Name() string       { return es.node.Name }
-func (es *entryStat) Size() int64        { return es.node.Size }
-func (es *entryStat) ModTime() time.Time { return es.creationTime }
-func (es *entryStat) IsDir() bool        { return es.Mode().IsDir() } // [spec] Don't hardcode this.
-func (es *entryStat) Sys() interface{}   { return es }
-
-func (es *entryStat) Mode() fs.FileMode {
-	// TODO: we should just stat the full node up front
-	// mfs ents don't give us enough information about the type here
-	switch mfs.NodeType(es.node.Type) {
-	case mfs.TFile:
-		return fs.FileMode(0)
-	case mfs.TDir:
-		return fs.ModeDir
-	default:
-		return fs.ModeIrregular
-	}
-}
+func (ms *mfsStat) Size() int64 { s, _ := ms.sizeFn(); return s }
 
 func (mio *mfsFile) Read(buff []byte) (int, error) {
-	return mio.f.Read(buff)
+	return mio.descriptor.Read(buff)
 }
-func (mio *mfsFile) Write(buff []byte) (int, error) { return mio.f.Write(buff) }
-func (mio *mfsFile) Truncate(size uint64) error     { return mio.f.Truncate(int64(size)) }
-func (mio *mfsFile) Close() error                   { return mio.f.Close() }
+func (mio *mfsFile) Write(buff []byte) (int, error) { return mio.descriptor.Write(buff) }
+func (mio *mfsFile) Truncate(size uint64) error     { return mio.descriptor.Truncate(int64(size)) }
+func (mio *mfsFile) Close() error                   { return mio.descriptor.Close() }
 func (mio *mfsFile) Seek(offset int64, whence int) (int64, error) {
-	return mio.f.Seek(offset, whence)
+	return mio.descriptor.Seek(offset, whence)
 }
 
 func (mio *mfsFile) Stat() (fs.FileInfo, error) { return mio.stat, nil }
 
-func (ms *mfsStat) Name() string { return ms.name }
-func (ms *mfsStat) Size() int64 {
-	if ms.IsDir() {
-		return 0
-	}
-	size, err := ms.size()
-	if err != nil {
-		panic(err) // TODO: we should log this instead and return 0
-	}
-	return size
-}
-func (ms *mfsStat) Mode() fs.FileMode  { return ms.mode }
-func (ms *mfsStat) ModTime() time.Time { return ms.creationTime }
-func (ms *mfsStat) IsDir() bool        { return ms.Mode().IsDir() } // [spec] Don't hardcode this.
-func (ms *mfsStat) Sys() interface{}   { return ms }
-
-/*
-func (mi *mfsInterface) Stat(name string) (fs.FileInfo, error) {
-	const op fserrors.Op = "mfs.Stat"
-	if name == rootName {
-		// return (*rootStat)(&mi.creationTime), nil
-		// return mi.rootStat
-		panic("NIY") // FIXME
-	}
-
-	// TODO: is there a direct way to do this?
-	mfsNode, err := mfs.Lookup(mi.mroot, path.Join("/", name))
-	if err != nil {
-		return nil, fserrors.New(op, err) // TODO: context
-	}
-	ipldNode, err := mfsNode.GetNode()
-	if err != nil {
-		return nil, fserrors.New(op, err) // TODO: context
-	}
-	ufsNode, err := unixfs.ExtractFSNode(ipldNode)
-	if err != nil {
-		return nil, fserrors.New(op, err) // TODO: context
-	}
-
-	var typ fs.FileMode
-	switch mfsNode.Type() {
-	case mfs.TFile:
-		typ = fs.FileMode(0)
-	case mfs.TDir:
-		typ = fs.ModeDir
-	default:
-		// Symlinks are not natively supported by MFS / the Files API
-		// (But we'll support them)
-		nodeType := ufsNode.Type()
-		if nodeType == unixfs.TSymlink {
-			typ = fs.ModeSymlink
-			break
-		}
-		typ = fs.ModeIrregular
-	}
-	return &ipldStat{
-		name:         path.Base(name),
-		size:         int64(ufsNode.FileSize()),
-		typ:          typ,
-		creationTime: mi.creationTime,
-	}, nil
-}
-*/
-
-type ipldStat struct {
-	name         string
-	size         int64
-	typ          fs.FileMode
-	creationTime time.Time
-}
-
-func (is *ipldStat) Name() string       { return is.name }
-func (is *ipldStat) Size() int64        { return is.size }
-func (is *ipldStat) Mode() fs.FileMode  { return is.typ }
-func (is *ipldStat) ModTime() time.Time { return is.creationTime }
-func (is *ipldStat) IsDir() bool        { return is.Mode().IsDir() } // [spec] Don't hardcode this.
-func (is *ipldStat) Sys() interface{}   { return is }
-
 // TODO: quick ports below.
-func (mi *mfsInterface) Make(name string) error {
+func (mi *IPFSMFS) Make(name string) error {
 	parentPath, childName := path.Split(name)
 	parentNode, err := mfs.Lookup(mi.mroot, parentPath)
 	if err != nil {
@@ -449,28 +397,17 @@ func (mi *mfsInterface) Make(name string) error {
 	return nil
 }
 
-func (mi *mfsInterface) MakeDirectory(path string) error {
+func (mi *IPFSMFS) MakeDirectory(path string) error {
 	if err := mfs.Mkdir(mi.mroot, path, mfs.MkdirOpts{Flush: true}); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return fserrors.New(fserrors.Exist)
-		}
-		log.Println("hit4:", path)
-		log.Println("dumping callstack")
-		var i int
-		for {
-			pc, fn, line, ok := runtime.Caller(i)
-			if !ok {
-				break
-			}
-			log.Printf("/!\\ [sf{%d}] %s[%s:%d]\n", i, runtime.FuncForPC(pc).Name(), fn, line)
-			i++
 		}
 		return fserrors.New(fserrors.Permission)
 	}
 	return nil
 }
 
-func (mi *mfsInterface) MakeLink(name, linkTarget string) error {
+func (mi *IPFSMFS) MakeLink(name, linkTarget string) error {
 	parentPath, linkName := path.Split(name)
 	parentNode, err := mfs.Lookup(mi.mroot, parentPath)
 	if err != nil {
