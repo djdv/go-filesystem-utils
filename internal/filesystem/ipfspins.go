@@ -12,8 +12,12 @@ import (
 	coreoptions "github.com/ipfs/interface-go-ipfs-core/options"
 )
 
-// TODO: move this to a test file
-var _ StreamDirFile = (*pinStream)(nil)
+var ( // TODO: move this to a test file
+	_ IDFS          = (*IPFSPinAPI)(nil)
+	_ StreamDirFile = (*pinStream)(nil)
+	// TODO:
+	// _ POSIXInfo     = (*pinDirEntry)(nil)
+)
 
 type (
 	IPFSPinAPI struct {
