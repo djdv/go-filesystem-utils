@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"time"
 )
 
@@ -16,6 +17,11 @@ type (
 	IDFS interface {
 		fs.FS
 		ID() ID
+	}
+	// TODO: better name; OpenPOSIXFile?
+	OpenFileFS interface {
+		fs.FS
+		OpenFile(name string, flag int, perm fs.FileMode) (fs.File, error)
 	}
 	MakeFileFS interface {
 		fs.FS
@@ -104,6 +110,16 @@ type (
 		StreamDir(ctx context.Context) <-chan DirStreamEntry
 	}
 )
+
+func OpenFile(fsys fs.FS, name string, flag int, perm os.FileMode) (fs.File, error) {
+	if fsys, ok := fsys.(OpenFileFS); ok {
+		return fsys.OpenFile(name, flag, perm)
+	}
+	if flag == os.O_RDONLY {
+		return fsys.Open(name)
+	}
+	return nil, fmt.Errorf("open %s: operation not supported", name)
+}
 
 func StreamDir(ctx context.Context, directory fs.ReadDirFile) <-chan DirStreamEntry {
 	if dirStreamer, ok := directory.(StreamDirFile); ok {
