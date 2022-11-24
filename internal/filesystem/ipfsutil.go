@@ -9,67 +9,31 @@ import (
 	"github.com/ipfs/go-cid"
 	ipld "github.com/ipfs/go-ipld-format" // TODO: migrate to new standard
 	dag "github.com/ipfs/go-merkledag"
-	gopath "github.com/ipfs/go-path"
+	ipfspath "github.com/ipfs/go-path"
 	"github.com/ipfs/go-unixfs"
 	unixpb "github.com/ipfs/go-unixfs/pb"
 	corepath "github.com/ipfs/interface-go-ipfs-core/path"
 )
 
-func goToIPFSCore(fsid ID, goPath string) corepath.Path {
-	dbgErrPath := func(err error) corepath.Path {
-		// FIXME: sig needs to return errs
-		// TODO: debug path value; we should return this err instead.
-		return corepath.New(
-			path.Join("/",
-				goPath, err.Error(),
-			))
+func goToIPFSCore(fsid ID, goPath string) (corepath.Path, error) {
+	var (
+		namespace    = strings.ToLower(fsid.String()) // "ipfs", "ipns", ...
+		prefix       = path.Join("/", namespace)
+		components   = strings.Split(goPath, "/")
+		cidString    = components[0]
+		rootCID, err = cid.Decode(cidString)
+	)
+	if err != nil {
+		return nil, err
 	}
 	var (
-		pathComponents = strings.Split(goPath, "/")
-		cidStr         = pathComponents[0]
+		absoluteCID = path.Join(prefix, cidString)
+		cidPath     = ipfspath.Path(absoluteCID)
+		resolvedCID = corepath.NewResolvedPath(cidPath, rootCID, rootCID, "")
+		remainder   = components[1:]
 	)
-	rootCID, err := cid.Decode(cidStr)
-	if err != nil {
-		return dbgErrPath(err)
-	}
-
-	pathPrefix := path.Join("/",
-		strings.ToLower(fsid.String()), // "ipfs", "ipns", ...
-	)
-
-	if rootCID.Version() >= 1 {
-		return corepath.New(path.Join(pathPrefix, goPath))
-	}
-
-	rootCID = upgradeCid(rootCID)
-	return corepath.Join(corepath.NewResolvedPath(
-		gopath.Path(path.Join(
-			pathPrefix,
-			rootCID.String(),
-		)),
-		rootCID, rootCID, ""),
-		pathComponents[1:]...,
-	)
-
-	/*
-		newRoot := gopath.Path(path.Join(
-			"/",
-			strings.ToLower(fsid.String()), // "ipfs", "ipns", ...
-			rootCID.String(),
-		))
-		return corepath.Join(newRoot, pathComponents[1:]...)
-	*/
-	/*
-		return corepath.New(
-			path.Join("/",
-				strings.ToLower(fsid.String()), // "ipfs", "ipns", ...
-				goPath,
-			),
-		)
-	*/
+	return corepath.Join(resolvedCID, remainder...), nil
 }
-
-func upgradeCid(c cid.Cid) cid.Cid { return cid.NewCidV1(c.Type(), c.Hash()) }
 
 func statNode(name string, modtime time.Time, permissions fs.FileMode,
 	ipldNode ipld.Node,
