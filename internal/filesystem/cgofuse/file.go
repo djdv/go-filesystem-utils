@@ -18,8 +18,14 @@ func (gw *goWrapper) Create(path string, flags int, mode uint32) (int, uint64) {
 
 	// TODO: why is fuselib passing us flags and what are they?
 	// both FUSE and SUS predefine what they should be (to Open)
+	// ^ this is likely the filtering process.
+	// syscall `open` with flags `O_CREAT` will (likely) be defered to us
+	// where flags are whatever they were in the call to `open`
+	// except with `O_CREAT` masked out.
+	// This needs a C test to verify.
 	gw.log.Printf("Create - {%X|%X}%q", flags, mode, path)
-	return gw.Open(path, fuse.O_WRONLY|fuse.O_CREAT|fuse.O_TRUNC)
+	return gw.Open(path, flags)
+	// return gw.Open(path, fuse.O_WRONLY|fuse.O_CREAT|fuse.O_TRUNC)
 
 	// disabled until we parse relevant flags in open
 	// fuse will do shenanigans to make this work
@@ -59,6 +65,7 @@ func (gw *goWrapper) Truncate(path string, size int64, fh uint64) int {
 			// hb.log.Print(err)
 			return interpretError(err)
 		}
+		// TODO: call OpenFile with truncate flag.
 		goFile, err := gw.FS.Open(goPath)
 		if err != nil {
 			// gw.log.Error(err)
@@ -122,9 +129,16 @@ func (gw *goWrapper) Open(path string, flags int) (int, uint64) {
 		return interpretError(err), errorHandle
 	}
 
-	// TODO: port flags and use OpenFile
-	// file, err := fs.goFs.Open(path, ioFlagsFromFuse(flags))
-	file, err := gw.FS.Open(goPath)
+	// file, err := gw.FS.Open(goPath)
+	// TODO: [S&P] double check compliance.
+	// a correct FUSE implementation should never pass `O_CREAT` to `open`
+	// this is a deviation from POSIX `open`.
+	// Thus the permission value /should/ always go unused in Go's `OpenFile`.
+	// We need C tests to validate that syscall `open` with these flags
+	// does not actually call us. (It likely gets defered to [Create] by fuse)
+	const permissions = 0
+	goFlags := goFlagsFromFuse(flags)
+	file, err := filesystem.OpenFile(gw.FS, goPath, goFlags, permissions)
 	if err != nil {
 		gw.log.Print(err)
 		return interpretError(err), errorHandle

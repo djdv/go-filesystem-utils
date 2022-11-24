@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"runtime"
 
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
@@ -78,6 +79,32 @@ func goToFuseFileType(m fs.FileMode) fileType {
 	default:
 		return 0
 	}
+}
+
+// TODO: better names
+func goFlagsFromFuse(fuseFlags int) int {
+	var goFlags int
+	switch fuseFlags & fuse.O_ACCMODE {
+	case fuse.O_RDONLY:
+		goFlags = os.O_RDONLY
+	case fuse.O_WRONLY:
+		goFlags = os.O_WRONLY
+	case fuse.O_RDWR:
+		goFlags = os.O_RDWR
+	}
+	for _, bit := range []struct {
+		fuse, golang int
+	}{
+		{fuse: fuse.O_APPEND, golang: os.O_APPEND},
+		{fuse: fuse.O_CREAT, golang: os.O_CREATE},
+		{fuse: fuse.O_EXCL, golang: os.O_EXCL},
+		{fuse: fuse.O_TRUNC, golang: os.O_TRUNC},
+	} {
+		if fuseFlags&bit.fuse != 0 {
+			goFlags |= bit.golang
+		}
+	}
+	return goFlags
 }
 
 // TODO: rename translate error? transform error?
