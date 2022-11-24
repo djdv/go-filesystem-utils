@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"strings"
 	"time"
 
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
@@ -111,56 +112,57 @@ func (ci *ipfsCoreAPI) openNode(name string,
 			err,
 		)
 	}
-
-	var (
-		file fs.File
-		fErr error
-	)
-	// TODO links, etc.
-	switch stat.Mode().Type() {
+	var file fs.File
+	switch stat.Mode().Type() { // TODO links, etc.
 	case fs.FileMode(0):
-		file, fErr = openIPFSFile(name, ci.core, ipldNode)
+		file, err = openIPFSFile(name, ci.core, ipldNode)
 	case fs.ModeDir:
 		dirAPI := ci.core.Unixfs()
 		// file, fErr = openIPFSDir(dirAPI, corePath, statFn, ci.creationTime)
-		file, fErr = openIPFSDir(dirAPI, corePath, stat)
+		file, err = openIPFSDir(dirAPI, corePath, stat)
 	default:
 		// TODO: real error value+message
-		fErr = fserrors.New("unsupported type")
+		err = fserrors.New("unsupported type")
 	}
-	if fErr != nil {
+	if err != nil {
 		return nil, fserrors.New(op,
 			fserrors.Path(name),
 			fserrors.IO, // TODO: [review] double check this Kind makes sense for this.
-			fErr,
+			err,
 		)
 	}
 	return file, nil
 }
 
-/*
 func (ci *ipfsCoreAPI) Stat(name string) (fs.FileInfo, error) {
 	const op fserrors.Op = "ipfscore.Stat"
 	if name == rootName {
 		return ci.root.stat, nil
 	}
-	var (
-		corePath    = goToIPFSCore(ci.systemID, name)
-		ctx, cancel = context.WithTimeout(context.Background(), ipfsCoreTimeout)
-		err         error
-		ipldNode    ipld.Node
-	)
-	defer cancel()
-	if ipldNode, err = ci.core.ResolveNode(ctx, corePath); err != nil {
+
+	corePath, err := goToIPFSCore(ci.systemID, name)
+	if err != nil {
 		return nil, err
 	}
-	stat, err := ci.stat(name, ipldNode)
+	ctx, cancel := context.WithTimeout(context.Background(), ipfsCoreTimeout)
+	defer cancel()
+	// TODO: we should store the resolved path on the object and join on to it.
+	// Not just here, but everywhere resolvenode is called.
+	ipldNode, err := ci.core.ResolveNode(ctx, corePath)
 	if err != nil {
-		// TODO: if the cmds lib doesn't have a typed error we can use with .Is
-		// one should be added for this. Checking messages like this is not stable.
-		cmdsErr := new(cmds.Error)
-		if errors.As(err, &cmdsErr) &&
-			strings.Contains(cmdsErr.Message, "no link named") {
+		return nil, err
+	}
+
+	// TODO: fetch from somewhere else
+	modTime := ci.root.stat.ModTime()
+	permissions := ci.root.stat.Mode().Perm()
+	//
+
+	stat, err := statNode(name, modTime, permissions, ipldNode)
+	if err != nil {
+		// TODO: upstream error value used to not comparable
+		// is this still the case?
+		if strings.Contains(err.Error(), "no link named") {
 			return nil, fserrors.New(fserrors.NotExist, err)
 		}
 		return nil, fserrors.New(op,
@@ -171,7 +173,6 @@ func (ci *ipfsCoreAPI) Stat(name string) (fs.FileInfo, error) {
 	}
 	return stat, nil
 }
-*/
 
 func (cd *coreDirectory) Stat() (fs.FileInfo, error) { return cd.stat, nil }
 
