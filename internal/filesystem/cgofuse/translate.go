@@ -20,8 +20,7 @@ func GoToFuse(fs fs.FS) (*Fuse, error) {
 		FS: fs,
 		// fileTable:  newFileTable(),
 		// systemLock: newOperationsLock(),
-		// log:        ulog.Null, // TODO: from options
-		log: ulog.Log,
+		log: ulog.Null, // TODO: from options
 	})
 	// TODO: from options.
 	canReaddirPlus := runtime.GOOS == "windows"
