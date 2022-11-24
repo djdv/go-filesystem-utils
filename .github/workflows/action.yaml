@@ -15,6 +15,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
+      - uses: ./.github/actions/setup
       - uses: ./.github/actions/test
   Build:
     if: github.ref == 'refs/tags/prerelease' ||  github.ref == 'refs/tags/release'
