@@ -167,13 +167,14 @@ func (mi *IPFSMFS) openFileNode(name string, mfsNode mfs.FSNode, flag int) (fs.F
 	if err != nil {
 		return nil, fserrors.New(fserrors.Permission)
 	}
+	const permissions = readAll | writeAll | executeAll // TODO: set/get perms from elsewhere.
 	return &mfsFile{
 		descriptor: descriptor,
 		stat: &mfsStat{ // TODO: retrieve metadata from node if present; timestamps from constructor otherwise.
 			sizeFn: mfsFileIntf.Size,
 			staticStat: staticStat{
 				name:    path.Base(name),
-				mode:    s_IRXA, // TODO: perms
+				mode:    permissions,
 				modTime: time.Now(),
 			},
 		},
@@ -223,13 +224,14 @@ func (mi *IPFSMFS) openDirNode(name string, mfsNode mfs.FSNode) (fs.ReadDirFile,
 		return nil, fserrors.New(fserrors.NotDir) // TODO: convert old-style errors.
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	const permissions = readAll | writeAll | executeAll // TODO: set/get perms from elsewhere.
 	return &mfsDirectory{
 		ctx: ctx, cancel: cancel,
 		listing: _hackListAsync(ctx, mfsDir),
 		mfsDir:  mfsDir,
 		stat: &staticStat{ // TODO: retrieve metadata from node if present; timestamps from constructor otherwise.
 			name:    path.Base(name),
-			mode:    fs.ModeDir | s_IRXA, // TODO: perms
+			mode:    fs.ModeDir | permissions,
 			modTime: time.Now(),
 		},
 	}, nil
@@ -320,7 +322,7 @@ func translateUFSLinkEntry(parent *mfs.Directory, link *ipld.Link) (fs.DirEntry,
 			typ = fs.ModeSymlink
 		}
 	*/
-	const permissions = s_IRXA // TODO: perms from caller or node if present.
+	const permissions = readAll | writeAll | executeAll // TODO: perms from caller or node if present.
 	var (
 		mode fs.FileMode
 		size int64

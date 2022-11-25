@@ -103,11 +103,12 @@ func (kfs *IPFSKeyAPI) openRoot() (fs.ReadDirFile, error) {
 			return keys, err
 		}
 	)
+	const permissions = readAll | executeAll
 	return &keyDirectory{
 		ipns: kfs.ipns,
 		stat: staticStat{
 			name:    rootName,
-			mode:    fs.ModeDir | s_IRXA,
+			mode:    fs.ModeDir | permissions,
 			modTime: time.Now(), // Not really modified, but key-set as-of right now.
 		},
 		cancel:  cancel,
