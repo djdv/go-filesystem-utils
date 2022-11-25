@@ -13,13 +13,14 @@ import (
 )
 
 type (
-	errNo          = int
-	fileDescriptor = uint64
-	fileType       = uint32
-	id             = uint32
-	uid            = id
-	gid            = id
-	Fuse           struct {
+	errNo           = int
+	fileDescriptor  = uint64
+	fileType        = uint32
+	filePermissions = uint32
+	id              = uint32
+	uid             = id
+	gid             = id
+	Fuse            struct {
 		*fuse.FileSystemHost
 	}
 	fuseContext struct {
@@ -49,12 +50,29 @@ const (
 
 	operationSuccess = 0
 
-	S_IRWXO = fuse.S_IROTH | fuse.S_IWOTH | fuse.S_IXOTH
-	S_IRWXG = fuse.S_IRGRP | fuse.S_IWGRP | fuse.S_IXGRP
-	S_IRWXU = fuse.S_IRUSR | fuse.S_IWUSR | fuse.S_IXUSR
+	// SUSv4BSi7 permission bits
+	// extended and aliased
+	// for Go style conventions.
 
-	IRWXA = S_IRWXU | S_IRWXG | S_IRWXO                           // 0o777
-	IRXA  = IRWXA &^ (fuse.S_IWUSR | fuse.S_IWGRP | fuse.S_IWOTH) // 0o555
+	executeOther = fuse.S_IXOTH
+	writeOther   = fuse.S_IWOTH
+	readOther    = fuse.S_IROTH
+
+	executeGroup = fuse.S_IXGRP
+	writeGroup   = fuse.S_IWGRP
+	readGroup    = fuse.S_IRGRP
+
+	executeUser = fuse.S_IXUSR
+	writeUser   = fuse.S_IWUSR
+	readUser    = fuse.S_IRUSR
+
+	executeAll = executeUser | executeGroup | executeOther
+	writeAll   = writeUser | writeGroup | writeOther
+	readAll    = readUser | readGroup | readOther
+
+	allOther = readOther | writeOther | executeOther
+	allGroup = readGroup | writeGroup | executeGroup
+	allUser  = readUser | writeUser | executeUser
 )
 
 func (fh Fuse) Close() error {

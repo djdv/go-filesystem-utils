@@ -51,11 +51,21 @@ func (gw *goWrapper) Getattr(path string, stat *fuse.Stat_t, fh uint64) int {
 
 	mTime := fuse.NewTimespec(goStat.ModTime())
 
+	// TODO: The fallback should be (optionally) set within the wrapper's constructor.
+	// Which itself should have a read-only default like this if not provided.
+	const fallbackPermissions = readAll | executeAll
+	var (
+		goMode          = goStat.Mode()
+		fuseType        = goToFuseFileType(goMode)
+		fusePermissions uint32
+	)
+	if goPermissions := goMode.Perm(); goPermissions != 0 {
+		fusePermissions = goToFusePermissions(goPermissions)
+	} else {
+		fusePermissions = fallbackPermissions
+	}
 	stat.Uid, stat.Gid, _ = fuse.Getcontext()
-	stat.Mode = goToFuseFileType(goStat.Mode()) |
-		IRXA // TODO: permissions from root <- options <- cli
-		// TODO: mask <- check spec; does fuse need one or does it apply one itself?
-		// IRXA&^(fuselib.S_IXOTH)
+	stat.Mode = fuseType | fusePermissions
 	stat.Size = goStat.Size()
 	// TODO: block size
 

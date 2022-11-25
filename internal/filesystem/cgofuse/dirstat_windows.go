@@ -14,9 +14,11 @@ func dirStat(ent fs.DirEntry) (*fuse.Stat_t, error) {
 	if err != nil {
 		return nil, err
 	}
+	// TODO: const permissions; used here and in getattr.
+	// Should come from somewhere else.
+	const permissions = readAll | (executeAll &^ executeOther)
 	entStat := &fuse.Stat_t{
-		Mode: goToFuseFileType(goStat.Mode()) |
-			IRXA&^(fuse.S_IXOTH), // TODO: const permissions; used here and in getattr
+		Mode: goToFuseFileType(goStat.Mode()) | permissions,
 		Uid:  posixOmittedID,
 		Gid:  posixOmittedID,
 		Size: goStat.Size(),

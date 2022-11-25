@@ -9,6 +9,7 @@ import (
 	"os"
 	"runtime"
 
+	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/u-root/uio/ulog"
 	"github.com/winfsp/cgofuse/fuse"
@@ -78,6 +79,33 @@ func goToFuseFileType(m fs.FileMode) fileType {
 	default:
 		return 0
 	}
+}
+
+// TODO: better names
+func goToFusePermissions(m fs.FileMode) filePermissions {
+	var (
+		goPermissions   = m.Perm()
+		fusePermissions filePermissions
+	)
+	for _, bit := range []struct {
+		golang fs.FileMode
+		fuse   filePermissions
+	}{
+		{golang: filesystem.ExecuteOther, fuse: executeOther},
+		{golang: filesystem.WriteOther, fuse: writeOther},
+		{golang: filesystem.ReadOther, fuse: readOther},
+		{golang: filesystem.ExecuteGroup, fuse: executeGroup},
+		{golang: filesystem.WriteGroup, fuse: writeGroup},
+		{golang: filesystem.ReadGroup, fuse: readGroup},
+		{golang: filesystem.ExecuteUser, fuse: executeUser},
+		{golang: filesystem.WriteUser, fuse: writeUser},
+		{golang: filesystem.ReadUser, fuse: readUser},
+	} {
+		if goPermissions&bit.golang != 0 {
+			fusePermissions |= bit.fuse
+		}
+	}
+	return fusePermissions
 }
 
 // TODO: better names
