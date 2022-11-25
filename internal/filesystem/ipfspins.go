@@ -84,7 +84,7 @@ func (pfs *IPFSPinAPI) openRoot() (fs.ReadDirFile, error) {
 		}
 	}
 	// TODO: retrieve permission from somewhere else. (Passed into FS constructor)
-	const permissions = s_IRXA
+	const permissions = readAll | executeAll
 	stream := &pinStream{
 		ipfs:       pfs.ipfs,
 		pins:       pins,
@@ -222,9 +222,11 @@ func (pe *pinDirEntry) Info() (fs.FileInfo, error) {
 	if ipfs := pe.ipfs; ipfs != nil {
 		return fs.Stat(pe.ipfs, pinCid.String())
 	}
+	// TODO: permission come from somewhere else.
+	const permissions = readAll | executeAll
 	return staticStat{
 		name:    pinCid.String(),
-		mode:    fs.ModeDir | s_IRWXA, // TODO: permission come from somewhere else.
+		mode:    fs.ModeDir | permissions,
 		modTime: time.Now(),
 	}, nil
 }

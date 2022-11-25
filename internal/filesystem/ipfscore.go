@@ -55,8 +55,9 @@ type (
 const ipfsCoreTimeout = 10 * time.Second
 
 func NewIPFS(core coreiface.CoreAPI, systemID ID) *ipfsCoreAPI {
+	const permissions = readAll | executeAll
 	return &ipfsCoreAPI{
-		root:     newRoot(s_IRXA, nil),
+		root:     newRoot(permissions, nil),
 		core:     core,
 		systemID: systemID,
 	}
@@ -100,7 +101,7 @@ func (ci *ipfsCoreAPI) openNode(name string,
 ) (fs.File, error) {
 	const (
 		op                 fserrors.Op = "ipfscore.openNode"
-		defaultPermissions             = s_IRXA
+		defaultPermissions             = readAll | executeAll
 	)
 	// stat, err := ci.stat(name, ipldNode)
 	defaultMtime := ci.root.stat.ModTime()
@@ -232,7 +233,7 @@ func translateCoreEntry(entry *coreiface.DirEntry) fs.DirEntry {
 		name: entry.Name,
 		size: int64(entry.Size),
 		mode: coreTypeToGoType(entry.Type) |
-			s_IRXA, // TODO: from root.
+			readAll | executeAll, // TODO: from root.
 		modTime: time.Now(), // TODO: from root.
 	}
 }
@@ -410,12 +411,13 @@ func openUFSNode(name string, core coreiface.CoreAPI, ipldNode ipld.Node,
 			),
 		)
 	}
+	// TODO: store/get permissions from root.
+	const permissions = readAll | executeAll
 	return &coreFile{
 		stat: staticStat{
-			name: name,
-			size: int64(ufsNode.FileSize()),
-			mode: unixfsTypeToGoType(ufsNode.Type()) |
-				s_IRXA, // TODO: from root
+			name:    name,
+			size:    int64(ufsNode.FileSize()),
+			mode:    unixfsTypeToGoType(ufsNode.Type()) | permissions,
 			modTime: time.Now(), // TODO: from root
 		},
 		File:   fileNode,
