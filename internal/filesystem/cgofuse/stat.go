@@ -8,17 +8,17 @@ import (
 	"github.com/winfsp/cgofuse/fuse"
 )
 
-func (fs *goWrapper) Statfs(path string, stat *fuse.Statfs_t) int {
-	fs.log.Printf("Statfs %q", path)
-	defer fs.systemLock.Access(path)()
+func (gw *goWrapper) Statfs(path string, stat *fuse.Statfs_t) int {
+	gw.log.Printf("Statfs %q", path)
+	defer gw.systemLock.Access(path)()
 	return -fuse.ENOSYS
 }
 
-func (fsys *goWrapper) Getattr(path string, stat *fuse.Stat_t, fh uint64) int {
-	defer fsys.systemLock.Access(path)()
+func (gw *goWrapper) Getattr(path string, stat *fuse.Stat_t, fh uint64) int {
+	defer gw.systemLock.Access(path)()
 	goPath, err := fuseToGo(path)
 	if err != nil {
-		fsys.log.Print(err)
+		gw.log.Print(err)
 		// TODO: review; should we return the value raw or send err to a converter?
 		// ^ send a stacked err to a converter*
 		// (so that the trace contains both ops, parent-op+path-lexer+reason)
@@ -32,13 +32,13 @@ func (fsys *goWrapper) Getattr(path string, stat *fuse.Stat_t, fh uint64) int {
 	}
 
 	// TODO: review
-	goStat, err := fs.Stat(fsys.FS, goPath)
+	goStat, err := fs.Stat(gw.FS, goPath)
 	if err != nil {
 		errNo := interpretError(err)
 		// Don't flood the logs with "not found" errors.
 		if errNo != -fuse.ENOENT {
 			// TODO: [DBG] reduce this format
-			fsys.log.Printf("path: %s\ngoPath: %s\nerr:%s", path, goPath, err)
+			gw.log.Printf("path: %s\ngoPath: %s\nerr:%s", path, goPath, err)
 		}
 		return errNo
 	}
@@ -86,32 +86,32 @@ func (fsys *goWrapper) Getattr(path string, stat *fuse.Stat_t, fh uint64) int {
 	return operationSuccess
 }
 
-func (fs *goWrapper) Utimens(path string, tmsp []fuse.Timespec) int {
-	fs.log.Printf("Utimens {%v}%q", tmsp, path)
-	defer fs.systemLock.Modify(path)()
+func (gw *goWrapper) Utimens(path string, tmsp []fuse.Timespec) int {
+	gw.log.Printf("Utimens {%v}%q", tmsp, path)
+	defer gw.systemLock.Modify(path)()
 	return -fuse.ENOSYS
 }
 
-func (fs *goWrapper) Setxattr(path, name string, value []byte, flags int) int {
-	fs.log.Printf("Setxattr {%X|%s|%d}%q", flags, name, len(value), path)
-	defer fs.systemLock.Modify(path)()
+func (gw *goWrapper) Setxattr(path, name string, value []byte, flags int) int {
+	gw.log.Printf("Setxattr {%X|%s|%d}%q", flags, name, len(value), path)
+	defer gw.systemLock.Modify(path)()
 	return -fuse.ENOSYS
 }
 
-func (fs *goWrapper) Listxattr(path string, fill func(name string) bool) int {
-	fs.log.Printf("Listxattr %q", path)
-	defer fs.systemLock.Access(path)()
+func (gw *goWrapper) Listxattr(path string, fill func(name string) bool) int {
+	gw.log.Printf("Listxattr %q", path)
+	defer gw.systemLock.Access(path)()
 	return -fuse.ENOSYS
 }
 
-func (fs *goWrapper) Getxattr(path, name string) (int, []byte) {
-	fs.log.Printf("Getxattr {%s}%q", name, path)
-	defer fs.systemLock.Access(path)()
+func (gw *goWrapper) Getxattr(path, name string) (int, []byte) {
+	gw.log.Printf("Getxattr {%s}%q", name, path)
+	defer gw.systemLock.Access(path)()
 	return -fuse.ENOSYS, nil
 }
 
-func (fs *goWrapper) Removexattr(path, name string) int {
-	fs.log.Printf("Removexattr {%s}%q", name, path)
-	defer fs.systemLock.Modify(path)()
+func (gw *goWrapper) Removexattr(path, name string) int {
+	gw.log.Printf("Removexattr {%s}%q", name, path)
+	defer gw.systemLock.Modify(path)()
 	return -fuse.ENOSYS
 }

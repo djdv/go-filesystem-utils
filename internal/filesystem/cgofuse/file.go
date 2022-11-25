@@ -222,17 +222,17 @@ func writeFile(file fs.File, buff []byte, ofst int64) (errNo, error) {
 	return wroteBytes, nil
 }
 
-func (fs *goWrapper) Fsync(path string, datasync bool, fh uint64) int {
-	fs.log.Printf("Fsync {%X|%t}%q", fh, datasync, path)
+func (gw *goWrapper) Fsync(path string, datasync bool, fh uint64) int {
+	gw.log.Printf("Fsync {%X|%t}%q", fh, datasync, path)
 	return -fuse.ENOSYS
 }
 
-func (fsys *goWrapper) Read(path string, buff []byte, ofst int64, fh uint64) int {
-	defer fsys.systemLock.Access(path)()
+func (gw *goWrapper) Read(path string, buff []byte, ofst int64, fh uint64) int {
+	defer gw.systemLock.Access(path)()
 
-	handle, err := fsys.fileTable.get(fh)
+	handle, err := gw.fileTable.get(fh)
 	if err != nil {
-		fsys.log.Print(err)
+		gw.log.Print(err)
 		return -fuse.EBADF
 	}
 	handle.ioMu.Lock()
@@ -240,7 +240,7 @@ func (fsys *goWrapper) Read(path string, buff []byte, ofst int64, fh uint64) int
 
 	retVal, err := readFile(handle.goFile, buff, ofst)
 	if err != nil {
-		fsys.log.Printf("%s - %s", err, path)
+		gw.log.Printf("%s - %s", err, path)
 	}
 	return retVal
 }
@@ -268,19 +268,19 @@ func readFile(file fs.File, buff []byte, ofst int64) (int, error) {
 	}
 	n, err := io.ReadFull(file, buff)
 	if err != nil {
-		isEof := errors.Is(err, io.EOF) ||
+		isEOF := errors.Is(err, io.EOF) ||
 			errors.Is(err, io.ErrUnexpectedEOF)
-		if !isEof {
+		if !isEOF {
 			return -fuse.EIO, err
 		}
 	}
 	return n, nil
 }
 
-func (fs *goWrapper) Release(path string, fh uint64) int {
-	errNo, err := fs.fileTable.release(fh)
+func (gw *goWrapper) Release(path string, fh uint64) int {
+	errNo, err := gw.fileTable.release(fh)
 	if err != nil {
-		fs.log.Print(err)
+		gw.log.Print(err)
 	}
 	return errNo
 }

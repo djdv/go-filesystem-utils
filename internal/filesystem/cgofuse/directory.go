@@ -211,8 +211,8 @@ func (gw *goWrapper) rewinddir(stream *directoryStream, path string) int {
 	return operationSuccess
 }
 
-func (fs *goWrapper) Fsyncdir(path string, datasync bool, fh uint64) int {
-	fs.log.Printf("Fsyncdir {%X|%t}%q", fh, datasync, path)
+func (gw *goWrapper) Fsyncdir(path string, datasync bool, fh uint64) int {
+	gw.log.Printf("Fsyncdir {%X|%t}%q", fh, datasync, path)
 	return -fuse.ENOSYS
 }
 

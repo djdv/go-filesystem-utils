@@ -23,8 +23,8 @@ type goWrapper struct {
 	log ulog.Logger
 }
 
-func (fs *goWrapper) Init() {
-	fs.log.Print("Init")
+func (gw *goWrapper) Init() {
+	gw.log.Print("Init")
 	// TODO should we initalize these here
 	// or in the constructor?
 	// The latter might make more sense if we need to share locks
@@ -32,13 +32,13 @@ func (fs *goWrapper) Init() {
 	// I.e. we shouldn't lock at the fuse level, but at the fs.FS level
 	// so that the same system accessed from FUSE, 9P, Go, etc.
 	// can't collide.
-	fs.fileTable = newFileTable()
+	gw.fileTable = newFileTable()
 }
 
-func (fs *goWrapper) Destroy() {
+func (gw *goWrapper) Destroy() {
 	// TODO: dbg lint
-	fs.log.Print("Destroy")
-	defer fs.log.Print("Destroy finished")
+	gw.log.Print("Destroy")
+	defer gw.log.Print("Destroy finished")
 	/* TODO: something like this for the new system
 	tell the Go FS we're leaving, which itself should have some reference counter.
 	we also need to track and close our handles again.
@@ -53,24 +53,24 @@ func (fs *goWrapper) Destroy() {
 	}()
 	*/
 
-	if err := fs.fileTable.Close(); err != nil {
-		fs.log.Print("failed to close:", err)
+	if err := gw.fileTable.Close(); err != nil {
+		gw.log.Print("failed to close:", err)
 	}
 }
 
-func (fs *goWrapper) Flush(path string, fh uint64) int {
-	fs.log.Printf("Flush {%X}%q", fh, path)
+func (gw *goWrapper) Flush(path string, fh uint64) int {
+	gw.log.Printf("Flush {%X}%q", fh, path)
 	return -fuse.ENOSYS
 }
 
-func (fs *goWrapper) Access(path string, mask uint32) int {
-	fs.log.Printf("Access {%X}%q", mask, path)
+func (gw *goWrapper) Access(path string, mask uint32) int {
+	gw.log.Printf("Access {%X}%q", mask, path)
 	return -fuse.ENOSYS
 }
 
-func (fs *goWrapper) Chown(path string, uid, gid uint32) int {
-	fs.log.Printf("Chown {%d|%d}%q", uid, gid, path)
-	defer fs.systemLock.Modify(path)()
+func (gw *goWrapper) Chown(path string, uid, gid uint32) int {
+	gw.log.Printf("Chown {%d|%d}%q", uid, gid, path)
+	defer gw.systemLock.Modify(path)()
 	return -fuse.ENOSYS
 }
 
@@ -103,8 +103,8 @@ func (gw *goWrapper) Rename(oldpath, newpath string) int {
 	return -fuse.ENOSYS
 }
 
-func (fs *goWrapper) Link(oldpath, newpath string) int {
-	fs.log.Printf("Link %q<->%q", oldpath, newpath)
+func (gw *goWrapper) Link(oldpath, newpath string) int {
+	gw.log.Printf("Link %q<->%q", oldpath, newpath)
 	return -fuse.ENOSYS
 }
 
@@ -213,8 +213,8 @@ func (gw *goWrapper) Readlink(path string) (int, string) {
 	}
 }
 
-func (fs *goWrapper) Chmod(path string, mode uint32) int {
-	fs.log.Printf("Chmod {%X}%q", mode, path)
-	defer fs.systemLock.Modify(path)()
+func (gw *goWrapper) Chmod(path string, mode uint32) int {
+	gw.log.Printf("Chmod {%X}%q", mode, path)
+	defer gw.systemLock.Modify(path)()
 	return -fuse.ENOSYS
 }
