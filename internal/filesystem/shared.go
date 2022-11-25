@@ -13,35 +13,26 @@ import (
 const rootName = "."
 
 const (
-	// Go permission bits,
-	// defined with POSIX naming convention.
-	//
-	// TODO: We have no requirement to conform to POSIX here.
-	// These names should be changed to something practical instead.
-	s_IXOTH fs.FileMode = 1 << iota
-	s_IWOTH
-	s_IROTH
+	// Go file permission bits.
+	ExecuteOther fs.FileMode = 1 << iota
+	WriteOther
+	ReadOther
 
-	s_IXGRP
-	s_IWGRP
-	s_IRGRP
+	ExecuteGroup
+	WriteGroup
+	ReadGroup
 
-	s_IXUSR
-	s_IWUSR
-	s_IRUSR
+	ExecuteUser
+	WriteUser
+	ReadUser
 
-	s_IRWXO = s_IROTH | s_IWOTH | s_IXOTH
-	s_IRWXG = s_IRGRP | s_IWGRP | s_IXGRP
-	s_IRWXU = s_IRUSR | s_IWUSR | s_IXUSR
+	executeAll = ExecuteUser | ExecuteGroup | ExecuteOther
+	writeAll   = WriteUser | WriteGroup | WriteOther
+	readAll    = ReadUser | ReadGroup | ReadOther
 
-	// Non-standard.
-
-	s_IXA   = s_IXUSR | s_IXGRP | s_IXOTH
-	s_IWA   = s_IWUSR | s_IWGRP | s_IWOTH
-	s_IRA   = s_IRUSR | s_IRGRP | s_IROTH
-	s_IRXA  = s_IRA | s_IXA
-	s_IRWA  = s_IRA | s_IWA
-	s_IRWXA = s_IRWXU | s_IRWXG | s_IRWXO
+	allOther = ReadOther | WriteOther | ExecuteOther
+	allGroup = ReadGroup | WriteGroup | ExecuteGroup
+	allUser  = ReadUser | WriteUser | ExecuteUser
 )
 
 type (
