@@ -82,12 +82,8 @@ func goToFuseFileType(m fs.FileMode) fileType {
 }
 
 // TODO: better names
-func goToFusePermissions(m fs.FileMode) filePermissions {
-	var (
-		goPermissions   = m.Perm()
-		fusePermissions filePermissions
-	)
-	for _, bit := range []struct {
+var (
+	goToFusePermissionsTable = [...]struct {
 		golang fs.FileMode
 		fuse   filePermissions
 	}{
@@ -100,7 +96,36 @@ func goToFusePermissions(m fs.FileMode) filePermissions {
 		{golang: filesystem.ExecuteUser, fuse: executeUser},
 		{golang: filesystem.WriteUser, fuse: writeUser},
 		{golang: filesystem.ReadUser, fuse: readUser},
-	} {
+	}
+	goFlagsFromFuseTable = [...]struct {
+		fuse, golang int
+	}{
+		{fuse: fuse.O_APPEND, golang: os.O_APPEND},
+		{fuse: fuse.O_CREAT, golang: os.O_CREATE},
+		{fuse: fuse.O_EXCL, golang: os.O_EXCL},
+		{fuse: fuse.O_TRUNC, golang: os.O_TRUNC},
+	}
+	fsErrorsTable = map[fserrors.Kind]errNo{
+		fserrors.Other:            -fuse.EIO,
+		fserrors.InvalidItem:      -fuse.EINVAL,
+		fserrors.InvalidOperation: -fuse.ENOSYS,
+		fserrors.Permission:       -fuse.EACCES,
+		fserrors.IO:               -fuse.EIO,
+		fserrors.Exist:            -fuse.EEXIST,
+		fserrors.NotExist:         -fuse.ENOENT,
+		fserrors.IsDir:            -fuse.EISDIR,
+		fserrors.NotDir:           -fuse.ENOTDIR,
+		fserrors.NotEmpty:         -fuse.ENOTEMPTY,
+	}
+)
+
+// TODO: better names
+func goToFusePermissions(m fs.FileMode) filePermissions {
+	var (
+		goPermissions   = m.Perm()
+		fusePermissions filePermissions
+	)
+	for _, bit := range goToFusePermissionsTable {
 		if goPermissions&bit.golang != 0 {
 			fusePermissions |= bit.fuse
 		}
@@ -119,14 +144,7 @@ func goFlagsFromFuse(fuseFlags int) int {
 	case fuse.O_RDWR:
 		goFlags = os.O_RDWR
 	}
-	for _, bit := range []struct {
-		fuse, golang int
-	}{
-		{fuse: fuse.O_APPEND, golang: os.O_APPEND},
-		{fuse: fuse.O_CREAT, golang: os.O_CREATE},
-		{fuse: fuse.O_EXCL, golang: os.O_EXCL},
-		{fuse: fuse.O_TRUNC, golang: os.O_TRUNC},
-	} {
+	for _, bit := range goFlagsFromFuseTable {
 		if fuseFlags&bit.fuse != 0 {
 			goFlags |= bit.golang
 		}
@@ -138,19 +156,7 @@ func goFlagsFromFuse(fuseFlags int) int {
 func interpretError(err error) errNo {
 	var fsErr *fserrors.Error
 	if errors.As(err, &fsErr) {
-		// Translation table for interface.Error -> FUSE error
-		return map[fserrors.Kind]errNo{
-			fserrors.Other:            -fuse.EIO,
-			fserrors.InvalidItem:      -fuse.EINVAL,
-			fserrors.InvalidOperation: -fuse.ENOSYS,
-			fserrors.Permission:       -fuse.EACCES,
-			fserrors.IO:               -fuse.EIO,
-			fserrors.Exist:            -fuse.EEXIST,
-			fserrors.NotExist:         -fuse.ENOENT,
-			fserrors.IsDir:            -fuse.EISDIR,
-			fserrors.NotDir:           -fuse.ENOTDIR,
-			fserrors.NotEmpty:         -fuse.ENOTEMPTY,
-		}[fsErr.Kind]
+		return fsErrorsTable[fsErr.Kind]
 	}
 	panic(fmt.Sprintf("provided error is not translatable to POSIX error %#v", err))
 }
