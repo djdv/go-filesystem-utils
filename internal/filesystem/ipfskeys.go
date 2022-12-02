@@ -15,25 +15,30 @@ import (
 )
 
 type (
-	IPFSKeyAPI struct {
+	IPFSKeyFS struct {
 		keyAPI coreiface.KeyAPI
 		ipns   fs.FS
 	}
 	keyDirectory struct {
+		mode    fs.FileMode
 		ipns    fs.FS
-		stat    fs.FileInfo
 		cancel  context.CancelFunc
 		getKeys func() ([]coreiface.Key, error)
 		cursor  int
 	}
 	keyDirEntry struct {
+		permissions fs.FileMode
 		coreiface.Key
 		ipns fs.FS
 	}
+	keyInfo struct { // TODO: roll into keyDirEntry?
+		name string
+		mode fs.FileMode // Without the type, this is only really useful for move+delete permissions.
+	}
 )
 
-func NewKeyFS(core coreiface.KeyAPI, options ...KeyfsOption) *IPFSKeyAPI {
-	fs := &IPFSKeyAPI{keyAPI: core}
+func NewKeyFS(core coreiface.KeyAPI, options ...KeyfsOption) *IPFSKeyFS {
+	fs := &IPFSKeyFS{keyAPI: core}
 	for _, setter := range options {
 		if err := setter(fs); err != nil {
 			panic(err)
@@ -42,11 +47,11 @@ func NewKeyFS(core coreiface.KeyAPI, options ...KeyfsOption) *IPFSKeyAPI {
 	return fs
 }
 
-func (*IPFSKeyAPI) ID() ID       { return IPFSKeys }
-func (*IPFSKeyAPI) Close() error { return nil } // TODO: close everything
+func (*IPFSKeyFS) ID() ID       { return IPFSKeys }
+func (*IPFSKeyFS) Close() error { return nil } // TODO: close everything
 
 // TODO: probably inefficient. Review.
-func (ki *IPFSKeyAPI) translateName(name string) (string, error) {
+func (ki *IPFSKeyFS) translateName(name string) (string, error) {
 	keys, err := ki.keyAPI.List(context.Background())
 	if err != nil {
 		return "", err
@@ -66,7 +71,7 @@ func (ki *IPFSKeyAPI) translateName(name string) (string, error) {
 	return keyName, nil
 }
 
-func (kfs *IPFSKeyAPI) Open(name string) (fs.File, error) {
+func (kfs *IPFSKeyFS) Open(name string) (fs.File, error) {
 	const op = "open"
 	if name == rootName {
 		return kfs.openRoot()
@@ -90,7 +95,7 @@ func (kfs *IPFSKeyAPI) Open(name string) (fs.File, error) {
 	}
 }
 
-func (kfs *IPFSKeyAPI) openRoot() (fs.ReadDirFile, error) {
+func (kfs *IPFSKeyFS) openRoot() (fs.ReadDirFile, error) {
 	var (
 		ctx, cancel = context.WithCancel(context.Background())
 		keys        []coreiface.Key
@@ -103,25 +108,28 @@ func (kfs *IPFSKeyAPI) openRoot() (fs.ReadDirFile, error) {
 			return keys, err
 		}
 	)
-	const permissions = readAll | executeAll
+	const permissions = readAll | executeAll // TODO: from ctor; writes will be valid eventually.
 	return &keyDirectory{
-		ipns: kfs.ipns,
-		stat: staticStat{
-			name:    rootName,
-			mode:    fs.ModeDir | permissions,
-			modTime: time.Now(), // Not really modified, but key-set as-of right now.
-		},
+		mode:    fs.ModeDir | permissions,
+		ipns:    kfs.ipns,
 		cancel:  cancel,
 		getKeys: lazyKeys,
 	}, nil
 }
 
-func (kd *keyDirectory) Stat() (fs.FileInfo, error) { return kd.stat, nil }
-
 func (*keyDirectory) Read([]byte) (int, error) {
 	const op fserrors.Op = "keyDirectory.Read"
 	return -1, fserrors.New(op, fserrors.IsDir)
 }
+
+func (kd *keyDirectory) Stat() (fs.FileInfo, error) { return kd, nil }
+
+func (*keyDirectory) Name() string          { return rootName }
+func (*keyDirectory) Size() int64           { return 0 }
+func (kd *keyDirectory) Mode() fs.FileMode  { return kd.mode }
+func (kd *keyDirectory) ModTime() time.Time { return time.Now() } // TODO: is there any way the node can tell us when the last publish was?
+func (kd *keyDirectory) IsDir() bool        { return kd.Mode().IsDir() }
+func (kd *keyDirectory) Sys() any           { return kd }
 
 func (kd *keyDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	const op fserrors.Op = "keyDirectory.ReadDir"
@@ -148,8 +156,9 @@ func (kd *keyDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 			break
 		}
 		ents = append(ents, &keyDirEntry{
-			Key:  key,
-			ipns: kd.ipns,
+			permissions: kd.mode.Perm(),
+			Key:         key,
+			ipns:        kd.ipns,
 		})
 		count--
 	}
@@ -185,10 +194,9 @@ func (ke *keyDirEntry) Info() (fs.FileInfo, error) {
 	if subsys := ke.ipns; subsys != nil {
 		return fs.Stat(subsys, pathWithoutNamespace(ke.Key))
 	}
-	return staticStat{
-		name:    ke.Key.Name(),
-		mode:    fs.ModeIrregular,
-		modTime: time.Now(),
+	return &keyInfo{
+		name: ke.Key.Name(),
+		mode: fs.ModeIrregular | ke.permissions,
 	}, nil
 }
 
@@ -201,3 +209,10 @@ func (ke *keyDirEntry) Type() fs.FileMode {
 }
 
 func (ke *keyDirEntry) IsDir() bool { return ke.Type()&fs.ModeDir != 0 }
+
+func (ki *keyInfo) Name() string       { return ki.name }
+func (*keyInfo) Size() int64           { return 0 } // Unknown without IPNS subsystem.
+func (ki *keyInfo) Mode() fs.FileMode  { return ki.mode }
+func (ki *keyInfo) ModTime() time.Time { return time.Now() } // TODO: is there any way the node can tell us when the last publish was?
+func (ki *keyInfo) IsDir() bool        { return ki.Mode().IsDir() }
+func (ki *keyInfo) Sys() any           { return ki }

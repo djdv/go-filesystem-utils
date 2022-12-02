@@ -13,20 +13,21 @@ import (
 )
 
 var ( // TODO: move this to a test file
-	_ IDFS          = (*IPFSPinAPI)(nil)
-	_ StreamDirFile = (*pinStream)(nil)
+	_ IDFS          = (*IPFSPinFS)(nil)
+	_ StreamDirFile = (*pinDirectory)(nil)
 	// TODO:
 	// _ POSIXInfo     = (*pinDirEntry)(nil)
 )
 
 type (
-	IPFSPinAPI struct {
+	IPFSPinFS struct {
 		pinAPI coreiface.PinAPI
 		ipfs   fs.FS // TODO: subsys should be handled via `bind` instead? fs.Subsys?
 	}
-	pinStream struct {
-		stat fs.FileInfo
-		pins <-chan coreiface.Pin
+	pinDirectory struct {
+		mode    fs.FileMode
+		modTime time.Time
+		pins    <-chan coreiface.Pin
 		context.Context
 		context.CancelFunc
 		ipfs fs.FS
@@ -35,10 +36,15 @@ type (
 		coreiface.Pin
 		ipfs fs.FS // TODO: replace this with statfunc or something. We shouldn't need the whole FS.
 	}
+	pinInfo struct { // TODO: roll into pinDirEntry?
+		name     string
+		mode     fs.FileMode // Without the type, this is only really useful for move+delete permissions.
+		accessed time.Time
+	}
 )
 
-func NewPinFS(pinAPI coreiface.PinAPI, options ...PinfsOption) *IPFSPinAPI {
-	fs := &IPFSPinAPI{pinAPI: pinAPI}
+func NewPinFS(pinAPI coreiface.PinAPI, options ...PinfsOption) *IPFSPinFS {
+	fs := &IPFSPinFS{pinAPI: pinAPI}
 	for _, setter := range options {
 		if err := setter(fs); err != nil {
 			panic(err)
@@ -47,9 +53,9 @@ func NewPinFS(pinAPI coreiface.PinAPI, options ...PinfsOption) *IPFSPinAPI {
 	return fs
 }
 
-func (*IPFSPinAPI) ID() ID { return IPFSPins }
+func (*IPFSPinFS) ID() ID { return IPFSPins }
 
-func (pfs *IPFSPinAPI) Open(name string) (fs.File, error) {
+func (pfs *IPFSPinFS) Open(name string) (fs.File, error) {
 	const op = "open"
 	if name == rootName {
 		return pfs.openRoot()
@@ -64,7 +70,7 @@ func (pfs *IPFSPinAPI) Open(name string) (fs.File, error) {
 	}
 }
 
-func (pfs *IPFSPinAPI) openRoot() (fs.ReadDirFile, error) {
+func (pfs *IPFSPinFS) openRoot() (fs.ReadDirFile, error) {
 	const op fserrors.Op = "pinfs.openRoot"
 	var (
 		ctx, cancel = context.WithCancel(context.Background())
@@ -85,29 +91,32 @@ func (pfs *IPFSPinAPI) openRoot() (fs.ReadDirFile, error) {
 	}
 	// TODO: retrieve permission from somewhere else. (Passed into FS constructor)
 	const permissions = readAll | executeAll
-	stream := &pinStream{
+	stream := &pinDirectory{
+		mode:       fs.ModeDir | permissions,
+		modTime:    time.Now(),
 		ipfs:       pfs.ipfs,
 		pins:       pins,
 		Context:    ctx,
 		CancelFunc: cancel,
-		stat: staticStat{
-			name:    rootName,
-			mode:    fs.ModeDir | permissions,
-			modTime: time.Now(), // Not really modified, but pin-set as-of right now.
-		},
 	}
 	return stream, nil
 }
 
-func (ps *pinStream) Stat() (fs.FileInfo, error) { return ps.stat, nil }
+func (*pinDirectory) Name() string                  { return rootName }
+func (*pinDirectory) Size() int64                   { return 0 }
+func (ps *pinDirectory) Stat() (fs.FileInfo, error) { return ps, nil }
+func (ps *pinDirectory) Mode() fs.FileMode          { return ps.mode }
+func (ps *pinDirectory) ModTime() time.Time         { return ps.modTime }
+func (ps *pinDirectory) IsDir() bool                { return ps.Mode().IsDir() }
+func (ps *pinDirectory) Sys() any                   { return ps }
 
-func (*pinStream) Read([]byte) (int, error) {
+func (*pinDirectory) Read([]byte) (int, error) {
 	const op fserrors.Op = "pinStream.Read"
 	return -1, fserrors.New(op, fserrors.IsDir)
 }
 
 // TODO: also implement StreamDirFile
-func (ps *pinStream) ReadDir(count int) ([]fs.DirEntry, error) {
+func (ps *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	const op fserrors.Op = "pinStream.ReadDir"
 	var (
 		ctx  = ps.Context
@@ -156,11 +165,11 @@ func translatePinEntry(pin coreiface.Pin, ipfs fs.FS) fs.DirEntry {
 	}
 }
 
-func (ps *pinStream) StreamDir(ctx context.Context) <-chan DirStreamEntry {
+func (ps *pinDirectory) StreamDir(ctx context.Context) <-chan StreamDirEntry {
 	var (
 		pins    = ps.pins
 		ipfs    = ps.ipfs
-		entries = make(chan DirStreamEntry, cap(pins))
+		entries = make(chan StreamDirEntry, cap(pins))
 	)
 	go func() {
 		defer close(entries)
@@ -171,7 +180,7 @@ func (ps *pinStream) StreamDir(ctx context.Context) <-chan DirStreamEntry {
 		const op fserrors.Op = "pinStream.StreamDir"
 		err := fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
 		select {
-		case entries <- newErrorEntry(err):
+		case entries <- dirEntryWrapper{error: err}: // TODO: type
 		case <-ctx.Done():
 		}
 	}()
@@ -180,15 +189,15 @@ func (ps *pinStream) StreamDir(ctx context.Context) <-chan DirStreamEntry {
 
 func translatePinEntries(ctx context.Context,
 	pins <-chan coreiface.Pin,
-	entries chan<- DirStreamEntry,
+	entries chan<- StreamDirEntry,
 	ipfs fs.FS,
 ) {
 	for pin := range pins {
-		var entry DirStreamEntry
+		var entry StreamDirEntry
 		if err := pin.Err(); err != nil {
-			entry = newErrorEntry(err)
+			entry = dirEntryWrapper{error: err} // TODO: type
 		} else {
-			entry = wrapDirEntry(translatePinEntry(pin, ipfs))
+			entry = dirEntryWrapper{DirEntry: translatePinEntry(pin, ipfs)} // TODO: type
 		}
 		select {
 		case entries <- entry:
@@ -198,7 +207,7 @@ func translatePinEntries(ctx context.Context,
 	}
 }
 
-func (ps *pinStream) Close() error {
+func (ps *pinDirectory) Close() error {
 	const op fserrors.Op = "pinStream.Close"
 	if cancel := ps.CancelFunc; cancel != nil {
 		cancel()
@@ -224,10 +233,10 @@ func (pe *pinDirEntry) Info() (fs.FileInfo, error) {
 	}
 	// TODO: permission come from somewhere else.
 	const permissions = readAll | executeAll
-	return staticStat{
-		name:    pinCid.String(),
-		mode:    fs.ModeDir | permissions,
-		modTime: time.Now(),
+	return &pinInfo{
+		name:     pinCid.String(),
+		mode:     fs.ModeDir | permissions,
+		accessed: time.Now(),
 	}, nil
 }
 
@@ -240,3 +249,10 @@ func (pe *pinDirEntry) Type() fs.FileMode {
 }
 
 func (pe *pinDirEntry) IsDir() bool { return pe.Type().IsDir() }
+
+func (pi *pinInfo) Name() string       { return pi.name }
+func (*pinInfo) Size() int64           { return 0 } // Unknown without IPFS subsystem.
+func (pi *pinInfo) Mode() fs.FileMode  { return pi.mode }
+func (pi *pinInfo) ModTime() time.Time { return pi.accessed }
+func (pi *pinInfo) IsDir() bool        { return pi.Mode().IsDir() }
+func (pi *pinInfo) Sys() any           { return pi }

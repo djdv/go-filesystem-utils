@@ -7,14 +7,14 @@ type (
 		PinfsOption | KeyfsOption
 	}
 
-	PinfsOption func(*IPFSPinAPI) error
-	KeyfsOption func(*IPFSKeyAPI) error
+	PinfsOption func(*IPFSPinFS) error
+	KeyfsOption func(*IPFSKeyFS) error
 )
 
 func WithIPFS[OT IPFSOption](ipfs OpenDirFS) (option OT) {
 	switch fnPtrPtr := any(&option).(type) {
 	case *PinfsOption:
-		*fnPtrPtr = func(pa *IPFSPinAPI) error { pa.ipfs = ipfs; return nil }
+		*fnPtrPtr = func(pa *IPFSPinFS) error { pa.ipfs = ipfs; return nil }
 	}
 	return option
 }
@@ -22,7 +22,7 @@ func WithIPFS[OT IPFSOption](ipfs OpenDirFS) (option OT) {
 func WithIPNS[OT IPFSOption](ipns fs.FS) (option OT) {
 	switch fnPtrPtr := any(&option).(type) {
 	case *KeyfsOption:
-		*fnPtrPtr = func(ka *IPFSKeyAPI) error { ka.ipns = ipns; return nil }
+		*fnPtrPtr = func(ka *IPFSKeyFS) error { ka.ipns = ipns; return nil }
 	}
 	return option
 }

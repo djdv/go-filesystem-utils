@@ -17,6 +17,7 @@ import (
 	ipld "github.com/ipfs/go-ipld-format" // TODO: migrate to new standard
 	dag "github.com/ipfs/go-merkledag"
 	"github.com/ipfs/go-unixfs"
+	unixpb "github.com/ipfs/go-unixfs/pb"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 	corepath "github.com/ipfs/interface-go-ipfs-core/path"
 )
@@ -24,10 +25,32 @@ import (
 // TODO: move this to a test file
 var _ StreamDirFile = (*coreDirectory)(nil)
 
+const (
+	// TODO: reconsider if we want these in `filesystem` or not.
+	// We can probably just use more localy scoped consts
+	// like ipfsRootPerms = x|y|z
+
+	executeAll = ExecuteUser | ExecuteGroup | ExecuteOther
+	writeAll   = WriteUser | WriteGroup | WriteOther
+	readAll    = ReadUser | ReadGroup | ReadOther
+
+	// These haven't even been used yet.
+
+	allOther = ReadOther | WriteOther | ExecuteOther
+	allGroup = ReadGroup | WriteGroup | ExecuteGroup
+	allUser  = ReadUser | WriteUser | ExecuteUser
+)
+
 type (
-	ipfsCoreAPI struct {
+	coreRootInfo struct {
+		// TODO: track Atime;
+		// m,c, and birth time can be the same as initTime.
+		initTime time.Time
+		mode     fs.FileMode
+	}
+	coreFS struct {
+		rootInfo *coreRootInfo
 		core     coreiface.CoreAPI
-		root     rootDirectory
 		systemID ID
 	}
 	coreDirectory struct {
@@ -35,6 +58,18 @@ type (
 		entries <-chan coreiface.DirEntry
 		context.Context
 		context.CancelFunc
+	}
+	coreDirEntry struct {
+		coreiface.DirEntry
+		error
+		initTime    time.Time
+		permissions fs.FileMode
+	}
+	coreFileInfo struct {
+		name     string
+		size     int64
+		mode     fs.FileMode
+		initTime time.Time
 	}
 	coreFile struct {
 		stat fs.FileInfo
@@ -54,20 +89,21 @@ type (
 
 const ipfsCoreTimeout = 10 * time.Second
 
-func NewIPFS(core coreiface.CoreAPI, systemID ID) *ipfsCoreAPI {
-	const permissions = readAll | executeAll
-	return &ipfsCoreAPI{
-		root:     newRoot(permissions, nil),
+func NewIPFS(core coreiface.CoreAPI, systemID ID) *coreFS {
+	return &coreFS{
+		rootInfo: &coreRootInfo{
+			initTime: time.Now(),
+		},
 		core:     core,
 		systemID: systemID,
 	}
 }
 
-func (ci *ipfsCoreAPI) ID() ID { return ci.systemID }
+func (ci *coreFS) ID() ID { return ci.systemID }
 
-func (ci *ipfsCoreAPI) Open(name string) (fs.File, error) {
+func (ci *coreFS) Open(name string) (fs.File, error) {
 	if name == rootName {
-		return ci.root, nil
+		return ci.rootInfo, nil
 	}
 	if !fs.ValidPath(name) {
 		return nil,
@@ -96,15 +132,14 @@ func (ci *ipfsCoreAPI) Open(name string) (fs.File, error) {
 	return ci.openNode(name, corePath, ipldNode)
 }
 
-func (ci *ipfsCoreAPI) openNode(name string,
+func (ci *coreFS) openNode(name string,
 	corePath corepath.Path, ipldNode ipld.Node,
 ) (fs.File, error) {
 	const (
 		op                 fserrors.Op = "ipfscore.openNode"
 		defaultPermissions             = readAll | executeAll
 	)
-	// stat, err := ci.stat(name, ipldNode)
-	defaultMtime := ci.root.stat.ModTime()
+	defaultMtime := ci.rootInfo.ModTime()
 	stat, err := statNode(name, defaultMtime, defaultPermissions, ipldNode)
 	if err != nil {
 		return nil, fserrors.New(op,
@@ -116,6 +151,7 @@ func (ci *ipfsCoreAPI) openNode(name string,
 	var file fs.File
 	switch stat.Mode().Type() { // TODO links, etc.
 	case fs.FileMode(0):
+		// TODO: pass stat
 		file, err = openIPFSFile(name, ci.core, ipldNode)
 	case fs.ModeDir:
 		dirAPI := ci.core.Unixfs()
@@ -135,10 +171,10 @@ func (ci *ipfsCoreAPI) openNode(name string,
 	return file, nil
 }
 
-func (ci *ipfsCoreAPI) Stat(name string) (fs.FileInfo, error) {
+func (ci *coreFS) Stat(name string) (fs.FileInfo, error) {
 	const op fserrors.Op = "ipfscore.Stat"
 	if name == rootName {
-		return ci.root.stat, nil
+		return ci.rootInfo, nil
 	}
 
 	corePath, err := goToIPFSCore(ci.systemID, name)
@@ -155,8 +191,8 @@ func (ci *ipfsCoreAPI) Stat(name string) (fs.FileInfo, error) {
 	}
 
 	// TODO: fetch from somewhere else
-	modTime := ci.root.stat.ModTime()
-	permissions := ci.root.stat.Mode().Perm()
+	modTime := ci.rootInfo.ModTime()
+	permissions := ci.rootInfo.Mode().Perm()
 	//
 
 	stat, err := statNode(name, modTime, permissions, ipldNode)
@@ -174,6 +210,24 @@ func (ci *ipfsCoreAPI) Stat(name string) (fs.FileInfo, error) {
 	}
 	return stat, nil
 }
+
+func (*coreRootInfo) Name() string          { return rootName }
+func (*coreRootInfo) Size() int64           { return 0 }
+func (cr *coreRootInfo) Mode() fs.FileMode  { return cr.mode }
+func (cr *coreRootInfo) ModTime() time.Time { return cr.initTime }
+func (cr *coreRootInfo) IsDir() bool        { return cr.Mode().IsDir() }
+func (cr *coreRootInfo) Sys() any           { return cr }
+
+func (cr *coreRootInfo) Stat() (fs.FileInfo, error) {
+	return cr, nil
+}
+
+func (*coreRootInfo) Read([]byte) (int, error) {
+	const op fserrors.Op = "root.Read"
+	return -1, fserrors.New(op, fserrors.IsDir)
+}
+
+func (*coreRootInfo) Close() error { return nil }
 
 func (cd *coreDirectory) Stat() (fs.FileInfo, error) { return cd.stat, nil }
 
@@ -209,12 +263,31 @@ func (cd *coreDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 				if returnAll {
 					return entries, nil
 				}
+				// FIXME: we only want to return EOF /after/ we hit it.
+				// I.e. if we have 2 entries, and a count of 100,
+				// we reuturn ([2]{a,b}, nil)
+				// Only if we're called again, will we return (nil, EOF)
+				/* Standard does this:
+				n := len(d.entry) - d.offset
+				if n == 0 && count > 0 {
+				    return nil, io.EOF
+				}
+				if count > 0 && n > count {
+				    n = count
+				}
+				list := make([]fs.DirEntry, n)
+				for i := range list {
+				    list[i] = &d.entry[d.offset+i]
+				}
+				d.offset += n
+				return list, nil
+				*/
 				return entries, io.EOF
 			}
 			if err := coreEntry.Err; err != nil {
 				return entries, err
 			}
-			entries = append(entries, translateCoreEntry(&coreEntry))
+			entries = append(entries, &coreDirEntry{DirEntry: coreEntry})
 			if !returnAll {
 				if count--; count == 0 {
 					return entries, nil
@@ -226,22 +299,31 @@ func (cd *coreDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	}
 }
 
-func translateCoreEntry(entry *coreiface.DirEntry) fs.DirEntry {
-	// TODO: this typing is kind of weird.
-	// It should at least have an xEntry alias instead of xStat. Maybe.
-	return &staticStat{
-		name: entry.Name,
-		size: int64(entry.Size),
-		mode: coreTypeToGoType(entry.Type) |
-			readAll | executeAll, // TODO: from root.
-		modTime: time.Now(), // TODO: from root.
+func (cde *coreDirEntry) Name() string               { return cde.DirEntry.Name }
+func (cde *coreDirEntry) IsDir() bool                { return cde.Type().IsDir() }
+func (cde *coreDirEntry) Info() (fs.FileInfo, error) { return cde, nil }
+func (cde *coreDirEntry) Size() int64                { return int64(cde.DirEntry.Size) }
+func (cde *coreDirEntry) ModTime() time.Time         { return cde.initTime }
+func (cde *coreDirEntry) Mode() fs.FileMode          { return cde.Type() | cde.permissions }
+func (cde *coreDirEntry) Sys() any                   { return cde }
+func (cde *coreDirEntry) Error() error               { return cde.error }
+func (cde *coreDirEntry) Type() fs.FileMode {
+	switch cde.DirEntry.Type {
+	case coreiface.TDirectory:
+		return fs.ModeDir
+	case coreiface.TFile:
+		return fs.FileMode(0)
+	case coreiface.TSymlink:
+		return fs.ModeSymlink
+	default:
+		return fs.ModeIrregular
 	}
 }
 
-func (cd *coreDirectory) StreamDir(ctx context.Context) <-chan DirStreamEntry {
+func (cd *coreDirectory) StreamDir(ctx context.Context) <-chan StreamDirEntry {
 	var (
 		coreEntries = cd.entries
-		goEntries   = make(chan DirStreamEntry, cap(coreEntries))
+		goEntries   = make(chan StreamDirEntry, cap(coreEntries))
 	)
 	go func() {
 		defer close(goEntries)
@@ -252,7 +334,7 @@ func (cd *coreDirectory) StreamDir(ctx context.Context) <-chan DirStreamEntry {
 		const op fserrors.Op = "coreDirectory.StreamDir"
 		err := fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
 		select {
-		case goEntries <- newErrorEntry(err):
+		case goEntries <- &coreDirEntry{error: err}:
 		case <-ctx.Done():
 		}
 	}()
@@ -261,14 +343,14 @@ func (cd *coreDirectory) StreamDir(ctx context.Context) <-chan DirStreamEntry {
 
 func translateCoreEntries(ctx context.Context,
 	coreEntries <-chan coreiface.DirEntry,
-	goEntries chan<- DirStreamEntry,
+	goEntries chan<- StreamDirEntry,
 ) {
 	for coreEntry := range coreEntries {
-		var entry DirStreamEntry
+		var entry StreamDirEntry
 		if err := coreEntry.Err; err != nil {
-			entry = newErrorEntry(err)
+			entry = &coreDirEntry{error: err}
 		} else {
-			entry = wrapDirEntry(translateCoreEntry(&coreEntry))
+			entry = &coreDirEntry{DirEntry: coreEntry}
 		}
 		select {
 		case goEntries <- entry:
@@ -292,6 +374,13 @@ func (cd *coreDirectory) Close() error {
 		"directory was not open",
 	)
 }
+
+func (cfi *coreFileInfo) Name() string       { return cfi.name }
+func (cfi *coreFileInfo) Size() int64        { return cfi.size }
+func (cfi *coreFileInfo) Mode() fs.FileMode  { return cfi.mode }
+func (cfi *coreFileInfo) ModTime() time.Time { return cfi.initTime }
+func (cfi *coreFileInfo) IsDir() bool        { return cfi.Mode().IsDir() }
+func (cfi *coreFileInfo) Sys() any           { return cfi }
 
 // TODO: [port]
 // func (cio *coreFile) Write(_ []byte) (int, error)   { return 0, errReadOnly }
@@ -413,12 +502,28 @@ func openUFSNode(name string, core coreiface.CoreAPI, ipldNode ipld.Node,
 	}
 	// TODO: store/get permissions from root.
 	const permissions = readAll | executeAll
+	// TODO: store permissions on the type and do this in the method for Mode()
+	mode := func() fs.FileMode {
+		mode := permissions
+		switch ufsNode.Type() {
+		case unixpb.Data_Directory, unixpb.Data_HAMTShard:
+			mode |= fs.ModeDir
+		case unixpb.Data_Symlink:
+			mode |= fs.ModeSymlink
+		case unixpb.Data_File, unixpb.Data_Raw:
+		// NOOP:  mode |= fs.FileMode(0)
+		default:
+			mode |= fs.ModeIrregular
+		}
+		return mode
+	}()
 	return &coreFile{
-		stat: staticStat{
-			name:    name,
-			size:    int64(ufsNode.FileSize()),
-			mode:    unixfsTypeToGoType(ufsNode.Type()) | permissions,
-			modTime: time.Now(), // TODO: from root
+		stat: &coreFileInfo{
+			name: name,
+			size: int64(ufsNode.FileSize()),
+			// mode:     unixfsTypeToGoType(ufsNode.Type()) | permissions,
+			mode:     mode,
+			initTime: time.Now(), // TODO: from root
 		},
 		File:   fileNode,
 		cancel: cancel,
@@ -440,20 +545,4 @@ func openCborNode(cborNode *cbor.Node,
 	}
 
 	return &cborFile{node: cborNode, reader: br}, nil
-}
-
-func coreTypeToGoType(typ coreiface.FileType) fs.FileMode {
-	switch typ {
-	case coreiface.TDirectory:
-		return fs.ModeDir
-	case coreiface.TFile:
-		return fs.FileMode(0)
-	case coreiface.TSymlink:
-		return fs.ModeSymlink
-	default:
-		panic(fmt.Errorf(
-			"mode: stat contains unexpected type: %v",
-			typ,
-		))
-	}
 }

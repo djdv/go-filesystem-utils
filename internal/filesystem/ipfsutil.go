@@ -13,6 +13,21 @@ import (
 	corepath "github.com/ipfs/interface-go-ipfs-core/path"
 )
 
+type (
+	unixFSInfo struct {
+		name        string
+		permissions fs.FileMode
+		modtime     time.Time
+		*unixfs.FSNode
+	}
+	ipldNodeInfo struct {
+		name        string
+		permissions fs.FileMode
+		modtime     time.Time
+		ipld.Node
+	}
+)
+
 func goToIPFSCore(fsid ID, goPath string) (corepath.Path, error) {
 	return corepath.New(
 		path.Join("/",
@@ -48,51 +63,51 @@ func statNode(name string, modtime time.Time, permissions fs.FileMode,
 		if err != nil {
 			return nil, err
 		}
-		return unixFSAttr(name, modtime, permissions, ufsNode)
+		return &unixFSInfo{
+			name:        name,
+			permissions: permissions,
+			modtime:     modtime,
+			FSNode:      ufsNode,
+		}, nil
 	}
 	//  *dag.RawNode, *cbor.Node
-	return genericAttr(name, modtime, permissions, ipldNode)
-}
-
-func genericAttr(name string, modtime time.Time, permissions fs.FileMode,
-	genericNode ipld.Node,
-) (fs.FileInfo, error) {
-	// raw nodes only contain data so we'll treat them as a flat file
-	// cbor nodes are not currently supported via UnixFS so we assume them to contain only data
-	// TODO: review ^ is there some way we can implement this that won't blow up in the future?
-	// (if unixfs supports cbor and directories are implemented to use them )
-	nodeStat, err := genericNode.Stat()
-	if err != nil {
-		return nil, err
-	}
-	return staticStat{
-		size:    int64(nodeStat.CumulativeSize),
-		name:    name,
-		mode:    permissions,
-		modTime: modtime,
+	return &ipldNodeInfo{
+		name:        name,
+		permissions: permissions,
+		modtime:     modtime,
+		Node:        ipldNode,
 	}, nil
 }
 
-func unixFSAttr(name string, modtime time.Time, permissions fs.FileMode,
-	ufsNode *unixfs.FSNode,
-) (fs.FileInfo, error) {
-	return staticStat{
-		name:    name,
-		size:    int64(ufsNode.FileSize()),
-		mode:    unixfsTypeToGoType(ufsNode.Type()) | permissions,
-		modTime: modtime, // TODO: from UFS when v2 lands.
-	}, nil
-}
-
-func unixfsTypeToGoType(ut unixpb.Data_DataType) fs.FileMode {
-	switch ut {
+func (ufi *unixFSInfo) Name() string       { return ufi.name }
+func (ufi *unixFSInfo) Size() int64        { return int64(ufi.FSNode.FileSize()) }
+func (ufi *unixFSInfo) ModTime() time.Time { return ufi.modtime }
+func (ufi *unixFSInfo) IsDir() bool        { return ufi.Mode().IsDir() }
+func (ufi *unixFSInfo) Sys() any           { return ufi }
+func (ufi *unixFSInfo) Mode() fs.FileMode {
+	mode := ufi.permissions
+	switch ufi.FSNode.Type() {
 	case unixpb.Data_Directory, unixpb.Data_HAMTShard:
-		return fs.ModeDir
+		mode |= fs.ModeDir
 	case unixpb.Data_Symlink:
-		return fs.ModeSymlink
+		mode |= fs.ModeSymlink
 	case unixpb.Data_File, unixpb.Data_Raw:
-		return fs.FileMode(0)
+	// NOOP:  mode |= fs.FileMode(0)
 	default:
-		return fs.ModeIrregular
+		mode |= fs.ModeIrregular
 	}
+	return mode
 }
+
+func (idi *ipldNodeInfo) Name() string { return idi.name }
+func (idi *ipldNodeInfo) Size() int64 {
+	nodeStat, err := idi.Node.Stat()
+	if err != nil {
+		return 0
+	}
+	return int64(nodeStat.CumulativeSize)
+}
+func (idi *ipldNodeInfo) Mode() fs.FileMode  { return idi.permissions }
+func (idi *ipldNodeInfo) ModTime() time.Time { return idi.modtime }
+func (idi *ipldNodeInfo) IsDir() bool        { return idi.Mode().IsDir() }
+func (idi *ipldNodeInfo) Sys() any           { return idi }
