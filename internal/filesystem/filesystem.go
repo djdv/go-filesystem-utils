@@ -2,7 +2,11 @@ package filesystem
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"io/fs"
+	"os"
 	"time"
 )
 
@@ -67,6 +71,11 @@ type (
 		fs.FileInfo
 		CreationTime() time.Time
 	}
+
+	dirEntryWrapper struct {
+		fs.DirEntry
+		error
+	}
 )
 
 // Go file permission bits.
@@ -83,3 +92,46 @@ const (
 	WriteUser
 	ReadUser
 )
+
+func (dw dirEntryWrapper) Error() error { return dw.error }
+
+func OpenFile(fsys fs.FS, name string, flag int, perm fs.FileMode) (fs.File, error) {
+	if fsys, ok := fsys.(OpenFileFS); ok {
+		return fsys.OpenFile(name, flag, perm)
+	}
+	if flag == os.O_RDONLY {
+		return fsys.Open(name)
+	}
+	return nil, fmt.Errorf(`open "%s": operation not supported`, name)
+}
+
+func StreamDir(ctx context.Context, directory fs.ReadDirFile) <-chan StreamDirEntry {
+	if dirStreamer, ok := directory.(StreamDirFile); ok {
+		return dirStreamer.StreamDir(ctx)
+	}
+	stream := make(chan StreamDirEntry)
+	go func() {
+		defer close(stream)
+		const batchCount = 16 // NOTE: Count chosen arbitrarily.
+		for {
+			ents, err := directory.ReadDir(batchCount)
+			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					select {
+					case stream <- dirEntryWrapper{error: err}:
+					case <-ctx.Done():
+					}
+				}
+				return
+			}
+			for _, ent := range ents {
+				select {
+				case stream <- dirEntryWrapper{DirEntry: ent}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return stream
+}
