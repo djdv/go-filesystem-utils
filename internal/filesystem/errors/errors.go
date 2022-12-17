@@ -126,15 +126,6 @@ const ( // kind subset kindly borrowed from rob
 	ReadOnly                     // File system has no modification capabilities.
 )
 
-var ( // TODO: errors -> const strings mapped via kind
-	errExist    = generic.ConstError("already exists")
-	errNotExist = generic.ConstError("does not exist")
-	errIsDir    = generic.ConstError("not a file")
-	errNotDir   = generic.ConstError("not a directory")
-	errNotEmpty = generic.ConstError("directory is not empty")
-	errReadOnly = generic.ConstError("read only system")
-)
-
 func New(args ...interface{}) error {
 	if len(args) == 0 {
 		panic("call to errors.New with no arguments")
