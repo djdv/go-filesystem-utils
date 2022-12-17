@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"time"
+
+	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 )
 
 type (
@@ -103,6 +105,19 @@ func OpenFile(fsys fs.FS, name string, flag int, perm fs.FileMode) (fs.File, err
 		return fsys.Open(name)
 	}
 	return nil, fmt.Errorf(`open "%s": operation not supported`, name)
+}
+
+func Truncate(fsys fs.FS, name string, size int64) (err error) {
+	file, err := OpenFile(fsys, name, os.O_WRONLY|os.O_CREATE, 0o666)
+	if err != nil {
+		return err
+	}
+	defer func() { err = fserrors.Join(err, file.Close()) }()
+	truncater, ok := file.(TruncateFile)
+	if ok {
+		return truncater.Truncate(size)
+	}
+	return fmt.Errorf(`truncate "%s": operation not supported`, name)
 }
 
 func StreamDir(ctx context.Context, directory fs.ReadDirFile) <-chan StreamDirEntry {
