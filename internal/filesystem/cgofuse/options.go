@@ -2,7 +2,6 @@ package cgofuse
 
 import (
 	"github.com/u-root/uio/ulog"
-	"github.com/winfsp/cgofuse/fuse"
 )
 
 type (
@@ -25,19 +24,6 @@ func parseOptions[ST any, OT ~func(*ST) error](settings *ST, options ...OT) erro
 		}
 	}
 	return nil
-}
-
-func (settings *fuseHostSettings) apply(fsh *fuse.FileSystemHost) {
-	for _, pair := range []struct {
-		setter func(bool)
-		bool
-	}{
-		{setter: fsh.SetCapReaddirPlus, bool: settings.readdirPlus},
-		{setter: fsh.SetCapCaseInsensitive, bool: settings.caseInsensitive},
-		{setter: fsh.SetCapDeleteAccess, bool: settings.deleteAccess},
-	} {
-		pair.setter(pair.bool)
-	}
 }
 
 func WithLog(log ulog.Logger) WrapperOption {
