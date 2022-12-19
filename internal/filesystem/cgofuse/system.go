@@ -35,7 +35,7 @@ func (gw *goWrapper) Destroy() {
 	// their responsibility to handle.
 	if gw.activeMounts--; gw.activeMounts == 0 {
 		if err := gw.fileTable.Close(); err != nil {
-			gw.log.Print(err)
+			gw.logError(posixRoot, err)
 		}
 		gw.fileTable = nil
 	}
@@ -63,15 +63,13 @@ func (gw *goWrapper) Rename(oldpath, newpath string) errNo {
 		defer gw.systemLock.Move(oldpath, newpath)()
 	}
 	if renamer, ok := gw.FS.(filesystem.RenameFS); ok {
-		goOldPath, err := fuseToGo(oldpath)
+		goOldPath, goNewPath, err := fuseToGoPair(oldpath, newpath)
 		if err != nil {
-			return interpretError(err)
-		}
-		goNewPath, err := fuseToGo(newpath)
-		if err != nil {
+			gw.logError(oldpath+"->"+newpath, err)
 			return interpretError(err)
 		}
 		if err := renamer.Rename(goOldPath, goNewPath); err != nil {
+			gw.logError(oldpath+"->"+newpath, err)
 			return interpretError(err)
 		}
 		return operationSuccess
@@ -93,9 +91,11 @@ func (gw *goWrapper) Unlink(path string) errNo {
 	if remover, ok := gw.FS.(filesystem.RemoveFS); ok {
 		goPath, err := fuseToGo(path)
 		if err != nil {
+			gw.logError(path, err)
 			return interpretError(err)
 		}
 		if err := remover.Remove(goPath); err != nil {
+			gw.logError(path, err)
 			return interpretError(err)
 		}
 		return operationSuccess
@@ -106,15 +106,13 @@ func (gw *goWrapper) Unlink(path string) errNo {
 func (gw *goWrapper) Symlink(target, newpath string) errNo {
 	defer gw.systemLock.CreateOrDelete(newpath)()
 	if linker, ok := gw.FS.(filesystem.SymlinkFS); ok {
-		goTarget, err := fuseToGo(target)
+		goTarget, goNewPath, err := fuseToGoPair(target, newpath)
 		if err != nil {
-			return interpretError(err)
-		}
-		goNewPath, err := fuseToGo(newpath)
-		if err != nil {
+			gw.logError(newpath+"->"+target, err)
 			return interpretError(err)
 		}
 		if err := linker.Symlink(goTarget, goNewPath); err != nil {
+			gw.logError(newpath+"->"+target, err)
 			return interpretError(err)
 		}
 		return operationSuccess
@@ -133,10 +131,12 @@ func (gw *goWrapper) Readlink(path string) (errNo, string) {
 		if extractor, ok := gw.FS.(filesystem.SymlinkFS); ok {
 			goPath, err := fuseToGo(path)
 			if err != nil {
+				gw.logError(path, err)
 				return interpretError(err), ""
 			}
 			fsLink, err := extractor.Readlink(goPath)
 			if err != nil {
+				gw.logError(path, err)
 				return interpretError(err), ""
 			}
 			fuseLink := posixRoot + fsLink
@@ -149,4 +149,8 @@ func (gw *goWrapper) Readlink(path string) (errNo, string) {
 func (gw *goWrapper) Chmod(path string, mode uint32) errNo {
 	defer gw.systemLock.Modify(path)()
 	return -fuse.ENOSYS
+}
+
+func (gw *goWrapper) logError(path string, err error) {
+	gw.log.Printf(`"%s" - %s`, path, err)
 }

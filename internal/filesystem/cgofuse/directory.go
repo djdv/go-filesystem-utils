@@ -37,6 +37,7 @@ func (gw *goWrapper) Mkdir(path string, mode uint32) errNo {
 	if maker, ok := gw.FS.(filesystem.MkdirFS); ok {
 		goPath, err := fuseToGo(path)
 		if err != nil {
+			gw.logError(path, err)
 			return interpretError(err)
 		}
 		permissions := fuseToGoPermissions(mode)
@@ -52,7 +53,7 @@ func (gw *goWrapper) Opendir(path string) (errNo, fileDescriptor) {
 	defer gw.systemLock.Access(path)()
 	directory, err := openDir(gw.FS, path)
 	if err != nil {
-		gw.log.Printf(`%s - "%s"`, err, path)
+		gw.logError(path, err)
 		return interpretError(err), errorHandle
 	}
 	var (
@@ -73,7 +74,7 @@ func (gw *goWrapper) Opendir(path string) (errNo, fileDescriptor) {
 	)
 	handle, err := gw.fileTable.add(dirStream)
 	if err != nil {
-		gw.log.Print(err)
+		gw.logError(path, err)
 		// TODO: the file table should return an error value
 		// that maps to this POSIX error.
 		return -fuse.EMFILE, errorHandle
@@ -100,12 +101,13 @@ func openDir(fsys fs.FS, path string) (fs.ReadDirFile, error) {
 func (gw *goWrapper) Readdir(path string, fill fillFunc, ofst int64, fh fileDescriptor) errNo {
 	defer gw.systemLock.Access(path)()
 	if fh == errorHandle {
-		gw.log.Print(fuse.Error(-fuse.EBADF))
-		return -fuse.EBADF
+		const errNo = -fuse.EBADF
+		gw.logError(path, fuse.Error(errNo))
+		return errNo
 	}
 	directoryHandle, err := gw.fileTable.get(fh)
 	if err != nil {
-		gw.log.Print(fuse.Error(-fuse.EBADF))
+		gw.logError(path, err)
 		return -fuse.EBADF
 	}
 	var (
@@ -113,24 +115,19 @@ func (gw *goWrapper) Readdir(path string, fill fillFunc, ofst int64, fh fileDesc
 		stream, ok = directory.(*directoryStream)
 	)
 	if !ok {
-		gw.log.Printf("Directory from file table is not a type from our system: "+
-			"\n\t[%d] %s",
-			"\n\tgot: %T"+
-				"\n\twant: %s",
-			fh, path,
-			directory, stream,
-		)
-		return -fuse.EBADF
+		const errNo = -fuse.EBADF
+		gw.logError(path, fuse.Error(errNo))
+		return errNo
 	}
 	if ofst == 0 && stream.position != 0 {
 		if errorCode, err := rewinddir(gw.FS, stream, path); err != nil {
-			gw.log.Printf(`%s - "%s"`, err, path)
+			gw.logError(path, err)
 			return errorCode
 		}
 	}
 	ret, err := fillDir(stream, fill)
 	if err != nil {
-		gw.log.Printf(`%s - "%s"`, err, path)
+		gw.logError(path, err)
 	}
 	return ret
 }
@@ -190,7 +187,7 @@ func fillDir(stream *directoryStream, fill fillFunc) (errNo, error) {
 				return -fuse.EIO, err
 			}
 			if !fill(entry.Name(), entStat, offset) {
-				return operationSuccess, nil // fill asked us to stop filling.
+				return operationSuccess, nil
 			}
 		}
 	}
@@ -204,7 +201,7 @@ func (gw *goWrapper) Fsyncdir(path string, datasync bool, fh fileDescriptor) err
 func (gw *goWrapper) Releasedir(path string, fh fileDescriptor) errNo {
 	errNo, err := gw.fileTable.release(fh)
 	if err != nil {
-		gw.log.Print(err)
+		gw.logError(path, err)
 	}
 	return errNo
 }
