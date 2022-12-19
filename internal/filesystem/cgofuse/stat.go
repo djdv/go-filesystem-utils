@@ -25,7 +25,12 @@ func (gw *goWrapper) Getattr(path string, stat *fuse.Stat_t, fh fileDescriptor) 
 		info, err = gw.infoFromPath(path)
 	}
 	if err != nil {
-		return interpretError(err)
+		errNo := interpretError(err)
+		if errNo != -fuse.ENOENT {
+			// Don't flood the logs with these.
+			gw.logError(path, err)
+		}
+		return errNo
 	}
 	var (
 		uid, gid, _ = fuse.Getcontext()

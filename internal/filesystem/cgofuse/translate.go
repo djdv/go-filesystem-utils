@@ -33,6 +33,18 @@ func fuseToGo(path string) (string, error) {
 	return path[1:], nil
 }
 
+func fuseToGoPair(path1, path2 string) (string, string, error) {
+	new1, err := fuseToGo(path1)
+	if err != nil {
+		return "", "", err
+	}
+	new2, err := fuseToGo(path2)
+	if err != nil {
+		return "", "", err
+	}
+	return new1, new2, nil
+}
+
 func goToFuseStat(info fs.FileInfo, fctx fuseContext, stat *fuse.Stat_t) {
 	var (
 		goMode          = info.Mode()
