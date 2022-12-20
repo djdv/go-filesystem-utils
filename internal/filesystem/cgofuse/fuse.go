@@ -38,7 +38,10 @@ type (
 		// NOTE: PID omitted as not used.
 	}
 	fileHandle struct {
-		ioMu   sync.Mutex // TODO: name and responsibility; currently applies to the position cursor
+		// TODO: Our path based locks should be enough to make this redundant,
+		// however, the underlying `fs.FS` files should expose this mechanism itself.
+		// (So that cross API locks can be possible. E.g. FUSE+9P accessing the same `fs.File`)
+		ioMu   sync.Mutex
 		goFile fs.File
 	}
 	seekerFile interface {
