@@ -163,7 +163,7 @@ func (fh *Fuse) Close() (err error) {
 	defer fh.mountsMu.Unlock()
 	mounts := fh.getMountsLocked()
 	for mountpoint := range mounts {
-		err = fserrors.Join(unmountLocked(mounts, mountpoint))
+		err = fserrors.Join(err, unmountLocked(mounts, mountpoint))
 	}
 	return err
 }
