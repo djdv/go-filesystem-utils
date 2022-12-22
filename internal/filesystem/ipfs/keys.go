@@ -1,4 +1,4 @@
-package filesystem
+package ipfs
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
@@ -47,8 +48,8 @@ func NewKeyFS(core coreiface.KeyAPI, options ...KeyfsOption) *IPFSKeyFS {
 	return fs
 }
 
-func (*IPFSKeyFS) ID() ID       { return IPFSKeys }
-func (*IPFSKeyFS) Close() error { return nil } // TODO: close everything
+func (*IPFSKeyFS) ID() filesystem.ID { return filesystem.IPFSKeys }
+func (*IPFSKeyFS) Close() error      { return nil } // TODO: close everything
 
 // TODO: probably inefficient. Review.
 func (ki *IPFSKeyFS) translateName(name string) (string, error) {

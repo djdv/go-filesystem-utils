@@ -1,4 +1,4 @@
-package filesystem
+package ipfs
 
 import (
 	"io/fs"
@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	ipld "github.com/ipfs/go-ipld-format" // TODO: migrate to new standard
 	dag "github.com/ipfs/go-merkledag"
 	"github.com/ipfs/go-unixfs"
@@ -28,7 +29,7 @@ type (
 	}
 )
 
-func goToIPFSCore(fsid ID, goPath string) (corepath.Path, error) {
+func goToIPFSCore(fsid filesystem.ID, goPath string) (corepath.Path, error) {
 	return corepath.New(
 		path.Join("/",
 			strings.ToLower(fsid.String()), // "ipfs", "ipns", ...

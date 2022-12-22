@@ -1,4 +1,4 @@
-package filesystem
+package ipfs
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"time"
 
+	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
@@ -13,8 +14,8 @@ import (
 )
 
 var ( // TODO: move this to a test file
-	_ IDFS          = (*IPFSPinFS)(nil)
-	_ StreamDirFile = (*pinDirectory)(nil)
+	_ filesystem.IDFS          = (*IPFSPinFS)(nil)
+	_ filesystem.StreamDirFile = (*pinDirectory)(nil)
 	// TODO:
 	// _ POSIXInfo     = (*pinDirEntry)(nil)
 )
@@ -25,13 +26,14 @@ type (
 		ipfs   fs.FS // TODO: subsys should be handled via `bind` instead? fs.Subsys?
 	}
 	pinDirectory struct {
-		mode    fs.FileMode
 		modTime time.Time
 		pins    <-chan coreiface.Pin
 		context.Context
 		context.CancelFunc
 		ipfs fs.FS
+		mode fs.FileMode
 	}
+
 	pinDirEntry struct {
 		coreiface.Pin
 		ipfs fs.FS // TODO: replace this with statfunc or something. We shouldn't need the whole FS.
@@ -53,7 +55,7 @@ func NewPinFS(pinAPI coreiface.PinAPI, options ...PinfsOption) *IPFSPinFS {
 	return fs
 }
 
-func (*IPFSPinFS) ID() ID { return IPFSPins }
+func (*IPFSPinFS) ID() filesystem.ID { return filesystem.IPFSPins }
 
 func (pfs *IPFSPinFS) Open(name string) (fs.File, error) {
 	const op = "open"
@@ -141,6 +143,7 @@ func (ps *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 			if !ok {
 				var err error
 				if !returnAll {
+					// FIXME: update this to match standard expectations (like is done in core)
 					err = io.EOF
 				}
 				return entries, err
@@ -158,30 +161,23 @@ func (ps *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	}
 }
 
-func translatePinEntry(pin coreiface.Pin, ipfs fs.FS) fs.DirEntry {
+func translatePinEntry(pin coreiface.Pin, ipfs fs.FS) filesystem.StreamDirEntry {
 	return &pinDirEntry{
 		Pin:  pin,
 		ipfs: ipfs,
 	}
 }
 
-func (ps *pinDirectory) StreamDir(ctx context.Context) <-chan StreamDirEntry {
+func (ps *pinDirectory) StreamDir(ctx context.Context) <-chan filesystem.StreamDirEntry {
 	var (
 		pins    = ps.pins
 		ipfs    = ps.ipfs
-		entries = make(chan StreamDirEntry, cap(pins))
+		entries = make(chan filesystem.StreamDirEntry, cap(pins))
 	)
 	go func() {
 		defer close(entries)
 		if pins != nil {
 			translatePinEntries(ctx, pins, entries, ipfs)
-			return
-		}
-		const op fserrors.Op = "pinStream.StreamDir"
-		err := fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
-		select {
-		case entries <- dirEntryWrapper{error: err}: // TODO: type
-		case <-ctx.Done():
 		}
 	}()
 	return entries
@@ -189,18 +185,12 @@ func (ps *pinDirectory) StreamDir(ctx context.Context) <-chan StreamDirEntry {
 
 func translatePinEntries(ctx context.Context,
 	pins <-chan coreiface.Pin,
-	entries chan<- StreamDirEntry,
+	entries chan<- filesystem.StreamDirEntry,
 	ipfs fs.FS,
 ) {
 	for pin := range pins {
-		var entry StreamDirEntry
-		if err := pin.Err(); err != nil {
-			entry = dirEntryWrapper{error: err} // TODO: type
-		} else {
-			entry = dirEntryWrapper{DirEntry: translatePinEntry(pin, ipfs)} // TODO: type
-		}
 		select {
-		case entries <- entry:
+		case entries <- translatePinEntry(pin, ipfs):
 		case <-ctx.Done():
 			return
 		}
@@ -248,7 +238,8 @@ func (pe *pinDirEntry) Type() fs.FileMode {
 	return info.Mode().Type()
 }
 
-func (pe *pinDirEntry) IsDir() bool { return pe.Type().IsDir() }
+func (pe *pinDirEntry) IsDir() bool  { return pe.Type().IsDir() }
+func (pe *pinDirEntry) Error() error { return pe.Pin.Err() }
 
 func (pi *pinInfo) Name() string       { return pi.name }
 func (*pinInfo) Size() int64           { return 0 } // Unknown without IPFS subsystem.
