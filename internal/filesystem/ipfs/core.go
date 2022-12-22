@@ -1,4 +1,4 @@
-package filesystem
+package ipfs
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	files "github.com/ipfs/go-ipfs-files"
@@ -23,22 +24,21 @@ import (
 )
 
 // TODO: move this to a test file
-var _ StreamDirFile = (*coreDirectory)(nil)
+var _ filesystem.StreamDirFile = (*coreDirectory)(nil)
+
+// TODO: I don't know where this belongs but all our systems will use it for the root name.
+const rootName = "."
 
 const (
-	// TODO: reconsider if we want these in `filesystem` or not.
-	// We can probably just use more localy scoped consts
-	// like ipfsRootPerms = x|y|z
-
-	executeAll = ExecuteUser | ExecuteGroup | ExecuteOther
-	writeAll   = WriteUser | WriteGroup | WriteOther
-	readAll    = ReadUser | ReadGroup | ReadOther
+	executeAll = filesystem.ExecuteUser | filesystem.ExecuteGroup | filesystem.ExecuteOther
+	writeAll   = filesystem.WriteUser | filesystem.WriteGroup | filesystem.WriteOther
+	readAll    = filesystem.ReadUser | filesystem.ReadGroup | filesystem.ReadOther
 
 	// These haven't even been used yet.
 
-	allOther = ReadOther | WriteOther | ExecuteOther
-	allGroup = ReadGroup | WriteGroup | ExecuteGroup
-	allUser  = ReadUser | WriteUser | ExecuteUser
+	allOther = filesystem.ReadOther | filesystem.WriteOther | filesystem.ExecuteOther
+	allGroup = filesystem.ReadGroup | filesystem.WriteGroup | filesystem.ExecuteGroup
+	allUser  = filesystem.ReadUser | filesystem.WriteUser | filesystem.ExecuteUser
 )
 
 type (
@@ -51,7 +51,7 @@ type (
 	coreFS struct {
 		rootInfo *coreRootInfo
 		core     coreiface.CoreAPI
-		systemID ID
+		systemID filesystem.ID
 	}
 	coreDirectory struct {
 		stat    fs.FileInfo
@@ -89,7 +89,7 @@ type (
 
 const ipfsCoreTimeout = 10 * time.Second
 
-func NewIPFS(core coreiface.CoreAPI, systemID ID) *coreFS {
+func NewIPFS(core coreiface.CoreAPI, systemID filesystem.ID) *coreFS {
 	return &coreFS{
 		rootInfo: &coreRootInfo{
 			initTime: time.Now(),
@@ -99,7 +99,7 @@ func NewIPFS(core coreiface.CoreAPI, systemID ID) *coreFS {
 	}
 }
 
-func (ci *coreFS) ID() ID { return ci.systemID }
+func (ci *coreFS) ID() filesystem.ID { return ci.systemID }
 
 func (ci *coreFS) Open(name string) (fs.File, error) {
 	if name == rootName {
@@ -303,10 +303,10 @@ func (cde *coreDirEntry) Type() fs.FileMode {
 	}
 }
 
-func (cd *coreDirectory) StreamDir(ctx context.Context) <-chan StreamDirEntry {
+func (cd *coreDirectory) StreamDir(ctx context.Context) <-chan filesystem.StreamDirEntry {
 	var (
 		coreEntries = cd.entries
-		goEntries   = make(chan StreamDirEntry, cap(coreEntries))
+		goEntries   = make(chan filesystem.StreamDirEntry, cap(coreEntries))
 	)
 	go func() {
 		defer close(goEntries)
@@ -326,10 +326,10 @@ func (cd *coreDirectory) StreamDir(ctx context.Context) <-chan StreamDirEntry {
 
 func translateCoreEntries(ctx context.Context,
 	coreEntries <-chan coreiface.DirEntry,
-	goEntries chan<- StreamDirEntry,
+	goEntries chan<- filesystem.StreamDirEntry,
 ) {
 	for coreEntry := range coreEntries {
-		var entry StreamDirEntry
+		var entry filesystem.StreamDirEntry
 		if err := coreEntry.Err; err != nil {
 			entry = &coreDirEntry{error: err}
 		} else {

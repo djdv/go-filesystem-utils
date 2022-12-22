@@ -1,4 +1,4 @@
-package filesystem
+package ipfs
 
 import "io/fs"
 
