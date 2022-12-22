@@ -1,12 +1,15 @@
 package ipfs
 
 import (
+	"context"
+	"io"
 	"io/fs"
 	"path"
 	"strings"
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	ipld "github.com/ipfs/go-ipld-format" // TODO: migrate to new standard
 	dag "github.com/ipfs/go-merkledag"
 	"github.com/ipfs/go-unixfs"
@@ -28,6 +31,40 @@ type (
 		ipld.Node
 	}
 )
+
+func readdir[ST any,
+	translateFunc func(ST) filesystem.StreamDirEntry,
+](ctx context.Context, source <-chan ST, translateFn translateFunc, count int,
+) ([]fs.DirEntry, error) {
+	const upperBound = 64
+	var (
+		entries   = make([]fs.DirEntry, 0, generic.Min(count, upperBound))
+		returnAll = count <= 0
+	)
+	for {
+		select {
+		case sourceEntry, ok := <-source:
+			if !ok {
+				if len(entries) == 0 {
+					return nil, io.EOF
+				}
+				return entries, nil
+			}
+			targetEnt := translateFn(sourceEntry)
+			if err := targetEnt.Error(); err != nil {
+				return entries, err
+			}
+			entries = append(entries, targetEnt)
+			if !returnAll {
+				if count--; count == 0 {
+					return entries, nil
+				}
+			}
+		case <-ctx.Done():
+			return entries, ctx.Err()
+		}
+	}
+}
 
 func goToIPFSCore(fsid filesystem.ID, goPath string) (corepath.Path, error) {
 	return corepath.New(
