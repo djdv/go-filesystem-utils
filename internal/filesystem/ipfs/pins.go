@@ -117,7 +117,6 @@ func (*pinDirectory) Read([]byte) (int, error) {
 	return -1, fserrors.New(op, fserrors.IsDir)
 }
 
-// TODO: also implement StreamDirFile
 func (ps *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	const op fserrors.Op = "pinStream.ReadDir"
 	var (
@@ -141,12 +140,11 @@ func (ps *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 			return entries, ctx.Err()
 		case pin, ok := <-pins:
 			if !ok {
-				var err error
-				if !returnAll {
-					// FIXME: update this to match standard expectations (like is done in core)
-					err = io.EOF
+				ps.pins = nil
+				if len(entries) == 0 {
+					return nil, io.EOF
 				}
-				return entries, err
+				return entries, nil
 			}
 			if err := pin.Err(); err != nil {
 				return entries, err
