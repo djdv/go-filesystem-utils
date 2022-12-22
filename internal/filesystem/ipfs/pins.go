@@ -8,7 +8,6 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
-	"github.com/djdv/go-filesystem-utils/internal/generic"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 	coreoptions "github.com/ipfs/interface-go-ipfs-core/options"
 )
@@ -122,41 +121,22 @@ func (ps *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	var (
 		ctx  = ps.Context
 		pins = ps.pins
+		ipfs = ps.ipfs
 	)
-	if ctx == nil ||
-		pins == nil {
+	if ctx == nil {
 		return nil, fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
 	}
-
-	const upperBound = 64
-	var (
-		ipfs      = ps.ipfs
-		entries   = make([]fs.DirEntry, 0, generic.Min(count, upperBound))
-		returnAll = count <= 0
-	)
-	for {
-		select {
-		case <-ctx.Done():
-			return entries, ctx.Err()
-		case pin, ok := <-pins:
-			if !ok {
-				ps.pins = nil
-				if len(entries) == 0 {
-					return nil, io.EOF
-				}
-				return entries, nil
-			}
-			if err := pin.Err(); err != nil {
-				return entries, err
-			}
-			entries = append(entries, translatePinEntry(pin, ipfs))
-			if !returnAll {
-				if count--; count == 0 {
-					return entries, nil
-				}
-			}
-		}
+	if pins == nil {
+		return nil, io.EOF
 	}
+	translate := func(pin coreiface.Pin) filesystem.StreamDirEntry {
+		return translatePinEntry(pin, ipfs)
+	}
+	ents, err := readdir(ctx, pins, translate, count)
+	if err != nil {
+		ps.pins = nil
+	}
+	return ents, err
 }
 
 func translatePinEntry(pin coreiface.Pin, ipfs fs.FS) filesystem.StreamDirEntry {

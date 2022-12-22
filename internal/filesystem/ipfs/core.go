@@ -12,7 +12,6 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
-	"github.com/djdv/go-filesystem-utils/internal/generic"
 	files "github.com/ipfs/go-ipfs-files"
 	cbor "github.com/ipfs/go-ipld-cbor"
 	ipld "github.com/ipfs/go-ipld-format" // TODO: migrate to new standard
@@ -61,7 +60,6 @@ type (
 	}
 	coreDirEntry struct {
 		coreiface.DirEntry
-		error
 		initTime    time.Time
 		permissions fs.FileMode
 	}
@@ -251,35 +249,11 @@ func (cd *coreDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	if coreEntries == nil {
 		return nil, io.EOF
 	}
-
-	const upperBound = 64
-	var (
-		entries   = make([]fs.DirEntry, 0, generic.Min(count, upperBound))
-		returnAll = count <= 0
-	)
-	for {
-		select {
-		case coreEntry, ok := <-coreEntries:
-			if !ok {
-				cd.entries = nil
-				if len(entries) == 0 {
-					return nil, io.EOF
-				}
-				return entries, nil
-			}
-			if err := coreEntry.Err; err != nil {
-				return entries, err
-			}
-			entries = append(entries, &coreDirEntry{DirEntry: coreEntry})
-			if !returnAll {
-				if count--; count == 0 {
-					return entries, nil
-				}
-			}
-		case <-ctx.Done():
-			return entries, ctx.Err()
-		}
+	ents, err := readdir(ctx, coreEntries, translateCoreEntry, count)
+	if err != nil {
+		cd.entries = nil
 	}
+	return ents, err
 }
 
 func (cde *coreDirEntry) Name() string               { return cde.DirEntry.Name }
@@ -289,7 +263,7 @@ func (cde *coreDirEntry) Size() int64                { return int64(cde.DirEntry
 func (cde *coreDirEntry) ModTime() time.Time         { return cde.initTime }
 func (cde *coreDirEntry) Mode() fs.FileMode          { return cde.Type() | cde.permissions }
 func (cde *coreDirEntry) Sys() any                   { return cde }
-func (cde *coreDirEntry) Error() error               { return cde.error }
+func (cde *coreDirEntry) Error() error               { return cde.DirEntry.Err }
 func (cde *coreDirEntry) Type() fs.FileMode {
 	switch cde.DirEntry.Type {
 	case coreiface.TDirectory:
@@ -314,12 +288,6 @@ func (cd *coreDirectory) StreamDir(ctx context.Context) <-chan filesystem.Stream
 			translateCoreEntries(ctx, coreEntries, goEntries)
 			return
 		}
-		const op fserrors.Op = "coreDirectory.StreamDir"
-		err := fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
-		select {
-		case goEntries <- &coreDirEntry{error: err}:
-		case <-ctx.Done():
-		}
 	}()
 	return goEntries
 }
@@ -329,18 +297,16 @@ func translateCoreEntries(ctx context.Context,
 	goEntries chan<- filesystem.StreamDirEntry,
 ) {
 	for coreEntry := range coreEntries {
-		var entry filesystem.StreamDirEntry
-		if err := coreEntry.Err; err != nil {
-			entry = &coreDirEntry{error: err}
-		} else {
-			entry = &coreDirEntry{DirEntry: coreEntry}
-		}
 		select {
-		case goEntries <- entry:
+		case goEntries <- translateCoreEntry(coreEntry):
 		case <-ctx.Done():
 			return
 		}
 	}
+}
+
+func translateCoreEntry(coreEntry coreiface.DirEntry) filesystem.StreamDirEntry {
+	return &coreDirEntry{DirEntry: coreEntry}
 }
 
 func (cd *coreDirectory) Close() error {
