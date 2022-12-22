@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
+	"github.com/djdv/go-filesystem-utils/internal/filesystem/ipfs"
 	"github.com/hugelgupf/p9/p9"
 	"github.com/hugelgupf/p9/perrors"
 	"github.com/multiformats/go-multiaddr"
@@ -190,18 +191,17 @@ func ipfsToGoFS(fsid filesystem.ID, ipfsMaddr multiaddr.Multiaddr) (fs.FS, error
 	// TODO [de-dupe]: convert PinFS to fallthrough to IPFS if possible.
 	// Both need a client+IPFS-FS.
 	switch fsid { // TODO: add all cases
-	case filesystem.IPFS,
-		filesystem.IPNS:
-		return filesystem.NewIPFS(client, fsid), nil
+	case filesystem.IPFS, filesystem.IPNS:
+		return ipfs.NewIPFS(client, fsid), nil
 	case filesystem.IPFSPins:
-		ipfs := filesystem.NewIPFS(client, filesystem.IPFS)
-		return filesystem.NewPinFS(client.Pin(),
-			filesystem.WithIPFS[filesystem.PinfsOption](ipfs),
+		ipfsFS := ipfs.NewIPFS(client, filesystem.IPFS)
+		return ipfs.NewPinFS(client.Pin(),
+			ipfs.WithIPFS[ipfs.PinfsOption](ipfsFS),
 		), nil
 	case filesystem.IPFSKeys:
-		ipns := filesystem.NewIPFS(client, filesystem.IPNS)
-		return filesystem.NewKeyFS(client.Key(),
-			filesystem.WithIPNS[filesystem.KeyfsOption](ipns),
+		ipnsFS := ipfs.NewIPFS(client, filesystem.IPNS)
+		return ipfs.NewKeyFS(client.Key(),
+			ipfs.WithIPNS[ipfs.KeyfsOption](ipnsFS),
 		), nil
 	case filesystem.MFS:
 		return getMFSMountRoot(ipfsMaddr)
