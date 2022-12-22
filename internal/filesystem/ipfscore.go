@@ -245,9 +245,11 @@ func (cd *coreDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 		ctx         = cd.Context
 		coreEntries = cd.entries
 	)
-	if ctx == nil ||
-		coreEntries == nil {
+	if ctx == nil {
 		return nil, fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
+	}
+	if coreEntries == nil {
+		return nil, io.EOF
 	}
 
 	const upperBound = 64
@@ -259,29 +261,11 @@ func (cd *coreDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 		select {
 		case coreEntry, ok := <-coreEntries:
 			if !ok {
-				if returnAll {
-					return entries, nil
+				cd.entries = nil
+				if len(entries) == 0 {
+					return nil, io.EOF
 				}
-				// FIXME: we only want to return EOF /after/ we hit it.
-				// I.e. if we have 2 entries, and a count of 100,
-				// we reuturn ([2]{a,b}, nil)
-				// Only if we're called again, will we return (nil, EOF)
-				/* Standard does this:
-				n := len(d.entry) - d.offset
-				if n == 0 && count > 0 {
-				    return nil, io.EOF
-				}
-				if count > 0 && n > count {
-				    n = count
-				}
-				list := make([]fs.DirEntry, n)
-				for i := range list {
-				    list[i] = &d.entry[d.offset+i]
-				}
-				d.offset += n
-				return list, nil
-				*/
-				return entries, io.EOF
+				return entries, nil
 			}
 			if err := coreEntry.Err; err != nil {
 				return entries, err
