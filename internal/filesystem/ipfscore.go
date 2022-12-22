@@ -236,7 +236,6 @@ func (*coreDirectory) Read([]byte) (int, error) {
 	return -1, fserrors.New(op, fserrors.IsDir)
 }
 
-// TODO: also implement StreamDirFile
 // TODO: [676aa3d1-00ea-480b-9c1c-b9b4667cb0f7] - These functions overlap a lot.
 // We could probably generalize this by just having a `transformFn`
 // parameter to a generic version of this; `T => DirEntry; err`
