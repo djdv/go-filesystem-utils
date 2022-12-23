@@ -71,7 +71,7 @@ func readdir[ST any,
 func goToIPFSCore(fsid filesystem.ID, goPath string) (corepath.Path, error) {
 	return corepath.New(
 		path.Join("/",
-			strings.ToLower(fsid.String()), // "ipfs", "ipns", ...
+			strings.ToLower(string(fsid)), // "ipfs", "ipns", ...
 			goPath,
 		)), nil
 	/* TODO: This is only valid for IPFS. And likely isn't worth the fragility to save a resolve elsewhere.

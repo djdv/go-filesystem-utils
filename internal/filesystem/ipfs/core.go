@@ -26,6 +26,9 @@ import (
 var _ filesystem.StreamDirFile = (*coreDirectory)(nil)
 
 const (
+	IPFSID filesystem.ID = "IPFS"
+	IPNSID filesystem.ID = "IPNS"
+
 	executeAll = filesystem.ExecuteUser | filesystem.ExecuteGroup | filesystem.ExecuteOther
 	writeAll   = filesystem.WriteUser | filesystem.WriteGroup | filesystem.WriteOther
 	readAll    = filesystem.ReadUser | filesystem.ReadGroup | filesystem.ReadOther
