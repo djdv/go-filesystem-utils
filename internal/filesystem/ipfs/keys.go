@@ -21,11 +21,11 @@ type (
 		ipns   fs.FS
 	}
 	keyDirectory struct {
-		mode    fs.FileMode
 		ipns    fs.FS
 		cancel  context.CancelFunc
 		getKeys func() ([]coreiface.Key, error)
 		cursor  int
+		mode    fs.FileMode
 	}
 	keyDirEntry struct {
 		permissions fs.FileMode
@@ -38,6 +38,8 @@ type (
 	}
 )
 
+const KeyFSID filesystem.ID = "KeyFS"
+
 func NewKeyFS(core coreiface.KeyAPI, options ...KeyfsOption) *IPFSKeyFS {
 	fs := &IPFSKeyFS{keyAPI: core}
 	for _, setter := range options {
@@ -48,7 +50,7 @@ func NewKeyFS(core coreiface.KeyAPI, options ...KeyfsOption) *IPFSKeyFS {
 	return fs
 }
 
-func (*IPFSKeyFS) ID() filesystem.ID { return filesystem.IPFSKeys }
+func (*IPFSKeyFS) ID() filesystem.ID { return KeyFSID }
 func (*IPFSKeyFS) Close() error      { return nil } // TODO: close everything
 
 // TODO: probably inefficient. Review.

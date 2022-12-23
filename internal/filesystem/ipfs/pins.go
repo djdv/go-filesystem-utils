@@ -44,6 +44,8 @@ type (
 	}
 )
 
+const PinFSID filesystem.ID = "PinFS"
+
 func NewPinFS(pinAPI coreiface.PinAPI, options ...PinfsOption) *IPFSPinFS {
 	fs := &IPFSPinFS{pinAPI: pinAPI}
 	for _, setter := range options {
@@ -54,7 +56,7 @@ func NewPinFS(pinAPI coreiface.PinAPI, options ...PinfsOption) *IPFSPinFS {
 	return fs
 }
 
-func (*IPFSPinFS) ID() filesystem.ID { return filesystem.IPFSPins }
+func (*IPFSPinFS) ID() filesystem.ID { return PinFSID }
 
 func (pfs *IPFSPinFS) Open(name string) (fs.File, error) {
 	const op = "open"
