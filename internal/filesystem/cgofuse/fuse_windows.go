@@ -28,7 +28,7 @@ func makeFuseArgs(fsid filesystem.ID, target string) (string, []string) {
 	)
 	opts.Grow(arbitraryHint)
 	opts.WriteString(idOpts)
-	if systemName := fsid.String(); systemName != "" {
+	if systemName := string(fsid); systemName != "" {
 		opts.WriteString(systemNameOpt)
 		opts.WriteString(systemName)
 		opts.WriteString(volNameOpt)
