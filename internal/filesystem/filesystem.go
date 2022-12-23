@@ -13,6 +13,13 @@ import (
 )
 
 type (
+	// Host represents a file system host API.
+	// (9P, Fuse, et al.)
+	Host string
+	// ID represents a particular file system implementation.
+	// (IPFS, IPNS, et al.)
+	ID string
+
 	IDFS interface {
 		fs.FS
 		ID() ID
