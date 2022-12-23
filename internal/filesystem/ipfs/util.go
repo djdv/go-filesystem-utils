@@ -32,6 +32,8 @@ type (
 	}
 )
 
+const rootName = "."
+
 func readdir[ST any,
 	translateFunc func(ST) filesystem.StreamDirEntry,
 ](ctx context.Context, source <-chan ST, translateFn translateFunc, count int,

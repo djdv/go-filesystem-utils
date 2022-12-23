@@ -25,19 +25,10 @@ import (
 // TODO: move this to a test file
 var _ filesystem.StreamDirFile = (*coreDirectory)(nil)
 
-// TODO: I don't know where this belongs but all our systems will use it for the root name.
-const rootName = "."
-
 const (
 	executeAll = filesystem.ExecuteUser | filesystem.ExecuteGroup | filesystem.ExecuteOther
 	writeAll   = filesystem.WriteUser | filesystem.WriteGroup | filesystem.WriteOther
 	readAll    = filesystem.ReadUser | filesystem.ReadGroup | filesystem.ReadOther
-
-	// These haven't even been used yet.
-
-	allOther = filesystem.ReadOther | filesystem.WriteOther | filesystem.ExecuteOther
-	allGroup = filesystem.ReadGroup | filesystem.WriteGroup | filesystem.ExecuteGroup
-	allUser  = filesystem.ReadUser | filesystem.WriteUser | filesystem.ExecuteUser
 )
 
 type (
