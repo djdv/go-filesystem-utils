@@ -1,4 +1,4 @@
-package files
+package p9
 
 import (
 	"context"
@@ -74,7 +74,7 @@ type (
 	fsidSettings struct {
 		directorySettings
 		generatorSettings
-		hostAPI filesystem.API
+		hostAPI filesystem.Host
 	}
 	FSIDOption func(*fsidSettings) error
 

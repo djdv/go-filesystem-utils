@@ -1,4 +1,4 @@
-package files
+package p9
 
 import (
 	"errors"
@@ -15,9 +15,12 @@ type Mounter struct {
 	cleanupEmpties bool
 }
 
-// TODO: temporary;
-// NOTE: Assure that we return a real concrete type.
-// otherwise t-e2e is required (l&r).
+// TODO: [current] - define a type map[host]handlerFunc() that we take in
+// may need map[fsid] handler too.
+// From main -> us -> main
+// internally we'll use this table dynamically, rather than the hardcoded consts we had before
+// these func may be defined by main, and/or in some relevant package
+// e.g. `cgofuse.MountFunc`
 func NewMounter(options ...MounterOption) *Mounter {
 	var settings mounterSettings
 	if err := parseOptions(&settings, options...); err != nil {
