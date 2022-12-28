@@ -8,8 +8,6 @@ import (
 	"github.com/hugelgupf/p9/p9"
 )
 
-type ioUnit = uint32
-
 const (
 	noIOUnit ioUnit = 0
 
@@ -69,15 +67,10 @@ type (
 		*p9.Attr
 		*p9.QID
 	}
-
-	openFlag bool
-
 	unixTime struct {
 		seconds, nanoseconds *uint64
 	}
 )
-
-func (b openFlag) fidOpened() bool { return bool(b) }
 
 func (md metadata) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
 	var (
