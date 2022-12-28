@@ -67,57 +67,35 @@ type (
 		*p9.Attr
 		*p9.QID
 	}
-	unixTime struct {
-		seconds, nanoseconds *uint64
-	}
 )
 
 func (md metadata) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
 	var (
+		ourAttr    = md.Attr
 		ourAtime   = !valid.ATimeNotSystemTime
 		ourMtime   = !valid.MTimeNotSystemTime
 		cTime      = valid.CTime
 		usingClock = ourAtime || ourMtime || cTime
 	)
 	if usingClock {
-		for _, time := range []struct {
-			name               string
-			useClock, setField bool
-		}{
-			{useClock: ourAtime, setField: valid.ATime, name: "A"},
-			{useClock: ourMtime, setField: valid.MTime, name: "M"},
-		} {
-			if time.useClock && !time.setField {
-				const (
-					namePrefix = "P9_SETATTR_"
-					nameSuffix = "TIME"
-				)
-				return fmt.Errorf(
-					"system time requested, but corresponding time field (%s) was not set",
-					namePrefix+time.name+nameSuffix,
-				)
-			}
+		var (
+			now  = time.Now()
+			sec  = uint64(now.Unix())
+			nano = uint64(now.UnixNano())
+		)
+		if ourAtime {
+			valid.ATime = false
+			ourAttr.ATimeSeconds, ourAttr.ATimeNanoSeconds = sec, nano
 		}
-		timestamp(timePointers(md.Attr, ourAtime, ourMtime, cTime))
-		for _, b := range []struct {
-			timeFlag  *bool
-			clockFlag bool
-		}{
-			{
-				timeFlag:  &valid.ATime,
-				clockFlag: ourAtime,
-			},
-			{
-				timeFlag:  &valid.MTime,
-				clockFlag: ourMtime,
-			},
-		} {
-			if b.clockFlag {
-				*b.timeFlag = false
-			}
+		if ourMtime {
+			valid.MTime = false
+			ourAttr.MTimeSeconds, ourAttr.MTimeNanoSeconds = sec, nano
+		}
+		if cTime {
+			ourAttr.CTimeSeconds, ourAttr.CTimeNanoSeconds = sec, nano
 		}
 	}
-	md.Apply(valid, attr)
+	ourAttr.Apply(valid, attr)
 	return nil
 }
 
@@ -142,7 +120,14 @@ func initMetadata(metadata *metadata, fileType p9.FileMode, withTimestamps bool)
 	}
 	attr.Mode |= fileType
 	if withTimestamps {
-		timestamp(timePointers(attr, true, true, true))
+		var (
+			now  = time.Now()
+			sec  = uint64(now.Unix())
+			nano = uint64(now.UnixNano())
+		)
+		attr.ATimeSeconds, attr.ATimeNanoSeconds = sec, nano
+		attr.MTimeSeconds, attr.MTimeNanoSeconds = sec, nano
+		attr.CTimeSeconds, attr.CTimeNanoSeconds = sec, nano
 	}
 	path := metadata.ninePath
 	if path == nil {
@@ -156,55 +141,6 @@ func initMetadata(metadata *metadata, fileType p9.FileMode, withTimestamps bool)
 	metadata.QID = &p9.QID{
 		Type: qidType,
 		Path: pathNum,
-	}
-}
-
-func timePointers(attr *p9.Attr, A, M, C bool) []unixTime {
-	var fields int
-	for _, b := range []bool{A, M, C} {
-		if b {
-			fields++
-		}
-	}
-	times := make([]unixTime, 0, fields)
-	for _, t := range []struct {
-		seconds, nanoseconds *uint64
-		setFlag              bool
-	}{
-		{
-			setFlag:     A,
-			seconds:     &attr.ATimeSeconds,
-			nanoseconds: &attr.ATimeNanoSeconds,
-		},
-		{
-			setFlag:     M,
-			seconds:     &attr.MTimeSeconds,
-			nanoseconds: &attr.MTimeNanoSeconds,
-		},
-		{
-			setFlag:     C,
-			seconds:     &attr.CTimeSeconds,
-			nanoseconds: &attr.CTimeNanoSeconds,
-		},
-	} {
-		if t.setFlag {
-			times = append(times, unixTime{
-				seconds:     t.seconds,
-				nanoseconds: t.nanoseconds,
-			})
-		}
-	}
-	return times
-}
-
-func timestamp(times []unixTime) {
-	var (
-		now     = time.Now()
-		nowSec  = uint64(now.Unix())
-		nowNano = uint64(now.UnixNano())
-	)
-	for _, field := range times {
-		*field.seconds, *field.nanoseconds = nowSec, nowNano
 	}
 }
 
