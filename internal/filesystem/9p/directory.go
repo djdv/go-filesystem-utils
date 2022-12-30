@@ -162,6 +162,11 @@ func (dir *Directory) RenameAt(oldName string, newDir p9.File, newName string) e
 	return rename(parent, newDir, dir, oldName, newName)
 }
 
+func (dir *Directory) Renamed(newDir p9.File, newName string) {
+	dir.link.parent = newDir
+	dir.link.name = newName
+}
+
 func (eDir *ephemeralDir) clone(withQID bool) ([]p9.QID, *ephemeralDir, error) {
 	qids, dir, err := eDir.Directory.clone(withQID)
 	if err != nil {
