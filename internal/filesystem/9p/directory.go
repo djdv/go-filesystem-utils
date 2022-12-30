@@ -138,15 +138,15 @@ func (dir *Directory) Readdir(offset uint64, count uint32) (p9.Dirents, error) {
 }
 
 func rename(oldDir, newDir, file p9.File, oldName, newName string) error {
-	if oldDir == nil || oldName == "" {
-		return perrors.ENOENT // TODO: [spec] check if this is the right evalue to use
-	}
-	// TODO: attempt rollback on error
 	if err := newDir.Link(file, newName); err != nil {
 		return err
 	}
 	const flags = 0
-	return oldDir.UnlinkAt(oldName, flags)
+	err := oldDir.UnlinkAt(oldName, flags)
+	if err == nil {
+		return nil
+	}
+	return fserrors.Join(err, newDir.UnlinkAt(newName, flags))
 }
 
 func (dir *Directory) Rename(newDir p9.File, newName string) error {
