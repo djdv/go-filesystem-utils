@@ -2,8 +2,9 @@ package ipfs
 
 import (
 	"context"
-	"io"
 	"io/fs"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
@@ -13,183 +14,316 @@ import (
 )
 
 var ( // TODO: move this to a test file
-	_ filesystem.IDFS          = (*IPFSPinFS)(nil)
+	_ fs.StatFS                = (*PinFS)(nil)
+	_ filesystem.IDFS          = (*PinFS)(nil)
 	_ filesystem.StreamDirFile = (*pinDirectory)(nil)
-	// TODO:
-	// _ POSIXInfo     = (*pinDirEntry)(nil)
+	// TODO: if this info is stored somewhere for pins.
+	// _ filesystem.AccessTimeInfo   = (*pinDirEntry)(nil)
+	// _ filesystem.ChangeTimeInfo   = (*pinDirEntry)(nil)
+	// _ filesystem.CreationTimeInfo = (*pinDirEntry)(nil)
 )
 
 type (
-	IPFSPinFS struct {
-		pinAPI coreiface.PinAPI
-		ipfs   fs.FS // TODO: subsys should be handled via `bind` instead? fs.Subsys?
+	pinDirectoryInfo struct {
+		modTime     atomic.Pointer[time.Time]
+		permissions fs.FileMode
+	}
+	pinShared struct {
+		api  coreiface.PinAPI
+		ipfs fs.FS
+		info pinDirectoryInfo
+	}
+	PinFS struct {
+		ctx    context.Context
+		cancel context.CancelFunc
+		pinShared
+		statFn   func(*pinDirEntry) error
+		cacheMu  sync.RWMutex
+		snapshot []filesystem.StreamDirEntry
+		expiry   time.Duration
 	}
 	pinDirectory struct {
-		modTime time.Time
-		pins    <-chan coreiface.Pin
-		context.Context
-		context.CancelFunc
-		ipfs fs.FS
-		mode fs.FileMode
+		*pinShared
+		stream *entryStream
 	}
-
 	pinDirEntry struct {
 		coreiface.Pin
-		ipfs fs.FS // TODO: replace this with statfunc or something. We shouldn't need the whole FS.
+		modTime time.Time
+		mode    fs.FileMode
+		size    int64
 	}
-	pinInfo struct { // TODO: roll into pinDirEntry?
-		name     string
-		mode     fs.FileMode // Without the type, this is only really useful for move+delete permissions.
-		accessed time.Time
-	}
+	PinFSOption func(*PinFS) error
 )
 
-const PinFSID filesystem.ID = "PinFS"
+const (
+	PinFSID       filesystem.ID = "PinFS"
+	pinfsRootName               = rootName
+)
 
-func NewPinFS(pinAPI coreiface.PinAPI, options ...PinfsOption) *IPFSPinFS {
-	fs := &IPFSPinFS{pinAPI: pinAPI}
+func NewPinFS(pinAPI coreiface.PinAPI, options ...PinFSOption) (*PinFS, error) {
+	fsys := PinFS{
+		pinShared: pinShared{
+			api: pinAPI,
+			info: pinDirectoryInfo{
+				permissions: readAll | executeAll,
+			},
+		},
+	}
+	fsys.info.modTime.Store(new(time.Time))
 	for _, setter := range options {
-		if err := setter(fs); err != nil {
-			panic(err)
+		if err := setter(&fsys); err != nil {
+			return nil, err
 		}
 	}
-	return fs
+	if fsys.ctx == nil {
+		fsys.ctx, fsys.cancel = context.WithCancel(context.Background())
+	}
+	fsys.initStatFunc()
+	return &fsys, nil
 }
 
-func (*IPFSPinFS) ID() filesystem.ID { return PinFSID }
+// WithIPFS supplies an IPFS instance to
+// use for added functionality.
+// One such case is resolving a pin's file metadata.
+func WithIPFS(ipfs fs.FS) PinFSOption {
+	return func(pfs *PinFS) error { pfs.ipfs = ipfs; return nil }
+}
 
-func (pfs *IPFSPinFS) Open(name string) (fs.File, error) {
+func (pfs *PinFS) initStatFunc() {
+	var (
+		ipfs        = pfs.ipfs
+		permissions = &pfs.info.permissions
+	)
+	if ipfs == nil {
+		pfs.statFn = func(entry *pinDirEntry) error {
+			entry.mode = permissions.Perm()
+			entry.modTime = time.Now()
+			return nil
+		}
+		return
+	}
+	pfs.statFn = func(entry *pinDirEntry) error {
+		name := entry.Path().Cid().String()
+		info, err := fs.Stat(ipfs, name)
+		if err != nil {
+			return err
+		}
+		entry.mode = info.Mode() | permissions.Perm()
+		entry.size = info.Size()
+		entry.modTime = info.ModTime()
+		return nil
+	}
+}
+
+func CachePinsFor(duration time.Duration) PinFSOption {
+	return func(pfs *PinFS) error {
+		pfs.expiry = duration
+		return nil
+	}
+}
+
+func (*PinFS) ID() filesystem.ID { return PinFSID }
+
+func (pfs *PinFS) Stat(name string) (fs.FileInfo, error) {
+	const op = "stat"
+	if name == pinfsRootName {
+		return &pfs.info, nil
+	}
+	if subsys := pfs.ipfs; subsys != nil {
+		return fs.Stat(subsys, name)
+	}
+	return nil, newFSError(op, name, ErrNotFound, fserrors.NotExist)
+}
+
+func (pfs *PinFS) Open(name string) (fs.File, error) {
 	const op = "open"
-	if name == rootName {
+	if name == pinfsRootName {
 		return pfs.openRoot()
 	}
 	if subsys := pfs.ipfs; subsys != nil {
 		return subsys.Open(name)
 	}
-	return nil, &fs.PathError{
-		Op:   op,
-		Path: name,
-		Err:  fserrors.New(fserrors.NotExist), // TODO old-style err
-	}
+	return nil, newFSError(op, name, ErrNotFound, fserrors.NotExist)
 }
 
-func (pfs *IPFSPinFS) openRoot() (fs.ReadDirFile, error) {
-	const op fserrors.Op = "pinfs.openRoot"
+func (pfs *PinFS) openRoot() (fs.ReadDirFile, error) {
 	var (
-		ctx, cancel = context.WithCancel(context.Background())
-		lsOpts      = []coreoptions.PinLsOption{
-			coreoptions.Pin.Ls.Recursive(),
-		}
-		pins, err = pfs.pinAPI.Ls(ctx, lsOpts...)
+		dirCtx, cancel = context.WithCancel(pfs.ctx)
+		entries, err   = pfs.getEntries(dirCtx)
 	)
 	if err != nil {
 		cancel()
-		return nil, &fs.PathError{ // TODO old-style err; convert to wrapped, defined, const errs.
-			Op:   "open", // TODO: what does the fs.FS spec say for extensions? `opendir`?
-			Path: rootName,
-			Err: fserrors.New(op,
-				fserrors.IO,
-				err),
-		}
+		return nil, err
 	}
-	// TODO: retrieve permission from somewhere else. (Passed into FS constructor)
-	const permissions = readAll | executeAll
-	stream := &pinDirectory{
-		mode:       fs.ModeDir | permissions,
-		modTime:    time.Now(),
-		ipfs:       pfs.ipfs,
-		pins:       pins,
-		Context:    ctx,
-		CancelFunc: cancel,
-	}
-	return stream, nil
+	return &pinDirectory{
+		pinShared: &pfs.pinShared,
+		stream: &entryStream{
+			Context: dirCtx, CancelFunc: cancel,
+			ch: entries,
+		},
+	}, nil
 }
 
-func (*pinDirectory) Name() string                  { return rootName }
-func (*pinDirectory) Size() int64                   { return 0 }
-func (ps *pinDirectory) Stat() (fs.FileInfo, error) { return ps, nil }
-func (ps *pinDirectory) Mode() fs.FileMode          { return ps.mode }
-func (ps *pinDirectory) ModTime() time.Time         { return ps.modTime }
-func (ps *pinDirectory) IsDir() bool                { return ps.Mode().IsDir() }
-func (ps *pinDirectory) Sys() any                   { return ps }
-
-func (*pinDirectory) Read([]byte) (int, error) {
-	const op fserrors.Op = "pinStream.Read"
-	return -1, fserrors.New(op, fserrors.IsDir)
+func (pfs *PinFS) getEntries(ctx context.Context) (<-chan filesystem.StreamDirEntry, error) {
+	cacheDisabled := pfs.expiry == 0
+	if cacheDisabled {
+		return pfs.fetchEntries(ctx)
+	}
+	pfs.cacheMu.Lock()
+	if pfs.validLocked() {
+		entries := pfs.generateEntriesLocked(ctx)
+		pfs.cacheMu.Unlock()
+		return entries, nil
+	}
+	return pfs.fetchAndCacheThenUnlock(ctx)
 }
 
-func (ps *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
-	const op fserrors.Op = "pinStream.ReadDir"
+func (pfs *PinFS) validLocked() bool {
 	var (
-		ctx  = ps.Context
-		pins = ps.pins
-		ipfs = ps.ipfs
+		expiry  = pfs.expiry
+		forever = expiry < 0
 	)
-	if ctx == nil {
-		return nil, fserrors.New(op, fserrors.IO) // TODO: error value for E-not-open?
+	if forever || time.Since(*pfs.info.modTime.Load()) < expiry {
+		return true
 	}
-	if pins == nil {
-		return nil, io.EOF
-	}
-	translate := func(pin coreiface.Pin) filesystem.StreamDirEntry {
-		return translatePinEntry(pin, ipfs)
-	}
-	ents, err := readdir(ctx, pins, translate, count)
-	if err != nil {
-		ps.pins = nil
-	}
-	return ents, err
+	return false
 }
 
-func translatePinEntry(pin coreiface.Pin, ipfs fs.FS) filesystem.StreamDirEntry {
-	return &pinDirEntry{
-		Pin:  pin,
-		ipfs: ipfs,
-	}
-}
-
-func (ps *pinDirectory) StreamDir(ctx context.Context) <-chan filesystem.StreamDirEntry {
+func (pfs *PinFS) generateEntriesLocked(ctx context.Context) <-chan filesystem.StreamDirEntry {
 	var (
-		pins    = ps.pins
-		ipfs    = ps.ipfs
-		entries = make(chan filesystem.StreamDirEntry, cap(pins))
+		snapshot = pfs.snapshot
+		instance = make([]filesystem.StreamDirEntry, len(snapshot))
+		_        = copy(instance, snapshot)
+	)
+	return generateEntryChan(ctx, instance)
+}
+
+func (pfs *PinFS) fetchEntries(ctx context.Context) (<-chan filesystem.StreamDirEntry, error) {
+	var (
+		api       = pfs.api
+		pins, err = api.Ls(ctx, coreoptions.Pin.Ls.Recursive())
+	)
+	if err != nil {
+		return nil, err
+	}
+	var (
+		entries = newStreamChan(pins)
+		statFn  = pfs.statFn
 	)
 	go func() {
 		defer close(entries)
-		if pins != nil {
-			translatePinEntries(ctx, pins, entries, ipfs)
+		for pin := range pins {
+			entry := pinDirEntry{Pin: pin}
+			if pin.Err() == nil {
+				if err := statFn(&entry); err != nil {
+					select {
+					case entries <- newErrorEntry(err):
+					case <-ctx.Done():
+						drainThenSendErr(entries, ctx.Err())
+					}
+					return
+				}
+			}
+			select {
+			case entries <- &entry:
+			case <-ctx.Done():
+				drainThenSendErr(entries, ctx.Err())
+				return
+			}
 		}
 	}()
-	return entries
+	return entries, nil
 }
 
-func translatePinEntries(ctx context.Context,
-	pins <-chan coreiface.Pin,
-	entries chan<- filesystem.StreamDirEntry,
-	ipfs fs.FS,
-) {
-	for pin := range pins {
-		select {
-		case entries <- translatePinEntry(pin, ipfs):
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-func (ps *pinDirectory) Close() error {
-	const op fserrors.Op = "pinStream.Close"
-	if cancel := ps.CancelFunc; cancel != nil {
+func (pfs *PinFS) fetchAndCacheThenUnlock(ctx context.Context) (<-chan filesystem.StreamDirEntry, error) {
+	fetchCtx, cancel := context.WithCancel(pfs.ctx)
+	fetched, err := pfs.fetchEntries(fetchCtx)
+	if err != nil {
+		pfs.cacheMu.Unlock()
 		cancel()
-		ps.Context = nil
-		ps.CancelFunc = nil
-		ps.pins = nil
+		return nil, err
+	}
+	var (
+		relay       = newStreamChan(fetched)
+		accumulator = pfs.snapshot[:0]
+	)
+	go func() {
+		defer func() { cancel(); pfs.cacheMu.Unlock() }()
+		sawError, snapshot := accumulateRelayClose(ctx, fetched, relay, accumulator)
+		if sawError || fetchCtx.Err() != nil {
+			// Time stamp remains expired.
+			return // Caller must try to fetch again.
+		}
+		pfs.snapshot = compactSlice(snapshot)
+		now := time.Now()
+		pfs.info.modTime.Store(&now)
+	}()
+	return relay, nil
+}
+
+func (pfs *PinFS) Close() error {
+	pfs.cancel()
+	return nil
+}
+
+func (*pinDirectoryInfo) Name() string          { return pinfsRootName }
+func (*pinDirectoryInfo) Size() int64           { return 0 }
+func (pi *pinDirectoryInfo) Mode() fs.FileMode  { return fs.ModeDir | pi.permissions }
+func (pi *pinDirectoryInfo) ModTime() time.Time { return *pi.modTime.Load() }
+func (pi *pinDirectoryInfo) IsDir() bool        { return pi.Mode().IsDir() }
+func (pi *pinDirectoryInfo) Sys() any           { return pi }
+
+func (pd *pinDirectory) Stat() (fs.FileInfo, error) { return &pd.info, nil }
+func (*pinDirectory) Read([]byte) (int, error) {
+	const op = "pinDirectory.Read"
+	return -1, newFSError(op, pinfsRootName, ErrIsDir, fserrors.IsDir)
+}
+
+func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
+	const op = "pinDirectory.ReadDir"
+	stream := pd.stream
+	if stream == nil {
+		// TODO: We don't have an error kind
+		// that translates into EBADF
+		return nil, newFSError(op, pinfsRootName, ErrNotOpen, fserrors.IO)
+	}
+	var (
+		ctx       = stream.Context
+		entryChan = stream.ch
+	)
+	entries, err := readEntries(ctx, entryChan, count)
+	if err != nil {
+		stream.ch = nil
+		err = readdirErr(op, pinfsRootName, err)
+	}
+	return entries, err
+}
+
+func (pd *pinDirectory) StreamDir() <-chan filesystem.StreamDirEntry {
+	const op = "pinDirectory.StreamDir"
+	stream := pd.stream
+	if stream == nil {
+		errs := make(chan filesystem.StreamDirEntry, 1)
+		// TODO: We don't have an error kind
+		// that translates into EBADF
+		errs <- newErrorEntry(
+			newFSError(op, pinfsRootName, ErrNotOpen, fserrors.IO),
+		)
+		return errs
+	}
+	return stream.ch
+}
+
+func (pd *pinDirectory) Close() error {
+	const op = "pinStream.Close"
+	if stream := pd.stream; stream != nil {
+		stream.CancelFunc()
+		pd.stream = nil
 		return nil
 	}
-	return fserrors.New(op,
-		fserrors.InvalidItem, // TODO: Check POSIX expected values
-		"directory stream was not open",
-	)
+	// TODO: We don't have an error kind
+	// that translates into EBADF
+	return newFSError(op, pinfsRootName, ErrNotOpen, fserrors.IO)
 }
 
 func (pe *pinDirEntry) Name() string {
@@ -197,17 +331,7 @@ func (pe *pinDirEntry) Name() string {
 }
 
 func (pe *pinDirEntry) Info() (fs.FileInfo, error) {
-	pinCid := pe.Pin.Path().Cid()
-	if ipfs := pe.ipfs; ipfs != nil {
-		return fs.Stat(pe.ipfs, pinCid.String())
-	}
-	// TODO: permission come from somewhere else.
-	const permissions = readAll | executeAll
-	return &pinInfo{
-		name:     pinCid.String(),
-		mode:     fs.ModeDir | permissions,
-		accessed: time.Now(),
-	}, nil
+	return pe, nil
 }
 
 func (pe *pinDirEntry) Type() fs.FileMode {
@@ -218,12 +342,9 @@ func (pe *pinDirEntry) Type() fs.FileMode {
 	return info.Mode().Type()
 }
 
-func (pe *pinDirEntry) IsDir() bool  { return pe.Type().IsDir() }
-func (pe *pinDirEntry) Error() error { return pe.Pin.Err() }
-
-func (pi *pinInfo) Name() string       { return pi.name }
-func (*pinInfo) Size() int64           { return 0 } // Unknown without IPFS subsystem.
-func (pi *pinInfo) Mode() fs.FileMode  { return pi.mode }
-func (pi *pinInfo) ModTime() time.Time { return pi.accessed }
-func (pi *pinInfo) IsDir() bool        { return pi.Mode().IsDir() }
-func (pi *pinInfo) Sys() any           { return pi }
+func (pe *pinDirEntry) IsDir() bool        { return pe.Type().IsDir() }
+func (pe *pinDirEntry) Error() error       { return pe.Pin.Err() }
+func (pe *pinDirEntry) Size() int64        { return pe.size }
+func (pe *pinDirEntry) Mode() fs.FileMode  { return pe.mode }
+func (pe *pinDirEntry) ModTime() time.Time { return pe.modTime }
+func (pe *pinDirEntry) Sys() any           { return pe }
