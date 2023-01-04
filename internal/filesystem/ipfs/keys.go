@@ -11,26 +11,27 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
-	"github.com/djdv/go-filesystem-utils/internal/generic"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 )
 
 type (
-	IPFSKeyFS struct {
-		keyAPI coreiface.KeyAPI
-		ipns   fs.FS
+	KeyFS struct {
+		keyAPI      coreiface.KeyAPI
+		ipns        fs.FS
+		ctx         context.Context
+		cancel      context.CancelFunc
+		permissions fs.FileMode
 	}
+	KeyFSOption  func(*KeyFS) error
 	keyDirectory struct {
-		ipns    fs.FS
-		cancel  context.CancelFunc
-		getKeys func() ([]coreiface.Key, error)
-		cursor  int
-		mode    fs.FileMode
+		ipns   fs.FS
+		stream *entryStream
+		mode   fs.FileMode
 	}
 	keyDirEntry struct {
-		permissions fs.FileMode
 		coreiface.Key
-		ipns fs.FS
+		ipns        fs.FS
+		permissions fs.FileMode
 	}
 	keyInfo struct { // TODO: roll into keyDirEntry?
 		name string
@@ -38,24 +39,44 @@ type (
 	}
 )
 
-const KeyFSID filesystem.ID = "KeyFS"
+const (
+	KeyFSID       filesystem.ID = "KeyFS"
+	keyfsRootName               = rootName
+)
 
-func NewKeyFS(core coreiface.KeyAPI, options ...KeyfsOption) *IPFSKeyFS {
-	fs := &IPFSKeyFS{keyAPI: core}
-	for _, setter := range options {
-		if err := setter(fs); err != nil {
-			panic(err)
-		}
-	}
-	return fs
+func WithIPNS(ipns fs.FS) KeyFSOption {
+	return func(ka *KeyFS) error { ka.ipns = ipns; return nil }
 }
 
-func (*IPFSKeyFS) ID() filesystem.ID { return KeyFSID }
-func (*IPFSKeyFS) Close() error      { return nil } // TODO: close everything
+func NewKeyFS(core coreiface.KeyAPI, options ...KeyFSOption) (*KeyFS, error) {
+	fsys := &KeyFS{
+		permissions: readAll | executeAll,
+		keyAPI:      core,
+	}
+	for _, setter := range options {
+		if err := setter(fsys); err != nil {
+			return nil, err
+		}
+	}
+	if fsys.ctx == nil {
+		fsys.ctx, fsys.cancel = context.WithCancel(context.Background())
+	}
+	return fsys, nil
+}
+
+func (*KeyFS) ID() filesystem.ID { return KeyFSID }
+
+func (ki *KeyFS) Close() error {
+	ki.cancel()
+	return nil
+}
 
 // TODO: probably inefficient. Review.
-func (ki *IPFSKeyFS) translateName(name string) (string, error) {
-	keys, err := ki.keyAPI.List(context.Background())
+// TODO: deceptive name. This may translate the name.
+// but it won't if we don't have such a key
+// (which is fine for non-named IPNS paths).
+func (ki *KeyFS) translateName(name string) (string, error) {
+	keys, err := ki.keyAPI.List(ki.ctx)
 	if err != nil {
 		return "", err
 	}
@@ -74,55 +95,65 @@ func (ki *IPFSKeyFS) translateName(name string) (string, error) {
 	return keyName, nil
 }
 
-func (kfs *IPFSKeyFS) Open(name string) (fs.File, error) {
+func (kfs *KeyFS) Open(name string) (fs.File, error) {
 	const op = "open"
 	if name == rootName {
-		return kfs.openRoot()
+		file, err := kfs.openRoot()
+		if err != nil {
+			return nil, err
+		}
+		return file, nil
 	}
 	translated, err := kfs.translateName(name)
 	if err != nil {
-		return nil,
-			&fs.PathError{
-				Op:   op,
-				Path: name,
-				Err:  fserrors.New(fserrors.InvalidItem), // TODO: convert old-style errors.
-			}
+		return nil, newFSError(op, name, err, fserrors.IO)
 	}
 	if subsys := kfs.ipns; subsys != nil {
 		return subsys.Open(translated)
 	}
-	return nil, &fs.PathError{
-		Op:   op,
-		Path: name,
-		Err:  fserrors.New(fserrors.NotExist), // TODO old-style err
-	}
+	return nil, newFSError(op, name, ErrNotFound, fserrors.NotExist)
 }
 
-func (kfs *IPFSKeyFS) openRoot() (fs.ReadDirFile, error) {
-	var (
-		ctx, cancel = context.WithCancel(context.Background())
-		keys        []coreiface.Key
-		lazyKeys    = func() ([]coreiface.Key, error) {
-			if keys != nil {
-				return keys, nil
-			}
-			var err error
-			keys, err = kfs.keyAPI.List(ctx)
-			return keys, err
-		}
+func (kfs *KeyFS) openRoot() (fs.ReadDirFile, error) {
+	const (
+		op      = "open"
+		errKind = fserrors.IO
 	)
-	const permissions = readAll | executeAll // TODO: from ctor; writes will be valid eventually.
+	rootCtx := kfs.ctx
+	if err := rootCtx.Err(); err != nil {
+		return nil, newFSError(op, keyfsRootName, err, errKind)
+	}
+	var (
+		dirCtx, dirCancel = context.WithCancel(rootCtx)
+		entries           = make(chan filesystem.StreamDirEntry)
+	)
+	go func() {
+		keys, err := kfs.keyAPI.List(dirCtx)
+		if err != nil {
+			dirCancel()
+		}
+		for _, key := range keys {
+			entries <- &keyDirEntry{
+				permissions: kfs.permissions,
+				Key:         key,
+				ipns:        kfs.ipns,
+			}
+		}
+		close(entries)
+	}()
 	return &keyDirectory{
-		mode:    fs.ModeDir | permissions,
-		ipns:    kfs.ipns,
-		cancel:  cancel,
-		getKeys: lazyKeys,
+		mode: fs.ModeDir | kfs.permissions,
+		ipns: kfs.ipns,
+		stream: &entryStream{
+			Context: dirCtx, CancelFunc: dirCancel,
+			ch: entries,
+		},
 	}, nil
 }
 
 func (*keyDirectory) Read([]byte) (int, error) {
-	const op fserrors.Op = "keyDirectory.Read"
-	return -1, fserrors.New(op, fserrors.IsDir)
+	const op = "keyDirectory.Read"
+	return -1, newFSError(op, keyfsRootName, ErrIsDir, fserrors.IsDir)
 }
 
 func (kd *keyDirectory) Stat() (fs.FileInfo, error) { return kd, nil }
@@ -135,52 +166,34 @@ func (kd *keyDirectory) IsDir() bool        { return kd.Mode().IsDir() }
 func (kd *keyDirectory) Sys() any           { return kd }
 
 func (kd *keyDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
-	const op fserrors.Op = "keyDirectory.ReadDir"
-	var (
-		keys, err = kd.getKeys()
-		keyCount  = len(keys)
-	)
-	if err != nil {
-		return nil, fserrors.New(op, err)
+	const op = "keyDirectory.ReadDir"
+	stream := kd.stream
+	if stream == nil {
+		return nil, newFSError(op, keyfsRootName, ErrNotOpen, fserrors.IO)
 	}
-	cursor := kd.cursor
-	if cursor >= keyCount {
+	var (
+		ctx     = stream.Context
+		entries = stream.ch
+	)
+	if entries == nil {
 		return nil, io.EOF
 	}
-
-	keys = keys[cursor:]
-	keyCount = len(keys)
-	ents := make([]fs.DirEntry, 0, generic.Max(count, keyCount))
-	if count == 0 {
-		count-- // Intentionally bypass break condition / append all ents.
+	ents, err := readEntries(ctx, entries, count)
+	if err != nil {
+		stream.ch = nil
+		err = readdirErr(op, keyfsRootName, err)
 	}
-	for _, key := range keys {
-		if count == 0 {
-			break
-		}
-		ents = append(ents, &keyDirEntry{
-			permissions: kd.mode.Perm(),
-			Key:         key,
-			ipns:        kd.ipns,
-		})
-		count--
-	}
-	if count > 0 {
-		return ents, io.EOF
-	}
-	return ents, nil
+	return ents, err
 }
 
 func (kd *keyDirectory) Close() error {
-	const op fserrors.Op = "keyDirectory.Close"
-	if cancel := kd.cancel; cancel != nil {
-		cancel()
+	const op = "keyDirectory.Close"
+	if stream := kd.stream; stream != nil {
+		stream.CancelFunc()
+		kd.stream = nil
 		return nil
 	}
-	return fserrors.New(op,
-		fserrors.InvalidItem, // TODO: Check POSIX expected values
-		"directory was not open",
-	)
+	return newFSError(op, keyfsRootName, ErrNotOpen, fserrors.InvalidItem)
 }
 
 func pathWithoutNamespace(key coreiface.Key) string {
@@ -212,6 +225,7 @@ func (ke *keyDirEntry) Type() fs.FileMode {
 }
 
 func (ke *keyDirEntry) IsDir() bool { return ke.Type()&fs.ModeDir != 0 }
+func (*keyDirEntry) Error() error   { return nil }
 
 func (ki *keyInfo) Name() string       { return ki.name }
 func (*keyInfo) Size() int64           { return 0 } // Unknown without IPNS subsystem.
