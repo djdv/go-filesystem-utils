@@ -178,6 +178,9 @@ func Daemon() command.Command {
 }
 
 func daemonExecute(ctx context.Context, set *daemonSettings) error {
+	if err := initDaemonLazyfields(set); err != nil {
+		return err
+	}
 	dCtx, cancel := context.WithCancel(ctx)
 	system, err := makeSystem(dCtx, set)
 	defer cancel()
