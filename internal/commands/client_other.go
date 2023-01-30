@@ -1,13 +1,12 @@
 //go:build !darwin
-// +build !darwin
 
-package daemon
+package commands
 
 import (
 	"github.com/adrg/xdg"
 	"github.com/multiformats/go-multiaddr"
 )
 
-func systemServiceMaddrs() ([]multiaddr.Multiaddr, error) {
+func hostServiceMaddrs() ([]multiaddr.Multiaddr, error) {
 	return servicePathsToServiceMaddrs(xdg.ConfigDirs...)
 }

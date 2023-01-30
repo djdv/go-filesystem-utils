@@ -2,16 +2,46 @@ package commands
 
 import (
 	"context"
-	"log"
-	"os"
+	"flag"
+	"fmt"
+	"strings"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
-	"github.com/djdv/go-filesystem-utils/internal/daemon"
-	"github.com/multiformats/go-multiaddr"
+	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
+	"github.com/hugelgupf/p9/p9"
 )
 
-type shutdownSettings struct{ clientSettings }
+type (
+	shutdownDisposition uint8
+	shutdownSettings    struct {
+		clientSettings
+		disposition shutdownDisposition
+	}
+)
 
+const (
+	patientShutdown shutdownDisposition = iota + 1
+	shortShutdown
+	immediateShutdown
+	minimumShutdown = patientShutdown
+	maximumShutdown = immediateShutdown
+)
+
+func (level shutdownDisposition) String() string {
+	switch level {
+	case patientShutdown:
+		return "patient"
+	case shortShutdown:
+		return "short"
+	case immediateShutdown:
+		return "immediate"
+	default:
+		return fmt.Sprintf("invalid: %d", level)
+	}
+}
+
+// Shutdown constructs the command which
+// requests the file system service to stop.
 func Shutdown() command.Command {
 	const (
 		name     = "shutdown"
@@ -21,31 +51,68 @@ func Shutdown() command.Command {
 	return command.MakeCommand[*shutdownSettings](name, synopsis, usage, shutdownExecute)
 }
 
-func shutdownExecute(ctx context.Context, set *shutdownSettings, _ ...string) error {
-	var clientOpts []daemon.ClientOption
-	if set.verbose {
-		// TODO: less fancy prefix and/or out+prefix from CLI flags
-		clientLog := log.New(os.Stdout, "⬇️ client - ", log.Lshortfile)
-		clientOpts = append(clientOpts, daemon.WithLogger(clientLog))
+func (set *shutdownSettings) BindFlags(flagSet *flag.FlagSet) {
+	set.clientSettings.BindFlags(flagSet)
+	const shutdownName = "level"
+	shutdownValues := make([]string, maximumShutdown)
+	for i, sl := 0, minimumShutdown; sl <= maximumShutdown; i, sl = i+1, sl+1 {
+		shutdownValues[i] = fmt.Sprintf(`"%s"`,
+			strings.ToLower(sl.String()),
+		)
 	}
-
-	// TODO: signalctx + shutdown on cancel
-
-	serviceMaddr := set.serviceMaddr
-	if lazy, ok := serviceMaddr.(lazyFlag[multiaddr.Multiaddr]); ok {
-		var err error
-		if serviceMaddr, err = lazy.get(); err != nil {
-			return err
+	shutdownUsage := fmt.Sprintf(
+		"sets the `disposition` for shutdown\none of {%s}",
+		strings.Join(shutdownValues, ", "),
+	)
+	set.disposition = patientShutdown
+	shutdownDefaultText := patientShutdown.String()
+	flagSet.Func(shutdownName, shutdownUsage, func(s string) (err error) {
+		set.disposition, err = parseShutdownLevel(s)
+		return
+	})
+	defaultText := map[string]string{
+		shutdownName: shutdownDefaultText,
+	}
+	flagSet.VisitAll(func(f *flag.Flag) {
+		if text, ok := defaultText[f.Name]; ok {
+			f.DefValue = text
 		}
-	}
+	})
+}
 
-	client, err := daemon.Connect(serviceMaddr, clientOpts...)
+func shutdownExecute(ctx context.Context, set *shutdownSettings, _ ...string) error {
+	const launch = false
+	client, err := getClient(&set.clientSettings, launch)
 	if err != nil {
 		return err
 	}
-	if err := client.Shutdown(serviceMaddr); err != nil {
+	if err := client.Shutdown(set.disposition); err != nil {
 		return err
 	}
+	return fserrors.Join(
+		client.Close(),
+		ctx.Err(),
+	)
+}
 
-	return ctx.Err()
+func (c *Client) Shutdown(level shutdownDisposition) error {
+	// TODO: const name in files pkg?
+	controlDir, err := c.p9Client.Attach("control")
+	if err != nil {
+		return err
+	}
+	defer controlDir.Close()
+	_, shutdownFile, err := controlDir.Walk([]string{"shutdown"})
+	if err != nil {
+		return err
+	}
+	defer shutdownFile.Close()
+	if _, _, err := shutdownFile.Open(p9.WriteOnly); err != nil {
+		return err
+	}
+	data := []byte{byte(level)}
+	if _, err := shutdownFile.WriteAt(data, 0); err != nil {
+		return err
+	}
+	return nil
 }

@@ -2,14 +2,12 @@ package commands
 
 import (
 	"context"
-	"errors"
 	"flag"
-	"log"
-	"os"
+	"fmt"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
-	"github.com/djdv/go-filesystem-utils/internal/daemon"
-	"github.com/multiformats/go-multiaddr"
+	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
+	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 )
 
 type (
@@ -17,13 +15,21 @@ type (
 		clientSettings
 		all bool
 	}
+	UnmountOption func(*unmountSettings) error
 )
+
+// TODO: shared option?
+func UnmountAll(b bool) UnmountOption {
+	return func(us *unmountSettings) error { us.all = b; return nil }
+}
 
 func (set *unmountSettings) BindFlags(flagSet *flag.FlagSet) {
 	set.clientSettings.BindFlags(flagSet)
-	flagSet.BoolVar(&set.all, "a", false, "placeholder text")
+	flagSet.BoolVar(&set.all, "all", false, "unmount all")
 }
 
+// Unmount constructs the command which requests the file system service
+// to undo the effects of a previous mount.
 func Unmount() command.Command {
 	const (
 		name     = "unmount"
@@ -33,45 +39,54 @@ func Unmount() command.Command {
 	return command.MakeCommand[*unmountSettings](name, synopsis, usage, unmountExecute)
 }
 
-func unmountExecute(ctx context.Context, set *unmountSettings) error {
+func unmountExecute(ctx context.Context, set *unmountSettings, args ...string) error {
 	var (
-		err          error
-		serviceMaddr = set.serviceMaddr
-
-		client     *daemon.Client
-		clientOpts []daemon.ClientOption
+		all      = set.all
+		haveArgs = len(args) != 0
 	)
-	if lazy, ok := serviceMaddr.(lazyFlag[multiaddr.Multiaddr]); ok {
-		if serviceMaddr, err = lazy.get(); err != nil {
-			return err
-		}
+	if all && haveArgs {
+		return fmt.Errorf("%w - `all` flag cannot be combined with arguments", command.ErrUsage)
 	}
-	if set.verbose {
-		// TODO: less fancy prefix and/or out+prefix from CLI flags
-		clientLog := log.New(os.Stdout, "⬇️ client - ", log.Lshortfile)
-		clientOpts = append(clientOpts, daemon.WithLogger(clientLog))
+	if !haveArgs && !all {
+		// TODO: [f575114c-9b1d-484c-ade6-b9ce0f6887c8]
+		return fmt.Errorf("%w - expected mountpoint(s)", command.ErrUsage)
 	}
 
-	// TODO: don't launch if we can't connect.
-	if serviceMaddr != nil {
-		client, err = daemon.Connect(serviceMaddr, clientOpts...)
-	} else {
-		client, err = daemon.ConnectOrLaunchLocal(clientOpts...)
-	}
+	const launch = false
+	client, err := getClient(&set.clientSettings, launch)
 	if err != nil {
 		return err
 	}
-	all := set.all
-	if !all {
-		return errors.New("single targets not implemented yet, use `-a`")
+	unmountOpts := []UnmountOption{
+		UnmountAll(all),
 	}
-	unmountOpts := []daemon.UnmountOption{
-		daemon.UnmountAll(all),
+	return fserrors.Join(
+		client.Unmount(ctx, args, unmountOpts...),
+		client.Close(),
+		ctx.Err(),
+	)
+}
+
+func (c *Client) Unmount(ctx context.Context, targets []string, options ...UnmountOption) error {
+	set := new(unmountSettings)
+	for _, setter := range options {
+		if err := setter(set); err != nil {
+			return err
+		}
 	}
-	if err := client.Unmount(ctx, unmountOpts...); err != nil {
+	mRoot, err := c.p9Client.Attach(p9fs.MounterName)
+	if err != nil {
+		// TODO: if not-exist add context to err msg.
+		// I.e. "client can't ... because ..."
 		return err
 	}
-	if err := client.Close(); err != nil {
+	if set.all {
+		if err := p9fs.CloseAllMounts(mRoot); err != nil {
+			return err
+		}
+		return ctx.Err()
+	}
+	if err := p9fs.CloseMounts(mRoot, targets); err != nil {
 		return err
 	}
 	return ctx.Err()

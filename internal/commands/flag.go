@@ -4,59 +4,59 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
+	"unsafe"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
-	"github.com/djdv/go-filesystem-utils/internal/daemon"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
+	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/hugelgupf/p9/p9"
 	giconfig "github.com/ipfs/kubo/config"
 	"github.com/multiformats/go-multiaddr"
 )
 
 type (
-	commonSettings struct {
+	helpOnly struct {
 		command.HelpArg
+	}
+	commonSettings struct {
+		helpOnly
 		verbose bool
 	}
-	clientSettings struct {
-		serviceMaddr multiaddr.Multiaddr
-		commonSettings
+	daemonDecay struct {
+		exitInterval time.Duration
 	}
-	valueContainer[t any] struct {
-		tPtr  *t
-		parse func(string) (t, error)
+	nineIDs struct {
+		uid p9.UID
+		gid p9.GID
 	}
-	lazyFlag[T any]    interface{ get() (T, error) }
-	defaultServerMaddr struct{ multiaddr.Multiaddr }
-	defaultIPFSMaddr   struct{ multiaddr.Multiaddr }
+	lazyFlag[T any]  interface{ get() (T, error) }
+	defaultIPFSMaddr struct{ multiaddr.Multiaddr }
 )
 
-func (defaultServerMaddr) get() (multiaddr.Multiaddr, error) {
-	userMaddrs, err := daemon.UserServiceMaddrs()
-	if err != nil {
-		return nil, err
-	}
-	return userMaddrs[0], nil
+// TODO: move this
+func WithIPFS(maddr multiaddr.Multiaddr) MountOption {
+	return func(s *mountSettings) error { s.ipfs.nodeMaddr = maddr; return nil }
 }
 
-func (ds defaultServerMaddr) String() string {
-	maddr, err := ds.get()
-	if err != nil {
-		return ""
+func (di *defaultIPFSMaddr) get() (multiaddr.Multiaddr, error) {
+	maddr := di.Multiaddr
+	if maddr == nil {
+		maddrs, err := getIPFSAPI()
+		if err != nil {
+			return nil, err
+		}
+		maddr = maddrs[0]
+		di.Multiaddr = maddr
 	}
-	return maddr.String()
-}
-
-func (defaultIPFSMaddr) get() (multiaddr.Multiaddr, error) {
-	maddrs, err := getIPFSAPI()
-	if err != nil {
-		return nil, err
-	}
-	return maddrs[0], nil
+	return maddr, nil
 }
 
 func (di defaultIPFSMaddr) String() string {
@@ -67,68 +67,10 @@ func (di defaultIPFSMaddr) String() string {
 	return maddr.String()
 }
 
-func (set *commonSettings) BindFlags(fs *flag.FlagSet) {
-	set.HelpArg.BindFlags(fs)
-	fs.BoolVar(&set.verbose, "verbose",
-		false, "Enable log messages.")
-}
-
-func (set *clientSettings) BindFlags(fs *flag.FlagSet) {
-	set.commonSettings.BindFlags(fs)
-	multiaddrVar(fs, &set.serviceMaddr, daemon.ServerName,
-		defaultServerMaddr{}, "File system service `maddr`.")
-}
-
-func containerVar[t any, parser func(string) (t, error)](fs *flag.FlagSet, tPtr *t,
-	name string, defVal t, usage string,
-	parse parser,
-) {
-	*tPtr = defVal
-	fs.Var(valueContainer[t]{
-		tPtr:  tPtr,
-		parse: parse,
-	}, name, usage)
-}
-
-func (vc valueContainer[T]) String() string {
-	tPtr := vc.tPtr
-	if tPtr == nil {
-		return ""
-	}
-	tVal := *tPtr
-	// XXX: Special cases.
-	// TODO Handle this better. Optional helptext string in the constructor?
-	const invalidID = "nobody"
-	switch valType := any(tVal).(type) {
-	case p9.UID:
-		if !valType.Ok() {
-			return invalidID
-		}
-	case p9.GID:
-		if !valType.Ok() {
-			return invalidID
-		}
-	}
-	// Regular.
-	return fmt.Sprint(tVal)
-}
-
-func (vc valueContainer[t]) Set(arg string) error {
-	tVal, err := vc.parse(arg)
-	if err != nil {
-		return err
-	}
-	if vc.tPtr == nil {
-		vc.tPtr = new(t)
-	}
-	*vc.tPtr = tVal
-	return nil
-}
-
-func multiaddrVar(fs *flag.FlagSet, maddrPtr *multiaddr.Multiaddr,
-	name string, defVal multiaddr.Multiaddr, usage string,
-) {
-	containerVar(fs, maddrPtr, name, defVal, usage, multiaddr.NewMultiaddr)
+func (set *commonSettings) BindFlags(flagSet *flag.FlagSet) {
+	set.HelpArg.BindFlags(flagSet)
+	flagSet.BoolVar(&set.verbose, "verbose",
+		false, "enable log messages")
 }
 
 func parseID[id p9.UID | p9.GID](arg string) (id, error) {
@@ -140,30 +82,29 @@ func parseID[id p9.UID | p9.GID](arg string) (id, error) {
 	return id(num), nil
 }
 
-func uidVar(fs *flag.FlagSet, uidPtr *p9.UID,
-	name string, defVal p9.UID, usage string,
-) {
-	containerVar(fs, uidPtr, name, defVal, usage, parseID[p9.UID])
+func parseFSID(fsid string) (filesystem.ID, error) {
+	normalizedID := filesystem.ID(strings.ToLower(fsid))
+	for _, id := range p9fs.FileSystems() {
+		if normalizedID == id {
+			return id, nil
+		}
+	}
+	err := fmt.Errorf(`unexpected file system id: "%s"`, fsid)
+	return filesystem.ID(""), err
 }
 
-func gidVar(fs *flag.FlagSet, gidPtr *p9.GID,
-	name string, defVal p9.GID, usage string,
-) {
-	containerVar(fs, gidPtr, name, defVal, usage, parseID[p9.GID])
+func parseHost(host string) (filesystem.Host, error) {
+	normalizedHost := filesystem.Host(strings.ToLower(host))
+	for _, api := range p9fs.Hosts() {
+		if normalizedHost == api {
+			return api, nil
+		}
+	}
+	err := fmt.Errorf(`unexpected file system host: "%s"`, host)
+	return filesystem.Host(""), err
 }
 
-func fsIDVar(fs *flag.FlagSet, fsidPtr *filesystem.ID,
-	name string, defVal filesystem.ID, usage string,
-) {
-	containerVar(fs, fsidPtr, name, defVal, usage, filesystem.ParseID)
-}
-
-func fsAPIVar(fs *flag.FlagSet, fsAPIPtr *filesystem.API,
-	name string, defVal filesystem.API, usage string,
-) {
-	containerVar(fs, fsAPIPtr, name, defVal, usage, filesystem.ParseAPI)
-}
-
+// TODO: move these to ipfs.go?
 func getIPFSAPI() ([]multiaddr.Multiaddr, error) {
 	location, err := getIPFSAPIPath()
 	if err != nil {
@@ -217,34 +158,201 @@ func parseIPFSAPI(name string) ([]multiaddr.Multiaddr, error) {
 	return []multiaddr.Multiaddr{maddr}, nil
 }
 
-/* TODO: [lint] we might still want to use this method instead. Needs consideration.
-func ipfsAPIFromConfig([]multiaddr.Multiaddr, error) {
-	// TODO: We don't need, nor want the full config.
-	// - IPFS doesn't declare a standard environment variable to use for the API.
-	// We should declare and document our own to avoid touching the fs at all.
-	// - The API file format is unlikely to change, we should probably just parse it by hand.
-	// (The full config file contains node secrets
-	// and I really don't want to pull those into memory at all.)
-	// ^ We should try to coordinate upstream. Something this common should really be standardized.
-	confFile, err := giconfig.Filename("", "")
-	if err != nil {
-		return nil, err
-	}
-	nodeConf, err := giconfigfile.Load(confFile)
-	if err != nil {
-		return nil, err
-	}
-	var (
-		apiMaddrStrings = nodeConf.Addresses.API
-		apiMaddrs       = make([]multiaddr.Multiaddr, len(apiMaddrStrings))
-	)
-	for i, maddrString := range apiMaddrStrings {
-		maddr, err := multiaddr.NewMultiaddr(maddrString)
-		if err != nil {
-			return nil, err
-		}
-		apiMaddrs[i] = maddr
-	}
-	return apiMaddrs, nil
+func parseShutdownLevel(level string) (shutdownDisposition, error) {
+	return generic.ParseEnum(minimumShutdown, maximumShutdown, level)
 }
-*/
+
+// parsePOSIXPermissions accepts a SUSv4;BSi7 `chmod` mode operand.
+func parsePOSIXPermissions(clauses string) (fs.FileMode, error) {
+	const (
+		base = 8
+		bits = int(unsafe.Sizeof(fs.FileMode(0))) * base
+	)
+	if mode, err := strconv.ParseUint(clauses, base, bits); err == nil {
+		return translateOctalPermissions(mode), nil
+	}
+	const (
+		whoRe         = "([ugoa]*)"
+		matchWho      = 1
+		clauseRe      = "([-+=]+)"
+		matchClause   = 2
+		matchMin      = matchClause
+		permRe        = "([rwxugo]*)"
+		matchPerm     = 3
+		historicRe    = "((?:[-+=]?[rwxugo]{1})*)"
+		matchHistoric = 4
+		fullRe        = "^" + whoRe + clauseRe + permRe + historicRe + "$"
+		matchMax      = matchHistoric + 1
+	)
+	var (
+		operations   = strings.Split(clauses, ",")
+		permissionRe = regexp.MustCompile(fullRe)
+		mode         fs.FileMode
+	)
+	for _, operation := range operations {
+		matches := permissionRe.FindStringSubmatch(operation)
+		if len(matches) < matchMin {
+			return 0, fmt.Errorf(`%w: "%s" is neither an octal or symbolic permission`,
+				strconv.ErrSyntax, operation)
+		}
+		if who := matches[matchWho]; who == "" || who == "a" {
+			matches[matchWho] = "ugo"
+		}
+		var permBits fs.FileMode
+		if len(matches) >= matchPerm {
+			permBits = parseSymbolicPermission(&mode, matches[matchWho], matches[matchPerm])
+		}
+		if err := evaluatePermissionsExpression(&mode,
+			matches[matchWho], matches[matchClause], permBits,
+		); err != nil {
+			return 0, err
+		}
+		if len(matches) >= matchHistoric {
+			if err := handleHistoricPermissions(&mode, matches[matchWho], matches[matchHistoric]); err != nil {
+				return 0, err
+			}
+		}
+	}
+	return mode, nil
+}
+
+func parseSymbolicPermission(mode *fs.FileMode, who, perm string) (bits fs.FileMode) {
+	const (
+		execute = 1 << iota
+		write
+		read
+
+		otherShift             = 0
+		groupShift             = 3
+		userShift              = 6
+		octalBits              = 3
+		otherMask  fs.FileMode = (1 << octalBits) - 1
+		groupMask  fs.FileMode = ((1 << octalBits) - 1) << groupShift
+		userMask   fs.FileMode = ((1 << octalBits) - 1) << userShift
+	)
+	for _, r := range perm {
+		switch r {
+		case 'r':
+			bits |= read
+		case 'w':
+			bits |= write
+		case 'x':
+			bits |= execute
+		case 's':
+			for _, r := range who {
+				if r == 'u' {
+					bits |= fs.ModeSetuid
+				}
+				if r == 'g' {
+					bits |= fs.ModeSetgid
+				}
+			}
+		case 't':
+			bits |= fs.ModeSticky
+		case 'X':
+			if mode.IsDir() ||
+				*mode&execute == 1 ||
+				*mode&execute<<groupShift == 1 ||
+				*mode&execute<<userShift == 1 {
+				bits |= execute
+			}
+		case 'u':
+			bits = *mode & userMask >> userShift
+		case 'g':
+			bits = *mode & groupMask >> groupShift
+		case 'o':
+			bits = *mode & otherMask
+		}
+	}
+	return
+}
+
+func evaluatePermissionsExpression(mode *fs.FileMode, who string, ops string, perm fs.FileMode) error {
+	for _, op := range ops {
+		if err := evaluateOp(mode, who, op, perm); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func evaluateOp(mode *fs.FileMode, who string, op rune, perm fs.FileMode) error {
+	const (
+		otherShift             = 0
+		groupShift             = 3
+		userShift              = 6
+		octalBits              = 3
+		otherMask  fs.FileMode = (1 << octalBits) - 1
+		groupMask  fs.FileMode = ((1 << octalBits) - 1) << groupShift
+		userMask   fs.FileMode = ((1 << octalBits) - 1) << userShift
+	)
+	var operation func(shift uint, mask fs.FileMode)
+	switch op {
+	case '-':
+		operation = func(shift uint, _ fs.FileMode) {
+			*mode &^= perm << shift
+		}
+	case '+':
+		operation = func(shift uint, _ fs.FileMode) {
+			*mode |= perm << shift
+		}
+	case '=':
+		operation = func(shift uint, mask fs.FileMode) {
+			*mode = (*mode &^ mask) | perm<<shift
+		}
+	default:
+		return fmt.Errorf(`"%c" is not a valid operator`, op)
+	}
+	for _, w := range who {
+		switch w {
+		case 'o':
+			operation(otherShift, otherMask)
+		case 'g':
+			operation(groupShift, groupMask)
+		case 'u':
+			operation(userShift, userMask)
+		default:
+			return fmt.Errorf(`"%c" is not a valid \"who\" value`, w)
+		}
+	}
+	return nil
+}
+
+// POSIX calls these "historical-practice forms".
+func handleHistoricPermissions(mode *fs.FileMode, who, hist string) error {
+	var op rune
+	for _, opRune := range hist {
+		if opRune == '-' || opRune == '+' || opRune == '=' {
+			op = opRune
+			continue
+		}
+		if err := evaluateOp(mode, who, op,
+			parseSymbolicPermission(mode, who, string(opRune))); err != nil {
+			return err
+		}
+		op = 0
+	}
+	return nil
+}
+
+func translateOctalPermissions(mode uint64) fs.FileMode {
+	const (
+		S_ISUID = 0o4000
+		S_ISGID = 0o2000
+		S_ISVTX = 0o1000
+	)
+	fsMode := fs.FileMode(mode) & fs.ModePerm
+	for _, bit := range [...]struct {
+		golang fs.FileMode
+		posix  uint64
+	}{
+		{golang: fs.ModeSetuid, posix: S_ISUID},
+		{golang: fs.ModeSetgid, posix: S_ISGID},
+		{golang: fs.ModeSticky, posix: S_ISVTX},
+	} {
+		if mode&bit.posix != 0 {
+			fsMode |= bit.golang
+		}
+	}
+	return fsMode
+}
