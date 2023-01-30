@@ -16,7 +16,7 @@ type Enum interface {
 // makeEnum(start, end) Enum; Enum.Parse(s)
 func ParseEnum[e Enum](start, end e, s string) (e, error) {
 	normalized := strings.ToLower(s)
-	for enum := start + 1; enum != end; enum++ {
+	for enum := start; enum <= end; enum++ {
 		strVal := strings.ToLower(enum.String())
 		if normalized == strVal {
 			return enum, nil
