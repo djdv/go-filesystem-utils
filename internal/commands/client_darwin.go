@@ -1,4 +1,4 @@
-package daemon
+package commands
 
 import "github.com/multiformats/go-multiaddr"
 

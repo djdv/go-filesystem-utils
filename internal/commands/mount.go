@@ -2,25 +2,41 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
-	"log"
-	"os"
+	"io"
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
-	"github.com/djdv/go-filesystem-utils/internal/daemon"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
+	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
+	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
+	"github.com/djdv/go-filesystem-utils/internal/filesystem/ipfs"
+	"github.com/hugelgupf/p9/p9"
+	"github.com/hugelgupf/p9/perrors"
+	"github.com/jaevor/go-nanoid"
 	"github.com/multiformats/go-multiaddr"
 )
 
 type (
-	mountSettings     struct{ commonSettings }
-	mountFuseSettings struct{ commonSettings }
+	mountSettings struct {
+		helpOnly
+		mountIPFSSettings
+		// TODO: not bound + type should be raw uint; used with both FUSE and 9P.
+		uid p9.UID
+		gid p9.GID
+	}
+	mountFuseSettings struct{ helpOnly }
 	mountIPFSSettings struct {
-		ipfsAPI multiaddr.Multiaddr
+		ipfs struct {
+			nodeMaddr multiaddr.Multiaddr
+		}
 		clientSettings
 	}
+
+	MountOption func(*mountSettings) error
 )
 
 // TODO: move; should be in shared or even in [command] pkg.
@@ -33,11 +49,11 @@ func subonlyExec[settings command.Settings[T], cmd command.ExecuteFuncArgs[setti
 }
 
 func (set *mountSettings) BindFlags(fs *flag.FlagSet) {
-	set.commonSettings.BindFlags(fs)
+	set.helpOnly.BindFlags(fs)
 }
 
 func (set *mountFuseSettings) BindFlags(fs *flag.FlagSet) {
-	set.commonSettings.BindFlags(fs)
+	set.helpOnly.BindFlags(fs)
 }
 
 func (set *mountIPFSSettings) BindFlags(fs *flag.FlagSet) {
@@ -45,10 +61,19 @@ func (set *mountIPFSSettings) BindFlags(fs *flag.FlagSet) {
 	// TODO: this should be a string, not parsed client-side
 	// (server may have different namespaces registered + double parse;
 	// just passthrough argv[x] as-is)
-	multiaddrVar(fs, &set.ipfsAPI, "ipfs",
-		defaultIPFSMaddr{}, "IPFS API node `maddr`.")
+	const (
+		ipfsName  = "ipfs"
+		ipfsUsage = "IPFS API node `maddr`"
+	)
+	set.ipfs.nodeMaddr = defaultIPFSMaddr{}
+	fs.Func(ipfsName, ipfsUsage, func(s string) (err error) {
+		set.ipfs.nodeMaddr, err = multiaddr.NewMultiaddr(s)
+		return
+	})
 }
 
+// Mount constructs the command which requests
+// the file system service to mount a system.
 func Mount() command.Command {
 	const (
 		name     = "mount"
@@ -64,7 +89,7 @@ func Mount() command.Command {
 func mountFuse() command.Command {
 	const usage = "Placeholder text."
 	var (
-		formalName = filesystem.Fuse.String()
+		formalName = string(p9fs.HostFUSE)
 		cmdName    = strings.ToLower(formalName)
 		synopsis   = fmt.Sprintf("Mount a file system via the %s API.", formalName)
 	)
@@ -76,15 +101,12 @@ func mountFuse() command.Command {
 
 func makeMountSubcommands() []command.Command {
 	var (
-		hostAPIs = []filesystem.API{
-			filesystem.Fuse,
-			// TODO: ...
-		}
-		subcommands = make([]command.Command, len(hostAPIs))
+		hostTable   = p9fs.Hosts()
+		subcommands = make([]command.Command, len(hostTable))
 	)
-	for i, hostAPI := range hostAPIs {
+	for i, hostAPI := range hostTable {
 		switch hostAPI {
-		case filesystem.Fuse:
+		case p9fs.HostFUSE:
 			subcommands[i] = mountFuse()
 		default:
 			panic("unexpected API ID for host file system interface")
@@ -96,27 +118,21 @@ func makeMountSubcommands() []command.Command {
 func makeMountFuseSubcommands() []command.Command {
 	const usage = "Placeholder text."
 	var (
-		formalName = filesystem.Fuse.String()
-		targetAPIs = []filesystem.ID{
-			filesystem.IPFS,
-			filesystem.IPFSPins,
-			filesystem.IPNS,
-			filesystem.IPFSKeys,
-			// TODO: ...
-		}
-		subcommands = make([]command.Command, len(targetAPIs))
+		hostName    = string(p9fs.HostFUSE)
+		fsidTable   = p9fs.FileSystems()
+		subcommands = make([]command.Command, len(fsidTable))
 	)
-	for i, fsid := range targetAPIs {
+	for i, fsid := range fsidTable {
 		var (
-			fsName     = fsid.String()
+			fsName     = string(fsid)
 			subcmdName = strings.ToLower(fsName)
-			synopsis   = fmt.Sprintf("Mount %s via the %s API.", fsName, formalName)
+			synopsis   = fmt.Sprintf("Mount %s via the %s API.", fsName, hostName)
 		)
 		switch fsid {
-		case filesystem.IPFS, filesystem.IPFSPins,
-			filesystem.IPNS, filesystem.IPFSKeys:
+		case ipfs.IPFSID, ipfs.PinFSID,
+			ipfs.IPNSID, ipfs.KeyFSID:
 			subcommands[i] = command.MakeCommand[*mountIPFSSettings](subcmdName, synopsis, usage,
-				makeFuseIPFSExec(filesystem.Fuse, fsid),
+				makeFuseIPFSExec(p9fs.HostFUSE, fsid),
 			)
 		default:
 			panic("unexpected API ID for host file system interface")
@@ -125,67 +141,195 @@ func makeMountFuseSubcommands() []command.Command {
 	return subcommands
 }
 
-func makeFuseIPFSExec(host filesystem.API, fsid filesystem.ID) func(context.Context, *mountIPFSSettings, ...string) error {
+func makeFuseIPFSExec(host filesystem.Host, fsid filesystem.ID) func(context.Context, *mountIPFSSettings, ...string) error {
 	return func(ctx context.Context, set *mountIPFSSettings, args ...string) error {
 		return ipfsExecute(ctx, host, fsid, set, args...)
 	}
 }
 
-func ipfsExecute(ctx context.Context, host filesystem.API, fsid filesystem.ID,
+func ipfsExecute(ctx context.Context, host filesystem.Host, fsid filesystem.ID,
 	set *mountIPFSSettings, args ...string,
 ) error {
-	// FIXME: [command] Doesn't the command library check for this already?
-	// We're seeing connections to the client when passed no args.
-	// ^ could also be our subcommand generator in this pkg.
 	if len(args) == 0 {
-		return command.ErrUsage
+		// TODO: [command] we need to expose arguments as a concept to the library somehow.
+		// Maybe an interface like
+		// `ExplainArguments() []pair{name;helptext}`
+		// `ParseArguments(*settings, args...) error`
+		// and/or a different error value.
+		// As-is, ErrUsage really only applies to niladic functions which receive arguments
+		// not variadic one.
+		// [f575114c-9b1d-484c-ade6-b9ce0f6887c8]
+		return fmt.Errorf("%w - expected mountpoint(s)", command.ErrUsage)
 	}
-	var (
-		err          error
-		serviceMaddr = set.serviceMaddr
-		ipfsMaddr    = set.ipfsAPI
-
-		client     *daemon.Client
-		clientOpts []daemon.ClientOption
-
-		// TODO: quick hack; do better
-		defaultServiceMaddr bool
-		//
-	)
-	if lazy, ok := serviceMaddr.(lazyFlag[multiaddr.Multiaddr]); ok {
-		if serviceMaddr, err = lazy.get(); err != nil {
-			return err
-		}
-		defaultServiceMaddr = true
-	}
-	if lazy, ok := ipfsMaddr.(lazyFlag[multiaddr.Multiaddr]); ok {
-		if ipfsMaddr, err = lazy.get(); err != nil {
-			return fmt.Errorf("could not retrieve IPFS node maddr, provide with -ipfs flag: %w", err)
-		}
-	}
-	if set.verbose {
-		// TODO: less fancy prefix and/or out+prefix from CLI flags
-		clientLog := log.New(os.Stdout, "⬇️ client - ", log.Lshortfile)
-		clientOpts = append(clientOpts, daemon.WithLogger(clientLog))
-	}
-	if defaultServiceMaddr {
-		client, err = daemon.ConnectOrLaunchLocal(clientOpts...)
-	} else {
-		client, err = daemon.Connect(serviceMaddr, clientOpts...)
-	}
+	const launch = true
+	client, err := getClient(&set.clientSettings, launch)
 	if err != nil {
 		return err
 	}
-
-	mountOpts := []daemon.MountOption{
-		daemon.WithIPFS(ipfsMaddr),
+	ipfsMaddr := set.ipfs.nodeMaddr
+	if lazy, ok := ipfsMaddr.(lazyFlag[multiaddr.Multiaddr]); ok {
+		maddr, err := lazy.get()
+		if err != nil {
+			err = fmt.Errorf("could not retrieve IPFS node's maddr: %w"+
+				"\na node's maddr can be provided explicitly via the `-ipfs=$maddr` flag",
+				err)
+			if cErr := client.Close(); cErr != nil {
+				err = fserrors.Join(err, cErr)
+			}
+			return err
+		}
+		ipfsMaddr = maddr
 	}
+
+	mountOpts := []MountOption{
+		WithIPFS(ipfsMaddr),
+	}
+	// TODO: assure the client always gets closed
+	// otherwise we spam the daemon log.
+	// TODO: client commands should take a context?
 	if err := client.Mount(host, fsid, args, mountOpts...); err != nil {
+		if cErr := client.Close(); cErr != nil {
+			err = fserrors.Join(err, cErr)
+		}
 		return err
 	}
-	if err := client.Close(); err != nil {
-		return err
-	}
+	return fserrors.Join(
+		client.Close(),
+		ctx.Err(),
+	)
+}
 
-	return ctx.Err()
+func (c *Client) Mount(host filesystem.Host, fsid filesystem.ID, args []string, options ...MountOption) error {
+	settings := mountSettings{
+		uid: p9.NoUID,
+		gid: p9.NoGID,
+	}
+	for _, setter := range options {
+		if err := setter(&settings); err != nil {
+			return err
+		}
+	}
+	switch host {
+	case p9fs.HostFUSE:
+		return c.handleFuse(fsid, &settings, args)
+	default:
+		return errors.New("NIY")
+	}
+}
+
+func (c *Client) handleFuse(fsid filesystem.ID,
+	set *mountSettings, targets []string,
+) (err error) {
+	const (
+		// Alloc hint; how many times
+		// [addCloser] is called in this scope.
+		// (omitting exclusive branches.)
+		addCloserCount = 3
+	)
+	addCloser, closeWith := makeCloserFuncs(addCloserCount)
+	defer func() { err = fserrors.Join(closeWith(err)...) }()
+
+	mRoot, err := c.p9Client.Attach(p9fs.MounterName)
+	if err != nil {
+		return err
+	}
+	addCloser(mRoot)
+
+	var (
+		fuseName = string(p9fs.HostFUSE)
+		fsidName = string(fsid)
+		wname    = []string{fuseName, fsidName}
+		uid      = set.uid
+		gid      = set.gid
+	)
+	const permissions = p9fs.ReadUser | p9fs.WriteUser | p9fs.ExecuteUser |
+		p9fs.ReadGroup | p9fs.ExecuteGroup |
+		p9fs.ReadOther | p9fs.ExecuteOther
+	idRoot, err := p9fs.MkdirAll(mRoot, wname, permissions, uid, gid)
+	if err != nil {
+		return err
+	}
+	addCloser(idRoot)
+	for _, target := range targets {
+		// TODO: we should either
+		// export+import this type, or use tuple format.
+		data := struct {
+			ApiMaddr multiaddr.Multiaddr
+			Target   string
+		}{
+			ApiMaddr: set.ipfs.nodeMaddr,
+			Target:   target,
+		}
+		bytes, err := json.Marshal(data)
+		if err != nil {
+			return err
+		}
+		name := fmt.Sprintf("%s.json", c.newID())
+		if err := newMountFile(idRoot, permissions, uid, gid,
+			name, bytes); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Client) newID() string {
+	idGen := c.idGen
+	if idGen == nil {
+		var err error
+		if idGen, err = nanoid.CustomASCII(base58Alphabet, idLength); err != nil {
+			panic(err)
+		}
+		c.idGen = idGen
+	}
+	return idGen()
+}
+
+func newMountFile(idRoot p9.File,
+	permissions p9.FileMode, uid p9.UID, gid p9.GID,
+	name string, data []byte,
+) error {
+	_, idClone, err := idRoot.Walk(nil)
+	if err != nil {
+		return err
+	}
+	targetFile, _, _, err := idClone.Create(name, p9.WriteOnly, permissions, uid, gid)
+	if err != nil {
+		return fserrors.Join(err, idClone.Close())
+	}
+	if _, err := targetFile.WriteAt(data, 0); err != nil {
+		return fserrors.Join(err, targetFile.Close())
+	}
+	if err := targetFile.FSync(); err != nil {
+		if errors.Is(err, perrors.EIO) {
+			// TODO: [p9 fork]
+			// Our client should use a unique version string
+			// that allows the server to send Rerror (string),
+			// instead of Rlerror (errno).
+			// Until then, we only know generally
+			// "something went wrong", not what specifically.
+			err = fmt.Errorf("%w: %s", err, "IPFS node may be unreachable?")
+		}
+		return fserrors.Join(err, targetFile.Close())
+	}
+	return targetFile.Close()
+}
+
+func makeCloserFuncs(size int) (func(io.Closer), func(error) []error) {
+	var (
+		closers   = make([]io.Closer, 0, size)
+		add       = func(closer io.Closer) { closers = append(closers, closer) }
+		closeWith = func(err error) (errs []error) {
+			if err != nil {
+				errs = append(errs, err)
+			}
+			for i := len(closers) - 1; i >= 0; i-- {
+				if err := closers[i].Close(); err != nil {
+					errs = append(errs, err)
+				}
+			}
+			return errs
+		}
+	)
+	return add, closeWith
 }
