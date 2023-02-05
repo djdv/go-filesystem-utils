@@ -24,7 +24,9 @@ type (
 	mountSettings struct {
 		helpOnly
 		mountIPFSSettings
-		// TODO: not bound + type should be raw uint; used with both FUSE and 9P.
+		// TODO: bind to cli params
+		// TODO ID types should be raw uint;
+		// used for/with numerical ID systems (Unix, FUSE, 9P, et al.).
 		uid p9.UID
 		gid p9.GID
 	}
@@ -39,7 +41,15 @@ type (
 	MountOption func(*mountSettings) error
 )
 
-// TODO: move; should be in shared or even in [command] pkg.
+const fuseHost filesystem.Host = "FUSE"
+
+func supportedHosts() []filesystem.Host {
+	return []filesystem.Host{
+		fuseHost,
+	}
+}
+
+// TODO: move; should be part of [command] pkg.
 func subonlyExec[settings command.Settings[T], cmd command.ExecuteFuncArgs[settings, T], T any]() cmd {
 	return func(context.Context, settings, ...string) error {
 		// This command only holds subcommands
@@ -65,7 +75,7 @@ func (set *mountIPFSSettings) BindFlags(fs *flag.FlagSet) {
 		ipfsName  = "ipfs"
 		ipfsUsage = "IPFS API node `maddr`"
 	)
-	set.ipfs.nodeMaddr = defaultIPFSMaddr{}
+	set.ipfs.nodeMaddr = &defaultIPFSMaddr{}
 	fs.Func(ipfsName, ipfsUsage, func(s string) (err error) {
 		set.ipfs.nodeMaddr, err = multiaddr.NewMultiaddr(s)
 		return
@@ -89,7 +99,7 @@ func Mount() command.Command {
 func mountFuse() command.Command {
 	const usage = "Placeholder text."
 	var (
-		formalName = string(p9fs.HostFUSE)
+		formalName = string(fuseHost)
 		cmdName    = strings.ToLower(formalName)
 		synopsis   = fmt.Sprintf("Mount a file system via the %s API.", formalName)
 	)
@@ -101,12 +111,12 @@ func mountFuse() command.Command {
 
 func makeMountSubcommands() []command.Command {
 	var (
-		hostTable   = p9fs.Hosts()
+		hostTable   = supportedHosts()
 		subcommands = make([]command.Command, len(hostTable))
 	)
 	for i, hostAPI := range hostTable {
 		switch hostAPI {
-		case p9fs.HostFUSE:
+		case fuseHost:
 			subcommands[i] = mountFuse()
 		default:
 			panic("unexpected API ID for host file system interface")
@@ -118,7 +128,7 @@ func makeMountSubcommands() []command.Command {
 func makeMountFuseSubcommands() []command.Command {
 	const usage = "Placeholder text."
 	var (
-		hostName    = string(p9fs.HostFUSE)
+		hostName    = string(fuseHost)
 		fsidTable   = p9fs.FileSystems()
 		subcommands = make([]command.Command, len(fsidTable))
 	)
@@ -132,7 +142,7 @@ func makeMountFuseSubcommands() []command.Command {
 		case ipfs.IPFSID, ipfs.PinFSID,
 			ipfs.IPNSID, ipfs.KeyFSID:
 			subcommands[i] = command.MakeCommand[*mountIPFSSettings](subcmdName, synopsis, usage,
-				makeFuseIPFSExec(p9fs.HostFUSE, fsid),
+				makeFuseIPFSExec(fuseHost, fsid),
 			)
 		default:
 			panic("unexpected API ID for host file system interface")
@@ -210,7 +220,7 @@ func (c *Client) Mount(host filesystem.Host, fsid filesystem.ID, args []string, 
 		}
 	}
 	switch host {
-	case p9fs.HostFUSE:
+	case fuseHost:
 		return c.handleFuse(fsid, &settings, args)
 	default:
 		return errors.New("NIY")
@@ -236,7 +246,7 @@ func (c *Client) handleFuse(fsid filesystem.ID,
 	addCloser(mRoot)
 
 	var (
-		fuseName = string(p9fs.HostFUSE)
+		fuseName = string(fuseHost)
 		fsidName = string(fsid)
 		wname    = []string{fuseName, fsidName}
 		uid      = set.uid
@@ -251,12 +261,7 @@ func (c *Client) handleFuse(fsid filesystem.ID,
 	}
 	addCloser(idRoot)
 	for _, target := range targets {
-		// TODO: we should either
-		// export+import this type, or use tuple format.
-		data := struct {
-			ApiMaddr multiaddr.Multiaddr
-			Target   string
-		}{
+		data := p9fs.IPFSMountpoint{
 			ApiMaddr: set.ipfs.nodeMaddr,
 			Target:   target,
 		}
