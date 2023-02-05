@@ -18,8 +18,10 @@ import (
 	"unsafe"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
+	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
+	"github.com/djdv/go-filesystem-utils/internal/filesystem/ipfs"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	p9net "github.com/djdv/go-filesystem-utils/internal/net/9p"
 	"github.com/hugelgupf/p9/p9"
@@ -37,6 +39,7 @@ type (
 		permissions fs.FileMode
 	}
 	defaultServerMaddr struct{ multiaddr.Multiaddr }
+	ninePath           = *atomic.Uint64
 	fileSystem         struct {
 		root interface {
 			p9.File
@@ -178,11 +181,8 @@ func Daemon() command.Command {
 }
 
 func daemonExecute(ctx context.Context, set *daemonSettings) error {
-	if err := initDaemonLazyfields(set); err != nil {
-		return err
-	}
 	dCtx, cancel := context.WithCancel(ctx)
-	system, err := makeSystem(dCtx, set)
+	system, err := newSystem(dCtx, set)
 	defer cancel()
 	if err != nil {
 		return err
@@ -229,14 +229,13 @@ func daemonExecute(ctx context.Context, set *daemonSettings) error {
 			makeMountChecker(system.mount, log)))
 	}
 
-	// const emptyInterval = time.Hour
-	const emptyInterval = time.Second * 3
+	const emptyInterval = time.Hour
 	errs = append(errs, stopWhen(dCtx, emptyInterval, stopper,
 		makeEmptyChecker(system, log)))
 	return aggregateErrs()
 }
 
-func makeSystem(ctx context.Context, set *daemonSettings) (*daemonSystem, error) {
+func newSystem(ctx context.Context, set *daemonSettings) (*daemonSystem, error) {
 	var (
 		uid       = set.uid
 		gid       = set.gid
@@ -260,41 +259,60 @@ func newDaemonLog(verbose bool) ulog.Logger {
 	return golog.New(os.Stderr, prefix, flags)
 }
 
+func commonOptions[OT p9fs.Options](parent p9.File, child string,
+	path ninePath, uid p9.UID, gid p9.GID, permissions p9.FileMode,
+) []OT {
+	return []OT{
+		p9fs.WithParent[OT](parent, child),
+		p9fs.WithPath[OT](path),
+		p9fs.WithUID[OT](uid),
+		p9fs.WithGID[OT](gid),
+		p9fs.WithPermissions[OT](permissions),
+	}
+}
+
 func newFileSystem(ctx context.Context, uid p9.UID, gid p9.GID) (fileSystem, error) {
 	const permissions = p9fs.ReadUser | p9fs.WriteUser | p9fs.ExecuteUser |
 		p9fs.ReadGroup | p9fs.ExecuteGroup |
 		p9fs.ReadOther | p9fs.ExecuteOther
 	var (
-		ninePath = new(atomic.Uint64)
-		_, root  = p9fs.NewDirectory(
-			p9fs.WithPath[p9fs.DirectoryOption](ninePath),
-			p9fs.WithUID[p9fs.DirectoryOption](uid),
-			p9fs.WithGID[p9fs.DirectoryOption](gid),
-			p9fs.WithPermissions[p9fs.DirectoryOption](permissions),
+		path    = new(atomic.Uint64)
+		_, root = p9fs.NewDirectory(
+			commonOptions[p9fs.DirectoryOption](nil, "", path, uid, gid, permissions)...,
 		)
 		system = fileSystem{
 			root:    root,
-			mount:   newMounter(root, ninePath, uid, gid, permissions),
-			listen:  newListener(ctx, root, ninePath, uid, gid, permissions),
-			control: newControl(ctx, root, ninePath, uid, gid, permissions),
+			mount:   newMounter(root, path, uid, gid, permissions),
+			listen:  newListener(ctx, root, path, uid, gid, permissions),
+			control: newControl(ctx, root, path, uid, gid, permissions),
 		}
 	)
 	return system, linkSystems(system)
 }
 
-func newMounter(parent p9.File, ninePath *atomic.Uint64,
+func newMounter(parent p9.File, path ninePath,
 	uid p9.UID, gid p9.GID, permissions p9.FileMode,
 ) mountSubsystem {
 	const (
 		mounterName = "mounts"
 	)
-	mountFS := p9fs.NewMounter(
-		p9fs.WithParent[p9fs.MounterOption](parent, mounterName),
-		p9fs.WithPath[p9fs.MounterOption](ninePath),
-		p9fs.WithUID[p9fs.MounterOption](uid),
-		p9fs.WithGID[p9fs.MounterOption](gid),
-		p9fs.WithPermissions[p9fs.MounterOption](permissions),
-		p9fs.UnlinkEmptyChildren[p9fs.MounterOption](true),
+	var (
+		ipfsCtor = newIPFSConstructor(path)
+		fsidMap  = p9fs.GuestThing{
+			ipfs.IPFSID:  ipfsCtor,
+			ipfs.PinFSID: ipfsCtor,
+			ipfs.IPNSID:  ipfsCtor,
+			ipfs.KeyFSID: ipfsCtor,
+			ipfs.MFSID:   ipfsCtor,
+		}
+		hostMap = p9fs.MounterThing{
+			fuseHost: newFUSEConstructor(path, fsidMap),
+		}
+		_, mountFS = p9fs.NewMounter(hostMap,
+			append(commonOptions[p9fs.MounterOption](parent, mounterName, path, uid, gid, permissions),
+				p9fs.UnlinkEmptyChildren[p9fs.MounterOption](true),
+			)...,
+		)
 	)
 	return mountSubsystem{
 		name:    mounterName,
@@ -302,27 +320,51 @@ func newMounter(parent p9.File, ninePath *atomic.Uint64,
 	}
 }
 
-func newListener(ctx context.Context, parent p9.File, ninePath *atomic.Uint64,
+func newFUSEConstructor(path ninePath, idBinder p9fs.GuestThing) p9fs.HostConstructor {
+	return func(parent p9.File, name string, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
+		qid, dir := p9fs.NewFuseDir(idBinder,
+			append(commonOptions[p9fs.FuseOption](parent, name, path, uid, gid, permissions),
+				p9fs.UnlinkEmptyChildren[p9fs.FuseOption](true),
+				p9fs.UnlinkWhenEmpty[p9fs.FuseOption](true),
+			)...,
+		)
+		return qid, dir, nil
+	}
+}
+
+func newIPFSConstructor(path ninePath) p9fs.GuestConstructor {
+	// TODO: some optional lazy-client cache?
+	// map[maddr]ipfs.Client.Get()
+	// inside closure we could optionally pass a reference
+	// to the mounter.
+	return func(fsid filesystem.ID, mountFn p9fs.MountFunc,
+		parent p9.File, name string, permissions p9.FileMode, uid p9.UID, gid p9.GID,
+	) (p9.QID, p9.File, error) {
+		qid, mounter := p9fs.NewIPFSMounter(fsid, mountFn,
+			commonOptions[p9fs.IPFSOption](parent, name, path, uid, gid, permissions)...,
+		)
+		return qid, mounter, nil
+	}
+}
+
+func newListener(ctx context.Context, parent p9.File, path ninePath,
 	uid p9.UID, gid p9.GID, permissions p9.FileMode,
 ) listenSubsystem {
-	const listenerName = "listeners"
+	const name = "listeners"
 	_, listenFS, listeners := p9fs.NewListener(ctx,
-		p9fs.WithParent[p9fs.ListenerOption](parent, listenerName),
-		p9fs.WithPath[p9fs.ListenerOption](ninePath),
-		p9fs.WithUID[p9fs.ListenerOption](uid),
-		p9fs.WithGID[p9fs.ListenerOption](gid),
-		p9fs.WithPermissions[p9fs.ListenerOption](permissions),
-		p9fs.UnlinkEmptyChildren[p9fs.ListenerOption](true),
+		append(commonOptions[p9fs.ListenerOption](parent, name, path, uid, gid, permissions),
+			p9fs.UnlinkEmptyChildren[p9fs.ListenerOption](true),
+		)...,
 	)
 	return listenSubsystem{
-		name:      listenerName,
+		name:      name,
 		Listener:  listenFS,
 		listeners: listeners,
 	}
 }
 
 func newControl(ctx context.Context,
-	parent p9.File, ninePath *atomic.Uint64,
+	parent p9.File, path ninePath,
 	uid p9.UID, gid p9.GID, permissions p9.FileMode,
 ) controlSubsystem {
 	const (
@@ -330,27 +372,19 @@ func newControl(ctx context.Context,
 		shutdownName = "shutdown"
 	)
 	var (
-		_, directory = p9fs.NewDirectory(
-			p9fs.WithParent[p9fs.DirectoryOption](parent, controlName),
-			p9fs.WithPath[p9fs.DirectoryOption](ninePath),
-			p9fs.WithUID[p9fs.DirectoryOption](uid),
-			p9fs.WithGID[p9fs.DirectoryOption](gid),
-			p9fs.WithPermissions[p9fs.DirectoryOption](permissions),
+		_, control = p9fs.NewDirectory(
+			commonOptions[p9fs.DirectoryOption](parent, controlName, path, uid, gid, permissions)...,
 		)
 		_, shutdownFile, shutdownCh = p9fs.NewChannelFile(ctx,
-			p9fs.WithParent[p9fs.ChannelOption](parent, controlName),
-			p9fs.WithPath[p9fs.ChannelOption](ninePath),
-			p9fs.WithUID[p9fs.ChannelOption](uid),
-			p9fs.WithGID[p9fs.ChannelOption](gid),
-			p9fs.WithPermissions[p9fs.ChannelOption](permissions),
+			commonOptions[p9fs.ChannelOption](control, shutdownName, path, uid, gid, permissions)...,
 		)
 	)
-	if err := directory.Link(shutdownFile, shutdownName); err != nil {
+	if err := control.Link(shutdownFile, shutdownName); err != nil {
 		panic(err)
 	}
 	return controlSubsystem{
 		name:      controlName,
-		Directory: directory,
+		Directory: control,
 		shutdown: shutdown{
 			ChannelFile: shutdownFile,
 			name:        shutdownName,
