@@ -156,16 +156,11 @@ func (set *daemonSettings) BindFlags(flagSet *flag.FlagSet) {
 		set.permissions, err = parsePOSIXPermissions(s)
 		return
 	})
-	defaultText := map[string]string{
+	setDefaultValueText(flagSet, flagDefaultText{
 		uidName:         uidDefaultText,
 		gidName:         gidDefaultText,
 		sockName:        sockDefaultText,
 		permissionsName: permissionsDefaultText,
-	}
-	flagSet.VisitAll(func(f *flag.Flag) {
-		if text, ok := defaultText[f.Name]; ok {
-			f.DefValue = text
-		}
 	})
 }
 

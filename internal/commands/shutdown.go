@@ -70,13 +70,8 @@ func (set *shutdownSettings) BindFlags(flagSet *flag.FlagSet) {
 		set.disposition, err = parseShutdownLevel(s)
 		return
 	})
-	defaultText := map[string]string{
+	setDefaultValueText(flagSet, flagDefaultText{
 		shutdownName: shutdownDefaultText,
-	}
-	flagSet.VisitAll(func(f *flag.Flag) {
-		if text, ok := defaultText[f.Name]; ok {
-			f.DefValue = text
-		}
 	})
 }
 

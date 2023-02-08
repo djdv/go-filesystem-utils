@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
@@ -75,10 +76,17 @@ func (set *mountIPFSSettings) BindFlags(flagSet *flag.FlagSet) {
 		ipfsName  = "ipfs"
 		ipfsUsage = "IPFS API node `maddr`"
 	)
+	ipfsDefaultText := fmt.Sprintf("parses: %s, %s",
+		filepath.Join("$"+ipfsConfigEnv, ipfsAPIFileName),
+		filepath.Join(ipfsConfigDefaultDir, ipfsAPIFileName),
+	)
 	set.ipfs.nodeMaddr = &defaultIPFSMaddr{}
 	flagSet.Func(ipfsName, ipfsUsage, func(s string) (err error) {
 		set.ipfs.nodeMaddr, err = multiaddr.NewMultiaddr(s)
 		return
+	})
+	setDefaultValueText(flagSet, flagDefaultText{
+		ipfsName: ipfsDefaultText,
 	})
 }
 

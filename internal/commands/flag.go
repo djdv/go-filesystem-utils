@@ -72,6 +72,20 @@ type (
 	defaultIPFSMaddr struct{ multiaddr.Multiaddr }
 )
 
+const (
+	ipfsAPIFileName      = "api"
+	ipfsConfigEnv        = giconfig.EnvDir
+	ipfsConfigDefaultDir = giconfig.DefaultPathRoot
+)
+
+func setDefaultValueText(flagSet *flag.FlagSet, defaultText flagDefaultText) {
+	flagSet.VisitAll(func(f *flag.Flag) {
+		if text, ok := defaultText[f.Name]; ok {
+			f.DefValue = text
+		}
+	})
+}
+
 // TODO: move this
 func WithIPFS(maddr multiaddr.Multiaddr) MountOption {
 	return func(s *mountSettings) error { s.ipfs.nodeMaddr = maddr; return nil }
@@ -88,14 +102,6 @@ func (di *defaultIPFSMaddr) get() (multiaddr.Multiaddr, error) {
 		di.Multiaddr = maddr
 	}
 	return maddr, nil
-}
-
-func (di defaultIPFSMaddr) String() string {
-	maddr, err := di.get()
-	if err != nil {
-		return "no IPFS API file found (must provide this argument)"
-	}
-	return maddr.String()
 }
 
 func (set *commonSettings) BindFlags(flagSet *flag.FlagSet) {
@@ -148,12 +154,11 @@ func getIPFSAPI() ([]multiaddr.Multiaddr, error) {
 }
 
 func getIPFSAPIPath() (string, error) {
-	const apiFile = "api"
 	var target string
-	if ipfsPath, set := os.LookupEnv(giconfig.EnvDir); set {
-		target = filepath.Join(ipfsPath, apiFile)
+	if ipfsPath, set := os.LookupEnv(ipfsConfigEnv); set {
+		target = filepath.Join(ipfsPath, ipfsAPIFileName)
 	} else {
-		target = filepath.Join(giconfig.DefaultPathRoot, apiFile)
+		target = filepath.Join(ipfsConfigDefaultDir, ipfsAPIFileName)
 	}
 	return expandHomeShorthand(target)
 }
