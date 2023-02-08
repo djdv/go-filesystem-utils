@@ -32,6 +32,12 @@ type (
 		commonSettings
 		daemonDecay
 	}
+	// defaultClientMaddr distinguishes
+	// the default maddr value, from an arbitrary maddr value.
+	// I.e. even if the underlying multiaddrs are the same
+	// only the flag's default value should be of this type.
+	// Implying the flag was not provided/set explicitly.
+	defaultClientMaddr struct{ multiaddr.Multiaddr }
 )
 
 func (set *clientSettings) BindFlags(flagSet *flag.FlagSet) {
@@ -53,7 +59,7 @@ func (set *clientSettings) BindFlags(flagSet *flag.FlagSet) {
 		}
 		sockDefault := maddrs[0]
 		sockDefaultText = sockDefault.String()
-		set.serviceMaddr = sockDefault
+		set.serviceMaddr = defaultClientMaddr{sockDefault}
 	}
 	flagSet.Func(sockName, sockUsage, func(s string) (err error) {
 		set.serviceMaddr, err = multiaddr.NewMultiaddr(s)
@@ -81,26 +87,17 @@ func WithLogger(log ulog.Logger) ClientOption {
 	return func(c *Client) error { c.log = log; return nil }
 }
 
-func getClient(set *clientSettings, launch bool) (*Client, error) {
+func getClient(set *clientSettings, autoLaunchDaemon bool) (*Client, error) {
 	var (
-		serviceMaddr        = set.serviceMaddr
-		clientOpts          []ClientOption
-		defaultServiceMaddr bool
+		serviceMaddr = set.serviceMaddr
+		clientOpts   []ClientOption
 	)
-	if lazy, ok := serviceMaddr.(lazyFlag[multiaddr.Multiaddr]); ok {
-		maddr, err := lazy.get()
-		if err != nil {
-			return nil, err
-		}
-		serviceMaddr = maddr
-		defaultServiceMaddr = true
-	}
 	if set.verbose {
 		// TODO: less fancy prefix and/or out+prefix from CLI flags
 		clientLog := log.New(os.Stdout, "⬇️ client - ", log.Lshortfile)
 		clientOpts = append(clientOpts, WithLogger(clientLog))
 	}
-	if launch && defaultServiceMaddr {
+	if autoLaunchDaemon {
 		return ConnectOrLaunchLocal(clientOpts...)
 	}
 	return Connect(serviceMaddr, clientOpts...)

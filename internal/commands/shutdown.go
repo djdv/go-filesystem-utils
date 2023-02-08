@@ -81,10 +81,10 @@ func (set *shutdownSettings) BindFlags(flagSet *flag.FlagSet) {
 }
 
 func shutdownExecute(ctx context.Context, set *shutdownSettings, _ ...string) error {
-	const launch = false
-	client, err := getClient(&set.clientSettings, launch)
+	const autoLaunchDaemon = false
+	client, err := getClient(&set.clientSettings, autoLaunchDaemon)
 	if err != nil {
-		return err
+		return fmt.Errorf("could not get client (already down?): %w", err)
 	}
 	if err := client.Shutdown(set.disposition); err != nil {
 		return err

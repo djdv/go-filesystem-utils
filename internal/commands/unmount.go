@@ -51,8 +51,8 @@ func unmountExecute(ctx context.Context, set *unmountSettings, args ...string) e
 		return fmt.Errorf("%w - expected mount point(s)", command.ErrUsage)
 	}
 
-	const launch = false
-	client, err := getClient(&set.clientSettings, launch)
+	const autoLaunchDaemon = false
+	client, err := getClient(&set.clientSettings, autoLaunchDaemon)
 	if err != nil {
 		return err
 	}

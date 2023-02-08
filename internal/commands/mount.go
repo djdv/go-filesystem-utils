@@ -171,8 +171,8 @@ func ipfsExecute(ctx context.Context, host filesystem.Host, fsid filesystem.ID,
 		// [f575114c-9b1d-484c-ade6-b9ce0f6887c8]
 		return fmt.Errorf("%w - expected mount point(s)", command.ErrUsage)
 	}
-	const launch = true
-	client, err := getClient(&set.clientSettings, launch)
+	_, autoLaunchDaemon := set.serviceMaddr.(defaultClientMaddr)
+	client, err := getClient(&set.clientSettings, autoLaunchDaemon)
 	if err != nil {
 		return err
 	}
