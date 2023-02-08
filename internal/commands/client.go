@@ -65,13 +65,8 @@ func (set *clientSettings) BindFlags(flagSet *flag.FlagSet) {
 		set.serviceMaddr, err = multiaddr.NewMultiaddr(s)
 		return
 	})
-	defaultText := map[string]string{
+	setDefaultValueText(flagSet, flagDefaultText{
 		sockName: sockDefaultText,
-	}
-	flagSet.VisitAll(func(f *flag.Flag) {
-		if text, ok := defaultText[f.Name]; ok {
-			f.DefValue = text
-		}
 	})
 }
 
@@ -167,7 +162,7 @@ func SelfConnect(args []string, options ...ClientOption) (*Client, error) {
 func Connect(serverMaddr multiaddr.Multiaddr, options ...ClientOption) (*Client, error) {
 	conn, err := manet.Dial(serverMaddr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not connect to service: %w", err)
 	}
 	return newClient(conn, options...)
 }
