@@ -49,16 +49,8 @@ func goToFuseStat(info fs.FileInfo, fctx fuseContext, stat *fuse.Stat_t) {
 	var (
 		goMode          = info.Mode()
 		fuseType        = goToFuseFileType(goMode)
-		fusePermissions uint32
+		fusePermissions = goToFusePermissions(goMode)
 	)
-	if goPermissions := goMode.Perm(); goPermissions != 0 {
-		fusePermissions = goToFusePermissions(goPermissions)
-	} else {
-		// TODO: The fallback should be (optionally) set within the wrapper's constructor.
-		// Which itself should have a read-only default like this if not provided.
-		const fallbackPermissions = readAll | executeAll
-		fusePermissions = fallbackPermissions
-	}
 
 	stat.Mode = fuseType | fusePermissions
 	stat.Uid = fctx.uid
