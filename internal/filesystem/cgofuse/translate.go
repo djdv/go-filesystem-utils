@@ -50,6 +50,7 @@ func goToFuseStat(info fs.FileInfo, fctx fuseContext, stat *fuse.Stat_t) {
 		goMode          = info.Mode()
 		fuseType        = goToFuseFileType(goMode)
 		fusePermissions = goToFusePermissions(goMode)
+		fuseModTime     = fuse.NewTimespec(info.ModTime())
 	)
 
 	stat.Mode = fuseType | fusePermissions
@@ -59,10 +60,14 @@ func goToFuseStat(info fs.FileInfo, fctx fuseContext, stat *fuse.Stat_t) {
 
 	if atimer, ok := info.(filesystem.AccessTimeInfo); ok {
 		stat.Atim = fuse.NewTimespec(atimer.AccessTime())
+	} else {
+		stat.Atim = fuseModTime
 	}
-	stat.Mtim = fuse.NewTimespec(info.ModTime())
+	stat.Mtim = fuseModTime
 	if ctimer, ok := info.(filesystem.ChangeTimeInfo); ok {
 		stat.Ctim = fuse.NewTimespec(ctimer.ChangeTime())
+	} else {
+		stat.Ctim = fuseModTime
 	}
 	// TODO: Block size + others.
 	if crtimer, ok := info.(filesystem.CreationTimeInfo); ok {
