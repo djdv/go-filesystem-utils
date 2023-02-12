@@ -134,11 +134,12 @@ func (gw *goWrapper) Readdir(path string, fill fillFunc, ofst int64, fh fileDesc
 
 func newStreamDir(directory fs.ReadDirFile, fCtx fuseContext) *directoryStream {
 	ctx, cancel := context.WithCancel(context.Background())
+	const count = 16 // Arbitrary buffer size.
 	return &directoryStream{
 		Context:     ctx,
 		CancelFunc:  cancel,
 		ReadDirFile: directory,
-		entries:     filesystem.StreamDir(ctx, directory),
+		entries:     filesystem.StreamDir(ctx, count, directory),
 		fuseContext: fCtx,
 	}
 }
