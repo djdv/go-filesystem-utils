@@ -47,9 +47,14 @@ type (
 		Mkdir(name string, perm fs.FileMode) error
 	}
 
+	// A StreamDirFile is a directory file whose entries
+	// can be received with the StreamDir method.
 	StreamDirFile interface {
 		fs.ReadDirFile
-		StreamDir(ctx context.Context) <-chan StreamDirEntry
+		// StreamDir shares [fs.ReadDirFile]'s position,
+		// and sends entries until either the last entry
+		// is sent or the directory is closed.
+		StreamDir() <-chan StreamDirEntry
 	}
 	TruncateFile interface {
 		fs.File
@@ -120,29 +125,44 @@ func Truncate(fsys fs.FS, name string, size int64) (err error) {
 	return fmt.Errorf(`truncate "%s": operation not supported`, name)
 }
 
-func StreamDir(ctx context.Context, directory fs.ReadDirFile) <-chan StreamDirEntry {
+// StreamDir reads the directory
+// and returns a channel of directory entry results.
+//
+// If `directory` implements [StreamDirFile],
+// StreamDir calls `directory.StreamDir`.
+// Otherwise, StreamDir calls `directory.ReadDir`
+// repeatedly with `count` until the entire directory
+// is read, an error is encountered, or the context is done.
+func StreamDir(ctx context.Context, count int, directory fs.ReadDirFile) <-chan StreamDirEntry {
 	if dirStreamer, ok := directory.(StreamDirFile); ok {
-		return dirStreamer.StreamDir(ctx)
+		return dirStreamer.StreamDir()
 	}
-	stream := make(chan StreamDirEntry)
+	var (
+		stream = make(chan StreamDirEntry)
+		send   = func(res StreamDirEntry) (sent bool) {
+			select {
+			case stream <- res:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		}
+	)
 	go func() {
 		defer close(stream)
-		const batchCount = 16 // NOTE: Count chosen arbitrarily.
 		for {
-			ents, err := directory.ReadDir(batchCount)
+			ents, err := directory.ReadDir(count)
 			if err != nil {
 				if !errors.Is(err, io.EOF) {
-					select {
-					case stream <- dirEntryWrapper{error: err}:
-					case <-ctx.Done():
-					}
+					send(dirEntryWrapper{error: err})
 				}
 				return
 			}
 			for _, ent := range ents {
-				select {
-				case stream <- dirEntryWrapper{DirEntry: ent}:
-				case <-ctx.Done():
+				if ctx.Err() != nil {
+					return
+				}
+				if !send(dirEntryWrapper{DirEntry: ent}) {
 					return
 				}
 			}

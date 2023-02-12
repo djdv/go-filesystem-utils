@@ -15,6 +15,8 @@ type (
 	openFileFSMock struct{ fs.FS }
 	streamDirMock  struct {
 		fs.ReadDirFile
+		context.Context
+		context.CancelFunc
 		entries []filesystem.StreamDirEntry
 	}
 )
@@ -32,11 +34,17 @@ func (of *openFileFSMock) OpenFile(name string, _ int, _ fs.FileMode) (fs.File, 
 	return of.FS.Open(name)
 }
 
-func (sd *streamDirMock) StreamDir(ctx context.Context) <-chan filesystem.StreamDirEntry {
-	entries := make(chan filesystem.StreamDirEntry)
+func (sd *streamDirMock) StreamDir() <-chan filesystem.StreamDirEntry {
+	var (
+		ctx     = sd.Context
+		entries = make(chan filesystem.StreamDirEntry)
+	)
 	go func() {
 		defer close(entries)
 		for _, entry := range sd.entries {
+			if ctx.Err() != nil {
+				return
+			}
 			select {
 			case entries <- entry:
 			case <-ctx.Done():
@@ -46,6 +54,8 @@ func (sd *streamDirMock) StreamDir(ctx context.Context) <-chan filesystem.Stream
 	}()
 	return entries
 }
+
+func (sd *streamDirMock) Close() error { sd.CancelFunc(); return nil }
 
 func TestFilesystem(t *testing.T) {
 	t.Parallel()
@@ -66,9 +76,7 @@ func openFileFS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stdFSFile.Close(); err != nil {
-		t.Fatal(err)
-	}
+	closeFile(t, stdFSFile)
 
 	// Wrapper around standard [fs.File.Open] should /not/ succeed
 	// with other flags.
@@ -76,9 +84,7 @@ func openFileFS(t *testing.T) {
 	if err == nil {
 		t.Error("expected wrapper to deny access with unexpected flags, but got no error")
 		if stdFSFileBad != nil {
-			if err := stdFSFileBad.Close(); err != nil {
-				t.Errorf("additionally, close failed for returned file: %s", err)
-			}
+			closeFile(t, stdFSFileBad)
 		}
 	}
 
@@ -88,62 +94,70 @@ func openFileFS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := extendedFSFile.Close(); err != nil {
-		t.Fatal(err)
-	}
+	closeFile(t, extendedFSFile)
 }
 
 func streamDir(t *testing.T) {
 	t.Parallel()
-	const (
-		fsRoot       = "."
-		testEntCount = 64
-	)
+	const testEntCount = 64
 	var (
 		testFS   = make(fstest.MapFS, testEntCount)
 		testFile = new(fstest.MapFile)
-		check    = func(entries []filesystem.StreamDirEntry) {
-			if got, want := len(entries), len(testFS); got != want {
-				t.Errorf("length mismatch"+
-					"\n\tgot: %d"+
-					"\n\twant: %d",
-					got, want,
-				)
-			}
-		}
 	)
 	for i := 0; i < testEntCount; i++ {
 		testFS[strconv.Itoa(i)] = testFile
 	}
+	t.Run("implements", func(t *testing.T) {
+		streamDirImplements(t, testFS)
+	})
+	t.Run("cancels", func(t *testing.T) {
+		streamDirCancels(t, testFS)
+	})
+}
 
-	// Values returned utilizing standard [fs.ReadDirFile].
-	stdFile, err := testFS.Open(fsRoot)
-	if err != nil {
-		t.Fatal(err)
+func streamDirImplements(t *testing.T, testFS fstest.MapFS) {
+	t.Parallel()
+	const count = 16 // Arbitrary buffer size.
+	check := func(entries []filesystem.StreamDirEntry) {
+		t.Helper()
+		if got, want := len(entries), len(testFS); got != want {
+			t.Errorf("length mismatch"+
+				"\n\tgot: %d"+
+				"\n\twant: %d",
+				got, want,
+			)
+		}
 	}
-	stdReadDirFile, ok := stdFile.(fs.ReadDirFile)
-	if !ok {
-		t.Fatalf("%T does no impliment expected fs.ReadDirFile interface", stdFile)
-	}
-	stdEntries := streamEntries(t, stdReadDirFile)
-	if err := stdFile.Close(); err != nil {
-		t.Error(err)
-	}
-	check(stdEntries)
-
-	// Values returned utilizing our extension.
 	var (
-		extendedReadDirFile = &streamDirMock{entries: stdEntries}
-		extensionEntries    = streamEntries(t, extendedReadDirFile)
+		ctx, cancel = context.WithCancel(context.Background())
+
+		// Values returned utilizing standard [fs.ReadDirFile].
+		stdFile        = openRoot(t, testFS)
+		stdReadDirFile = assertReadDirFile(t, stdFile)
+		stdEntries     = streamEntries(t, ctx, count, stdReadDirFile)
+
+		// Values returned utilizing our extension.
+		extendedReadDirFile = &streamDirMock{
+			entries: stdEntries,
+			Context: ctx, CancelFunc: cancel,
+		}
+		extensionEntries = streamEntries(t, ctx, count, extendedReadDirFile)
 	)
+	defer cancel()
+	closeFile(t, stdFile)
+	closeFile(t, extendedReadDirFile)
+	check(stdEntries)
 	check(extensionEntries)
 }
 
-func streamEntries(t *testing.T, dir fs.ReadDirFile) []filesystem.StreamDirEntry {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	entries := make([]filesystem.StreamDirEntry, 0)
-	for entry := range filesystem.StreamDir(ctx, dir) {
+func streamEntries(t *testing.T, ctx context.Context,
+	count int, dir fs.ReadDirFile,
+) []filesystem.StreamDirEntry {
+	var (
+		stream  = filesystem.StreamDir(ctx, count, dir)
+		entries = make([]filesystem.StreamDirEntry, 0, cap(stream))
+	)
+	for entry := range stream {
 		if err := entry.Error(); err != nil {
 			t.Error(err)
 		} else {
@@ -151,4 +165,66 @@ func streamEntries(t *testing.T, dir fs.ReadDirFile) []filesystem.StreamDirEntry
 		}
 	}
 	return entries
+}
+
+func streamDirCancels(t *testing.T, testFS fstest.MapFS) {
+	t.Parallel()
+	const count = 16 // Arbitrary buffer size.
+	check := func(entries []filesystem.StreamDirEntry) {
+		t.Helper()
+		if len(entries) != 0 {
+			t.Error("entries returned with canceled context / closed directory")
+		}
+	}
+	{ // Values returned utilizing standard [fs.ReadDirFile].
+		var (
+			stdFile        = openRoot(t, testFS)
+			stdReadDirFile = assertReadDirFile(t, stdFile)
+			ctx, cancel    = context.WithCancel(context.Background())
+		)
+		cancel()
+		entries := streamEntries(t, ctx, count, stdReadDirFile)
+		closeFile(t, stdReadDirFile)
+		check(entries)
+	}
+	{ // Values returned utilizing our extension.
+		var (
+			ctx, cancel         = context.WithCancel(context.Background())
+			fakeEntries         = []filesystem.StreamDirEntry{nil}
+			extendedReadDirFile = &streamDirMock{
+				entries: fakeEntries,
+				Context: ctx, CancelFunc: cancel,
+			}
+		)
+		defer cancel()
+		closeFile(t, extendedReadDirFile)
+		extensionEntries := streamEntries(t, ctx, count, extendedReadDirFile)
+		check(extensionEntries)
+	}
+}
+
+func openRoot(t *testing.T, fsys fs.FS) fs.File {
+	t.Helper()
+	const fsRoot = "."
+	root, err := fsys.Open(fsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func closeFile(t *testing.T, file fs.File) {
+	t.Helper()
+	if err := file.Close(); err != nil {
+		t.Error(err)
+	}
+}
+
+func assertReadDirFile(t *testing.T, file fs.File) fs.ReadDirFile {
+	t.Helper()
+	readDirFile, ok := file.(fs.ReadDirFile)
+	if !ok {
+		t.Fatalf("%T does no implement expected fs.ReadDirFile interface", file)
+	}
+	return readDirFile
 }
