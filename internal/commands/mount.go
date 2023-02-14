@@ -50,6 +50,14 @@ func supportedHosts() []filesystem.Host {
 	}
 }
 
+func supportedSystems() []filesystem.ID {
+	return []filesystem.ID{
+		ipfs.IPFSID,
+		ipfs.PinFSID,
+		ipfs.IPNSID,
+		ipfs.KeyFSID,
+	}
+}
 // TODO: move; should be part of [command] pkg.
 func subonlyExec[settings command.Settings[T], cmd command.ExecuteFuncArgs[settings, T], T any]() cmd {
 	return func(context.Context, settings, ...string) error {
@@ -137,7 +145,7 @@ func makeMountFuseSubcommands() []command.Command {
 	const usage = "Placeholder text."
 	var (
 		hostName    = string(fuseHost)
-		fsidTable   = p9fs.FileSystems()
+		fsidTable   = supportedSystems()
 		subcommands = make([]command.Command, len(fsidTable))
 	)
 	for i, fsid := range fsidTable {
