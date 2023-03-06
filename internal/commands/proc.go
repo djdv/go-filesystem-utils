@@ -141,11 +141,13 @@ func flattenListeners(dir p9.File) (_ []multiaddr.Multiaddr, err error) {
 	}
 	defer func() {
 		for _, file := range maddrFiles {
-			err = fserrors.Join(err, file.Close())
+			if cErr := file.Close(); cErr != nil {
+				err = fserrors.Join(err, cErr)
+			}
 		}
 	}()
-	var maddrs []multiaddr.Multiaddr
-	for _, file := range maddrFiles {
+	maddrs := make([]multiaddr.Multiaddr, len(maddrFiles))
+	for i, file := range maddrFiles {
 		maddrBytes, err := p9fs.ReadAll(file)
 		if err != nil {
 			return nil, err
@@ -160,7 +162,7 @@ func flattenListeners(dir p9.File) (_ []multiaddr.Multiaddr, err error) {
 		if err != nil {
 			return nil, err
 		}
-		maddrs = append(maddrs, maddr)
+		maddrs[i] = maddr
 	}
 	return maddrs, nil
 }
