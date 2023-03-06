@@ -77,10 +77,10 @@ func getListenersFrom(cio cmdIO, fsysName string) ([]multiaddr.Multiaddr, error)
 	for {
 		select {
 		case err, ok := <-stderrs:
-			if !ok {
-				stderrs = nil
+			if ok {
+				return nil, err
 			}
-			return nil, err
+			stderrs = nil
 		case result := <-clientResults:
 			return result.maddrs, result.error
 		}
