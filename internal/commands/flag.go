@@ -37,7 +37,38 @@ type (
 		uid p9.UID
 		gid p9.GID
 	}
-	lazyFlag[T any]  interface{ get() (T, error) }
+
+	// flagDefaultText is a map of flag names and the text
+	// for their default values.
+	// This may be provided explicitly when the
+	// [fmt.Stringer] output of a flag's default value,
+	// isn't as appropriate for a command's "help" text.
+	// E.g. you may want to display "none" instead of "0",
+	// or a literal `$ENV/filename` rather than
+	// `*fully-resolved-path*/filename`, etc.
+	flagDefaultText map[string]string
+
+	// lazyFlag may be implemented, to allow
+	// flags to initialize default values at command
+	// invocation time, rather than at process
+	// initialization time.
+	// This helps reduce process startup time, by delaying
+	// expansion of flags that perform slow operations
+	// (disk/net I/O, etc.), for values
+	// that might not even be needed if the caller has
+	// set it explicitly, or for values that belong
+	// to another command than the one being invoked.
+	lazyFlag[T any] interface{ get() (T, error) }
+
+	// defaultIPFSMaddr distinguishes
+	// the default maddr value, from an arbitrary maddr value.
+	// I.e. even if the underlying multiaddrs are the same
+	// only the flag's default value should be of this type.
+	// Implying the flag was not provided/set explicitly.
+	//
+	// It also implements the lazyFlag interface,
+	// since it needs to perform I/O to find
+	// a dynamic/system local value.
 	defaultIPFSMaddr struct{ multiaddr.Multiaddr }
 )
 
