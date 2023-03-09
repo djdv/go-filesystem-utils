@@ -109,8 +109,11 @@ func wrapUsage[settings Settings[T], T any](cmd *command,
 func wrapExecute[settings Settings[T], T any,
 	execFunc CommandFunc[settings, T],
 ](usageOutput StringWriter, cmd *command, execFn execFunc,
-) func(context.Context, ...string) error {
+) commandFunc {
 	return func(ctx context.Context, args ...string) error {
+		if subcommand, subargs := getSubcommand(cmd, args); subcommand != nil {
+			return subcommand.Execute(ctx, subargs...)
+		}
 		var (
 			flagSet, set, err = parseArgs[settings](cmd, args...)
 			maybePrintUsage   = func(err error) error {
@@ -126,16 +129,9 @@ func wrapExecute[settings Settings[T], T any,
 			return maybePrintUsage(err)
 		}
 		var (
-			subcommands = cmd.subcommands
-			haveSubs    = len(subcommands) > 0
-			arguments   = flagSet.Args()
-			haveArgs    = len(arguments) > 0
+			arguments = flagSet.Args()
+			haveArgs  = len(arguments) > 0
 		)
-		if haveSubs && haveArgs {
-			if ran, err := execSub(ctx, subcommands, arguments); ran {
-				return err
-			}
-		}
 		var execErr error
 		switch execFn := any(execFn).(type) {
 		case func(context.Context, settings) error:
@@ -149,6 +145,25 @@ func wrapExecute[settings Settings[T], T any,
 		}
 		return maybePrintUsage(execErr)
 	}
+}
+
+func getSubcommand(command Command, arguments []string) (Command, []string) {
+	subcommands := command.Subcommands()
+	if len(subcommands) == 0 ||
+		len(arguments) == 0 {
+		return nil, arguments
+	}
+	subname := arguments[0]
+	for _, subcommand := range subcommands {
+		if subcommand.Name() == subname {
+			arguments = arguments[1:]
+			if s, a := getSubcommand(subcommand, arguments); s != nil {
+				return s, a
+			}
+			return subcommand, arguments
+		}
+	}
+	return nil, arguments
 }
 
 func parseArgs[settings Settings[T], T any](cmd *command, args ...string,
@@ -174,14 +189,4 @@ func parseFlags[settings Settings[T], T any](name string, args ...string,
 		return nil, nil, err
 	}
 	return flagSet, set, nil
-}
-
-func execSub(ctx context.Context, subcommands []Command, arguments []string) (bool, error) {
-	subname := arguments[0]
-	for _, subcmd := range subcommands {
-		if subcmd.Name() == subname {
-			return true, subcmd.Execute(ctx, arguments[1:]...)
-		}
-	}
-	return false, nil
 }
