@@ -8,33 +8,32 @@ import (
 	"strings"
 )
 
-// TODO: name and docs
 type (
 	// Settings is a constraint that permits any reference type
-	// which also implements a [FlagBinder] and the help flag hook method.
+	// which also implements [FlagBinder] and [HelpFlag].
 	Settings[T any] interface {
 		*T
 		HelpFlag
 		FlagBinder
 	}
 
-	// TODO: docs
+	// ExecuteFunc may be used as a command's Execute function
+	// if it only accepts flags, not arguments.
 	ExecuteFunc[settings Settings[T], T any] interface {
 		func(context.Context, settings) error
 	}
 
-	// TODO: docs
-	// The primary expected signature of a command's Execute function/method.
+	// ExecuteFuncArgs may be used as a command's Execute function
+	// if it expects to receive arguments in addition to flags.
 	ExecuteFuncArgs[settings Settings[T], T any] interface {
 		func(context.Context, settings, ...string) error
 	}
 
-	CommandFunc[settings Settings[T], T any] interface {
+	// ExecuteConstraint is satisfied by various execute funcs.
+	ExecuteConstraint[settings Settings[T], T any] interface {
 		ExecuteFunc[settings, T] | ExecuteFuncArgs[settings, T]
 	}
 
-	// TODO: docs
-	// interface level signature of [CommandFunc].
 	commandFunc func(context.Context, ...string) error
 	usageFunc   func(StringWriter, *flag.FlagSet) error
 
@@ -46,9 +45,11 @@ type (
 	}
 )
 
-func MakeCommand[settings Settings[T],
-	T any,
-	execFunc CommandFunc[settings, T],
+// MakeCommand returns a command that will
+// receive a parsed [Settings] when executed.
+func MakeCommand[
+	settings Settings[T], T any,
+	execFunc ExecuteConstraint[settings, T],
 ](
 	name, synopsis, usage string,
 	exec execFunc, options ...Option,
@@ -104,10 +105,10 @@ func wrapUsage[settings Settings[T], T any](cmd *command,
 //   - parses arguments
 //   - checks [command.HelpFlag]
 //   - checks argc against func arity.
-//   - may call [command.CommandFunc]
-//   - may print [command.Usage]
+//   - may call [command.execute]
+//   - may print [command.usage]
 func wrapExecute[settings Settings[T], T any,
-	execFunc CommandFunc[settings, T],
+	execFunc ExecuteConstraint[settings, T],
 ](usageOutput StringWriter, cmd *command, execFn execFunc,
 ) commandFunc {
 	return func(ctx context.Context, args ...string) error {
@@ -119,7 +120,7 @@ func wrapExecute[settings Settings[T], T any,
 			maybePrintUsage   = func(err error) error {
 				if errors.Is(err, ErrUsage) {
 					if printErr := cmd.usage(usageOutput, flagSet); printErr != nil {
-						return printErr
+						err = errors.Join(err, printErr)
 					}
 				}
 				return err
@@ -168,25 +169,16 @@ func getSubcommand(command Command, arguments []string) (Command, []string) {
 
 func parseArgs[settings Settings[T], T any](cmd *command, args ...string,
 ) (*flag.FlagSet, settings, error) {
-	flagSet, set, err := parseFlags[settings](cmd.name, args...)
-	if err != nil {
-		return nil, nil, err
-	}
-	if set.Help() {
-		return flagSet, set, ErrUsage
-	}
-	return flagSet, set, nil
-}
-
-func parseFlags[settings Settings[T], T any](name string, args ...string,
-) (*flag.FlagSet, settings, error) {
 	var (
-		flagSet          = flag.NewFlagSet(name, flag.ContinueOnError)
+		flagSet          = flag.NewFlagSet(cmd.name, flag.ContinueOnError)
 		set     settings = new(T)
 	)
 	set.BindFlags(flagSet)
 	if err := flagSet.Parse(args); err != nil {
 		return nil, nil, err
+	}
+	if set.Help() {
+		return flagSet, set, ErrUsage
 	}
 	return flagSet, set, nil
 }

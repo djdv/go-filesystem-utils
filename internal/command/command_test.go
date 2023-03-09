@@ -3,7 +3,6 @@ package command_test
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"testing"
@@ -12,24 +11,11 @@ import (
 )
 
 const (
-	synopisSuffix = " Synopis"
-	usageSuffix   = " Usage"
-
-	noopName       = "noop"
-	noopArgsName   = "noopArgs"
-	parentName     = "noopSenior"
-	childName      = "noopJunior"
-	grandChildName = "noopIII"
+	noopName     = "noop"
+	noopArgsName = "noopArgs"
 )
 
-type (
-	settings struct {
-		command.HelpArg
-		someField bool
-	}
-
-	cmdMap map[string]command.Command
-)
+type cmdMap map[string]command.Command
 
 func noopCmds() cmdMap {
 	const (
@@ -40,19 +26,19 @@ func noopCmds() cmdMap {
 		noopArgsUsage    = noopArgsName + usageSuffix
 	)
 	return cmdMap{
-		noopName: command.MakeCommand[*settings](
+		noopName: command.MakeCommand[*exampleSettings](
 			noopName, noopSynopsis, noopUsage, noop,
 		),
-		noopArgsName: command.MakeCommand[*settings](
+		noopArgsName: command.MakeCommand[*exampleSettings](
 			noopArgsName, noopArgsSynopsis, noopArgsUsage, noopArgs,
 		),
-		parentName: command.MakeCommand[*settings](
+		parentName: command.MakeCommand[*exampleSettings](
 			parentName, noopSynopsis, noopUsage, noop,
 			command.WithSubcommands(
-				command.MakeCommand[*settings](
+				command.MakeCommand[*exampleSettings](
 					childName, noopArgsSynopsis, noopArgsUsage, noopArgs,
 					command.WithSubcommands(
-						command.MakeCommand[*settings](
+						command.MakeCommand[*exampleSettings](
 							grandChildName, noopSynopsis, noopUsage, noop,
 						),
 					),
@@ -62,16 +48,11 @@ func noopCmds() cmdMap {
 	}
 }
 
-func (ts *settings) BindFlags(fs *flag.FlagSet) {
-	ts.HelpArg.BindFlags(fs)
-	fs.BoolVar(&ts.someField, "sf", false, "Some Flag")
-}
-
-func noop(ctx context.Context, set *settings) error {
+func noop(ctx context.Context, set *exampleSettings) error {
 	return nil
 }
 
-func noopArgs(ctx context.Context, set *settings, args ...string) error {
+func noopArgs(ctx context.Context, set *exampleSettings, args ...string) error {
 	return nil
 }
 
@@ -90,7 +71,7 @@ func cmdMake(t *testing.T) {
 	var (
 		noopCmds = noopCmds()
 		execFn   = noop
-		cmd      = command.MakeCommand[*settings](
+		cmd      = command.MakeCommand[*exampleSettings](
 			name, synopsis, usage, execFn,
 			command.WithSubcommands(noopCmds[noopName]),
 			command.WithSubcommands(noopCmds[noopArgsName]),
@@ -119,10 +100,10 @@ func exeValid(t *testing.T) {
 		subUsage    = subName + usageSuffix
 	)
 	cmds := noopCmds()
-	cmds[subsName] = command.MakeCommand[*settings](
+	cmds[subsName] = command.MakeCommand[*exampleSettings](
 		subsName, subsSynopsis, subsUsage, noop,
 		command.WithSubcommands(
-			command.MakeCommand[*settings](
+			command.MakeCommand[*exampleSettings](
 				subName, subSynopsis, subUsage, noop,
 			),
 		),
@@ -145,7 +126,7 @@ func exeValid(t *testing.T) {
 		},
 		{
 			noopName,
-			[]string{"-sf=true"},
+			[]string{"-" + someFlagName + "=true"},
 		},
 		{
 			parentName,
@@ -182,7 +163,7 @@ func exeInvalid(t *testing.T) {
 		discard = io.Discard.(command.StringWriter)
 		execFn  = noop
 		cmds    = cmdMap{
-			name: command.MakeCommand[*settings](
+			name: command.MakeCommand[*exampleSettings](
 				name, synopsis, usage, execFn,
 				command.WithUsageOutput(discard),
 			),

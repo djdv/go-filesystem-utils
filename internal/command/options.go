@@ -1,6 +1,9 @@
 package command
 
 type (
+	// Option is a functional option.
+	// One can be returned by the various constructors,
+	// before being passed to [MakeCommand].
 	Option func(*commandSettings) error
 
 	commandSettings struct {
@@ -9,6 +12,9 @@ type (
 	}
 )
 
+// WithSubcommands provides a command with subcommands.
+// Subcommands will be called if the supercommand receives
+// arguments that match the subcommand name.
 func WithSubcommands(subcommands ...Command) Option {
 	return func(settings *commandSettings) error {
 		settings.subcommands = subcommands
@@ -16,10 +22,10 @@ func WithSubcommands(subcommands ...Command) Option {
 	}
 }
 
-// TODO: docs; this is where the usage text gets printed
-// when args are not what execute() expects for the command.
-// Note that we're going to resolve nil to stderr
-// so make the user aware of this.
+// WithUsageOutput sets the writer that is written
+// to when [Command.Execute] receives [HelpFlag],
+// or returns [ErrUsage].
+// Nil defaults to [os.Stderr].
 func WithUsageOutput(output StringWriter) Option {
 	return func(settings *commandSettings) error {
 		settings.usageOutput = output
