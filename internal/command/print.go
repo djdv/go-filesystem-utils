@@ -7,6 +7,11 @@ import (
 	"text/tabwriter"
 )
 
+// StringWriter is a composite interface,
+// used when printing user facing text.
+// (We require [io.Writer] to interface with the Go
+// standard library's [flag] package, but otherwise use
+// [io.StringWriter] internally.)
 type StringWriter interface {
 	io.Writer
 	io.StringWriter
@@ -35,7 +40,9 @@ func printHelpText(output StringWriter,
 }
 
 // printUsage formats the command's usage string.
-// i.e. Usage: name [FLAGS] | Usage: name [FLAG] SUBCOMMAND
+// E.g.
+// `Usage: name [FLAGS]`, or
+// `Usage: name [FLAG] SUBCOMMAND`.
 func printUsage(output io.StringWriter,
 	name, usage string, haveFlags, haveSubs bool,
 ) error {

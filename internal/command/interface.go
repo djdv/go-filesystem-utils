@@ -8,6 +8,7 @@ import (
 )
 
 type (
+	// Command is a decorated function ready to be executed.
 	Command interface {
 		// Name returns a human friendly name of the command.
 		// Which may be used to identify commands,
