@@ -15,8 +15,11 @@ const (
 	synopisSuffix = " Synopis"
 	usageSuffix   = " Usage"
 
-	noopName     = "noop"
-	noopArgsName = "noopArgs"
+	noopName       = "noop"
+	noopArgsName   = "noopArgs"
+	parentName     = "noopSenior"
+	childName      = "noopJunior"
+	grandChildName = "noopIII"
 )
 
 type (
@@ -42,6 +45,19 @@ func noopCmds() cmdMap {
 		),
 		noopArgsName: command.MakeCommand[*settings](
 			noopArgsName, noopArgsSynopsis, noopArgsUsage, noopArgs,
+		),
+		parentName: command.MakeCommand[*settings](
+			parentName, noopSynopsis, noopUsage, noop,
+			command.WithSubcommands(
+				command.MakeCommand[*settings](
+					childName, noopArgsSynopsis, noopArgsUsage, noopArgs,
+					command.WithSubcommands(
+						command.MakeCommand[*settings](
+							grandChildName, noopSynopsis, noopUsage, noop,
+						),
+					),
+				),
+			),
 		),
 	}
 }
@@ -131,6 +147,14 @@ func exeValid(t *testing.T) {
 			noopName,
 			[]string{"-sf=true"},
 		},
+		{
+			parentName,
+			[]string{childName, "arg"},
+		},
+		{
+			parentName,
+			[]string{childName, grandChildName},
+		},
 	} {
 		var (
 			name = test.name
@@ -164,6 +188,7 @@ func exeInvalid(t *testing.T) {
 			),
 		}
 	)
+	const niladicFuncWithArgs = "niladic function called with args"
 	for _, test := range []struct {
 		name     string
 		args     []string
@@ -174,7 +199,13 @@ func exeInvalid(t *testing.T) {
 			name,
 			[]string{"arg1", "arg2"},
 			command.ErrUsage,
-			"niladic function called with args",
+			niladicFuncWithArgs,
+		},
+		{
+			name,
+			[]string{childName, grandChildName, "arg"},
+			command.ErrUsage,
+			niladicFuncWithArgs,
 		},
 		{
 			name,
