@@ -6,6 +6,8 @@ import (
 	"flag"
 	"os"
 	"strings"
+
+	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 )
 
 type (
@@ -120,7 +122,7 @@ func wrapExecute[settings Settings[T], T any,
 			maybePrintUsage   = func(err error) error {
 				if errors.Is(err, ErrUsage) {
 					if printErr := cmd.usage(usageOutput, flagSet); printErr != nil {
-						err = errors.Join(err, printErr)
+						err = fserrors.Join(err, printErr)
 					}
 				}
 				return err
