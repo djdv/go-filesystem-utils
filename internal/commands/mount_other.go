@@ -5,7 +5,6 @@ package commands
 import (
 	"flag"
 	"fmt"
-	"strconv"
 )
 
 func bindFUSEIDFlag(name, fuseName string,
