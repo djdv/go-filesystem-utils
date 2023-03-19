@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	synopisSuffix = " Synopis"
-	usageSuffix   = " Usage"
+	synopisSuffix = " synopis"
+	usageSuffix   = " usage"
 
 	parentName     = "fooSenior"
 	childName      = "fooJunior"
@@ -76,25 +76,26 @@ func ExampleMakeCommand() {
 	)
 
 	var (
+		// The output options don't normally need to be specified.
+		// And defaults to `os.Stderr`.
+		// We only need to output to `os.Stdout` for `go test` purposes.
+		output  = os.Stdout
 		deepest = command.MakeCommand[*exampleSettings](
 			subSubName, subSubSynonpis, subSubUsage,
 			subSubExecute,
-			// This option can be omitted
-			// it defaults to `os.Stderr`.
-			// We only need it here because of `go test`.
-			command.WithUsageOutput(os.Stdout),
+			command.WithUsageOutput(output),
 		)
 		subCommand = command.MakeCommand[*exampleSettings](
 			subName, subSynonpis, subUsage,
 			subExecute,
 			command.WithSubcommands(deepest),
-			command.WithUsageOutput(os.Stdout),
+			command.WithUsageOutput(output),
 		)
 		main = command.MakeCommand[*command.HelpArg](
 			cmdName, cmdSynonpis, cmdUsage,
 			mainExecute,
 			command.WithSubcommands(subCommand),
-			command.WithUsageOutput(os.Stdout),
+			command.WithUsageOutput(output),
 		)
 		ctx = context.TODO()
 	)
@@ -109,25 +110,27 @@ func ExampleMakeCommand() {
 	main.Execute(ctx, subName, subSubName, "-"+someFlagName+"=true")
 
 	// Output:
-	// Usage: fooSenior [FLAGS] SUBCOMMAND
+	// fooSenior usage
 	//
-	// fooSenior Usage
+	// Usage:
+	// 	fooSenior subcommand [flags]
 	//
 	// Flags:
 	//   -help
 	//     	prints out this help text
 	//
 	// Subcommands:
-	//   fooJunior - fooJunior Synopis
+	//   fooJunior - fooJunior synopis
 	//
 	// [some args]
 	// got flag
 	// [other args]
 	// got flag
 	// [more args]
-	// Usage: fooJunior [FLAGS]
+	// fooJunior usage
 	//
-	// fooJunior Usage
+	// Usage:
+	// 	fooJunior [flags]
 	//
 	// Flags:
 	//   -help
