@@ -61,6 +61,22 @@ type (
 	}
 )
 
+// MustMakeCommand wraps MakeCommand,
+// and will panic if it encounters an error.
+func MustMakeCommand[
+	settings Settings[T], T any,
+	execFunc ExecuteConstraint[settings, T],
+](
+	name, synopsis, usage string,
+	execFn execFunc, options ...Option,
+) Command {
+	cmd, err := MakeCommand[settings](name, synopsis, usage, execFn, options...)
+	if err != nil {
+		panic(err)
+	}
+	return cmd
+}
+
 // MakeCommand returns a command that will
 // receive a parsed [Settings] when executed.
 func MakeCommand[
@@ -69,10 +85,10 @@ func MakeCommand[
 ](
 	name, synopsis, usage string,
 	execFn execFunc, options ...Option,
-) Command {
+) (Command, error) {
 	constructorSettings, err := parseOptions(options...)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	return &command[execFunc, settings, T]{
 		name:        name,
@@ -81,7 +97,7 @@ func MakeCommand[
 		usageOutput: constructorSettings.usageOutput,
 		subcommands: constructorSettings.subcommands,
 		execute:     execFn,
-	}
+	}, nil
 }
 
 func (cmd *command[EF, S, T]) Name() string { return cmd.name }

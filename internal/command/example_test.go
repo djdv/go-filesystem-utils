@@ -80,18 +80,18 @@ func ExampleMakeCommand() {
 		// And defaults to `os.Stderr`.
 		// We only need to output to `os.Stdout` for `go test` purposes.
 		output  = os.Stdout
-		deepest = command.MakeCommand[*exampleSettings](
+		deepest = command.MustMakeCommand[*exampleSettings](
 			subSubName, subSubSynonpis, subSubUsage,
 			subSubExecute,
 			command.WithUsageOutput(output),
 		)
-		subCommand = command.MakeCommand[*exampleSettings](
+		subCommand = command.MustMakeCommand[*exampleSettings](
 			subName, subSynonpis, subUsage,
 			subExecute,
 			command.WithSubcommands(deepest),
 			command.WithUsageOutput(output),
 		)
-		main = command.MakeCommand[*command.HelpArg](
+		main = command.MustMakeCommand[*command.HelpArg](
 			cmdName, cmdSynonpis, cmdUsage,
 			mainExecute,
 			command.WithSubcommands(subCommand),
