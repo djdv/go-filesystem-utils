@@ -50,12 +50,12 @@ func printUsage(output io.StringWriter,
 		return err
 	}
 	if haveFlags {
-		if _, err := output.WriteString(" [FLAGS]"); err != nil {
+		if _, err := output.WriteString(" [flags]"); err != nil {
 			return err
 		}
 	}
 	if haveSubs {
-		if _, err := output.WriteString(" SUBCOMMAND"); err != nil {
+		if _, err := output.WriteString(" subcommand"); err != nil {
 			return err
 		}
 	}
