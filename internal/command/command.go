@@ -87,19 +87,16 @@ func (cmd *command) Execute(ctx context.Context, args ...string) error {
 func wrapUsage[settings Settings[T], T any](cmd *command,
 	usage string,
 ) func(StringWriter, *flag.FlagSet) error {
-	var (
-		name        = cmd.name
-		subcommands = cmd.subcommands
-	)
 	return func(output StringWriter, flagSet *flag.FlagSet) error {
 		if output == nil {
 			output = os.Stderr
 		}
 		if flagSet == nil {
+			name := cmd.name
 			flagSet = flag.NewFlagSet(name, flag.ContinueOnError)
 			(settings)(new(T)).BindFlags(flagSet)
 		}
-		return printHelpText(output, name, usage, flagSet, subcommands...)
+		return printHelpText(output, usage, cmd, flagSet)
 	}
 }
 
