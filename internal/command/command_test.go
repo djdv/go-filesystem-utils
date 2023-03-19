@@ -26,19 +26,19 @@ func noopCmds() cmdMap {
 		noopArgsUsage    = noopArgsName + usageSuffix
 	)
 	return cmdMap{
-		noopName: command.MakeCommand[*exampleSettings](
+		noopName: command.MustMakeCommand[*exampleSettings](
 			noopName, noopSynopsis, noopUsage, noop,
 		),
-		noopArgsName: command.MakeCommand[*exampleSettings](
+		noopArgsName: command.MustMakeCommand[*exampleSettings](
 			noopArgsName, noopArgsSynopsis, noopArgsUsage, noopArgs,
 		),
-		parentName: command.MakeCommand[*exampleSettings](
+		parentName: command.MustMakeCommand[*exampleSettings](
 			parentName, noopSynopsis, noopUsage, noop,
 			command.WithSubcommands(
-				command.MakeCommand[*exampleSettings](
+				command.MustMakeCommand[*exampleSettings](
 					childName, noopArgsSynopsis, noopArgsUsage, noopArgs,
 					command.WithSubcommands(
-						command.MakeCommand[*exampleSettings](
+						command.MustMakeCommand[*exampleSettings](
 							grandChildName, noopSynopsis, noopUsage, noop,
 						),
 					),
@@ -71,7 +71,7 @@ func cmdMake(t *testing.T) {
 	var (
 		noopCmds = noopCmds()
 		execFn   = noop
-		cmd      = command.MakeCommand[*exampleSettings](
+		cmd      = command.MustMakeCommand[*exampleSettings](
 			name, synopsis, usage, execFn,
 			command.WithSubcommands(noopCmds[noopName]),
 			command.WithSubcommands(noopCmds[noopArgsName]),
@@ -100,10 +100,10 @@ func exeValid(t *testing.T) {
 		subUsage    = subName + usageSuffix
 	)
 	cmds := noopCmds()
-	cmds[subsName] = command.MakeCommand[*exampleSettings](
+	cmds[subsName] = command.MustMakeCommand[*exampleSettings](
 		subsName, subsSynopsis, subsUsage, noop,
 		command.WithSubcommands(
-			command.MakeCommand[*exampleSettings](
+			command.MustMakeCommand[*exampleSettings](
 				subName, subSynopsis, subUsage, noop,
 			),
 		),
@@ -163,7 +163,7 @@ func exeInvalid(t *testing.T) {
 		discard = io.Discard.(command.StringWriter)
 		execFn  = noop
 		cmds    = cmdMap{
-			name: command.MakeCommand[*exampleSettings](
+			name: command.MustMakeCommand[*exampleSettings](
 				name, synopsis, usage, execFn,
 				command.WithUsageOutput(discard),
 			),
