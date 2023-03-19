@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
+	"io"
 	"os"
 	"strings"
+	"text/tabwriter"
 
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 )
@@ -31,19 +34,30 @@ type (
 		func(context.Context, settings, ...string) error
 	}
 
-	// ExecuteConstraint is satisfied by various execute funcs.
+	// ExecuteConstraint is satisfied by any of the execute function signatures.
 	ExecuteConstraint[settings Settings[T], T any] interface {
 		ExecuteFunc[settings, T] | ExecuteFuncArgs[settings, T]
 	}
 
-	commandFunc func(context.Context, ...string) error
-	usageFunc   func(StringWriter, *flag.FlagSet) error
+	// StringWriter is a composite interface,
+	// used when printing user facing text.
+	// (We require [io.Writer] to interface with the Go
+	// standard library's [flag] package, but otherwise use
+	// [io.StringWriter] internally.)
+	StringWriter interface {
+		io.Writer
+		io.StringWriter
+	}
 
-	command struct {
-		name, synopsis string
-		usage          usageFunc
-		execute        commandFunc
-		subcommands    []Command
+	command[
+		EF ExecuteConstraint[S, T],
+		S Settings[T],
+		T any,
+	] struct {
+		name, synopsis, usage string
+		usageOutput           StringWriter
+		execute               EF
+		subcommands           []Command
 	}
 )
 
@@ -54,97 +68,81 @@ func MakeCommand[
 	execFunc ExecuteConstraint[settings, T],
 ](
 	name, synopsis, usage string,
-	exec execFunc, options ...Option,
+	execFn execFunc, options ...Option,
 ) Command {
 	constructorSettings, err := parseOptions(options...)
 	if err != nil {
 		panic(err)
 	}
-	cmd := &command{
+	return &command[execFunc, settings, T]{
 		name:        name,
 		synopsis:    synopsis,
+		usage:       usage,
+		usageOutput: constructorSettings.usageOutput,
 		subcommands: constructorSettings.subcommands,
+		execute:     execFn,
 	}
-	cmd.usage = wrapUsage[settings](cmd, usage)
-	cmd.execute = wrapExecute[settings](constructorSettings.usageOutput, cmd, exec)
-	return cmd
 }
 
-func (cmd *command) Name() string { return cmd.name }
-func (cmd *command) Usage() string {
+func (cmd *command[EF, S, T]) Name() string { return cmd.name }
+func (cmd *command[EF, S, T]) Usage() string {
 	output := new(strings.Builder)
-	if err := cmd.usage(output, nil); err != nil {
+	if err := cmd.printUsage(output, nil); err != nil {
 		panic(err)
 	}
 	return output.String()
 }
-func (cmd *command) Synopsis() string       { return cmd.synopsis }
-func (cmd *command) Subcommands() []Command { return cmd.subcommands }
-func (cmd *command) Execute(ctx context.Context, args ...string) error {
-	return cmd.execute(ctx, args...)
-}
+func (cmd *command[EF, S, T]) Synopsis() string       { return cmd.synopsis }
+func (cmd *command[EF, S, T]) Subcommands() []Command { return cmd.subcommands }
 
-func wrapUsage[settings Settings[T], T any](cmd *command,
-	usage string,
-) func(StringWriter, *flag.FlagSet) error {
-	return func(output StringWriter, flagSet *flag.FlagSet) error {
-		if output == nil {
-			output = os.Stderr
-		}
-		if flagSet == nil {
-			name := cmd.name
-			flagSet = flag.NewFlagSet(name, flag.ContinueOnError)
-			(settings)(new(T)).BindFlags(flagSet)
-		}
-		return printHelpText(output, usage, cmd, flagSet)
-	}
-}
-
-// wrapExecute
+// Execute
 //   - parses arguments
 //   - checks [command.HelpFlag]
 //   - checks argc against func arity.
 //   - may call [command.execute]
 //   - may print [command.usage]
-func wrapExecute[settings Settings[T], T any,
-	execFunc ExecuteConstraint[settings, T],
-](usageOutput StringWriter, cmd *command, execFn execFunc,
-) commandFunc {
-	return func(ctx context.Context, args ...string) error {
-		if subcommand, subargs := getSubcommand(cmd, args); subcommand != nil {
-			return subcommand.Execute(ctx, subargs...)
-		}
-		var (
-			flagSet, set, err = parseArgs[settings](cmd, args...)
-			maybePrintUsage   = func(err error) error {
-				if errors.Is(err, ErrUsage) {
-					if printErr := cmd.usage(usageOutput, flagSet); printErr != nil {
-						err = fserrors.Join(err, printErr)
-					}
-				}
-				return err
-			}
-		)
-		if err != nil {
-			return maybePrintUsage(err)
-		}
-		var (
-			arguments = flagSet.Args()
-			haveArgs  = len(arguments) > 0
-		)
-		var execErr error
-		switch execFn := any(execFn).(type) {
-		case func(context.Context, settings) error:
-			if haveArgs {
-				execErr = ErrUsage
-				break
-			}
-			execErr = execFn(ctx, set)
-		case func(context.Context, settings, ...string) error:
-			execErr = execFn(ctx, set, arguments...)
-		}
-		return maybePrintUsage(execErr)
+func (cmd *command[EF, S, T]) Execute(ctx context.Context, args ...string) error {
+	if subcommand, subargs := getSubcommand(cmd, args); subcommand != nil {
+		return subcommand.Execute(ctx, subargs...)
 	}
+	var (
+		flagSet    = flag.NewFlagSet(cmd.name, flag.ContinueOnError)
+		settings S = new(T)
+	)
+	settings.BindFlags(flagSet)
+	if err := flagSet.Parse(args); err != nil {
+		return err
+	}
+	if settings.Help() {
+		if printErr := cmd.printUsage(cmd.usageOutput, flagSet); printErr != nil {
+			return fserrors.Join(printErr, ErrUsage)
+		}
+		return ErrUsage
+	}
+	var (
+		arguments = flagSet.Args()
+		haveArgs  = len(arguments) > 0
+		execErr   error
+	)
+	switch execFn := any(cmd.execute).(type) {
+	case func(context.Context, S) error:
+		if haveArgs {
+			execErr = ErrUsage
+			break
+		}
+		execErr = execFn(ctx, settings)
+	case func(context.Context, S, ...string) error:
+		execErr = execFn(ctx, settings, arguments...)
+	}
+	if execErr == nil {
+		return nil
+	}
+	if errors.Is(execErr, ErrUsage) {
+		if printErr := cmd.printUsage(cmd.usageOutput, flagSet); printErr != nil {
+			execErr = fserrors.Join(printErr, execErr)
+		}
+	}
+	return execErr
 }
 
 func getSubcommand(command Command, arguments []string) (Command, []string) {
@@ -166,18 +164,71 @@ func getSubcommand(command Command, arguments []string) (Command, []string) {
 	return nil, arguments
 }
 
-func parseArgs[settings Settings[T], T any](cmd *command, args ...string,
-) (*flag.FlagSet, settings, error) {
+func (cmd *command[EF, S, T]) printUsage(output StringWriter, flagSet *flag.FlagSet) error {
+	if output == nil {
+		output = os.Stderr
+	}
 	var (
-		flagSet          = flag.NewFlagSet(cmd.name, flag.ContinueOnError)
-		set     settings = new(T)
+		err   error
+		name  = cmd.name
+		write = func(s string) {
+			if err != nil {
+				return
+			}
+			_, err = output.WriteString(s)
+		}
+		subcommands    = cmd.subcommands
+		haveSubs       = len(subcommands) > 0
+		haveFlags      bool
+		_, acceptsArgs = any(cmd.execute).(func(context.Context, S, ...string) error)
 	)
-	set.BindFlags(flagSet)
-	if err := flagSet.Parse(args); err != nil {
-		return nil, nil, err
+	if flagSet == nil {
+		flagSet = flag.NewFlagSet(name, flag.ContinueOnError)
+		(S)(new(T)).BindFlags(flagSet)
 	}
-	if set.Help() {
-		return flagSet, set, ErrUsage
+	flagSet.VisitAll(func(*flag.Flag) { haveFlags = true })
+
+	write(cmd.usage + "\n\n")
+
+	write("Usage:\n\t" + name)
+	if haveSubs {
+		write(" subcommand")
 	}
-	return flagSet, set, nil
+	if haveFlags {
+		write(" [flags]")
+	}
+	if acceptsArgs {
+		write(" ...arguments")
+	}
+	write("\n\n")
+
+	write("Flags:\n")
+	flagSetOutput := flagSet.Output()
+	flagSet.SetOutput(output)
+	flagSet.PrintDefaults()
+	flagSet.SetOutput(flagSetOutput)
+	write("\n")
+
+	if haveSubs {
+		write("Subcommands:\n")
+		var (
+			tabWriter = tabwriter.NewWriter(output, 0, 0, 0, ' ', 0)
+			subTail   = len(subcommands) - 1
+		)
+		for i, subcommand := range subcommands {
+			if _, pErr := fmt.Fprintf(
+				tabWriter, "  %s\t - %s\n",
+				subcommand.Name(), subcommand.Synopsis(),
+			); pErr != nil {
+				return pErr
+			}
+			if i == subTail {
+				fmt.Fprintln(tabWriter)
+			}
+		}
+		if fErr := tabWriter.Flush(); fErr != nil {
+			return fErr
+		}
+	}
+	return err
 }
