@@ -18,21 +18,19 @@ type StringWriter interface {
 }
 
 // printHelpText formats `-help` text.
-func printHelpText(output StringWriter,
-	name, usage string,
-	flagSet *flag.FlagSet, subcommands ...Command,
+func printHelpText(output StringWriter, usage string,
+	cmd *command, flagSet *flag.FlagSet,
 ) error {
-	var (
-		haveFlags bool
-		haveSubs  = len(subcommands) > 0
-	)
-	flagSet.VisitAll(func(*flag.Flag) { haveFlags = true })
-	if err := printUsage(output, name, usage, haveFlags, haveSubs); err != nil {
+	if err := printUsage(output, usage, cmd, flagSet); err != nil {
 		return err
 	}
 	if err := printFlagHelp(output, flagSet); err != nil {
 		return err
 	}
+	var (
+		subcommands = cmd.subcommands
+		haveSubs    = len(subcommands) > 0
+	)
 	if haveSubs {
 		return printSubcommandHelp(output, subcommands...)
 	}
@@ -40,29 +38,31 @@ func printHelpText(output StringWriter,
 }
 
 // printUsage formats the command's usage string.
-// E.g.
-// `Usage: name [FLAGS]`, or
-// `Usage: name [FLAG] SUBCOMMAND`.
-func printUsage(output io.StringWriter,
-	name, usage string, haveFlags, haveSubs bool,
+func printUsage(output io.StringWriter, usage string,
+	cmd *command, flagSet *flag.FlagSet,
 ) error {
-	if _, err := output.WriteString("Usage: " + name); err != nil {
-		return err
+	var (
+		err   error
+		write = func(s string) {
+			if err != nil {
+				return
+			}
+			_, err = output.WriteString(s)
+		}
+		name      = cmd.name
+		haveSubs  = len(cmd.subcommands) > 0
+		haveFlags bool
+	)
+	flagSet.VisitAll(func(*flag.Flag) { haveFlags = true })
+	write(usage + "\n\n")
+	write("Usage:\n\t" + name)
+	if haveSubs {
+		write(" subcommand")
 	}
 	if haveFlags {
-		if _, err := output.WriteString(" [flags]"); err != nil {
-			return err
-		}
+		write(" [flags]\n\n")
 	}
-	if haveSubs {
-		if _, err := output.WriteString(" subcommand"); err != nil {
-			return err
-		}
-	}
-	if _, err := output.WriteString("\n\n" + usage + "\n\n"); err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 // printFlagHelp formats [FlagSet].
