@@ -19,32 +19,21 @@ const (
 	misuse
 )
 
-type settings struct {
-	command.HelpArg
-}
-
-// BindFlags defines settings flags in the [flag.FlagSet].
-func (set *settings) BindFlags(fs *flag.FlagSet) {
-	set.HelpArg.BindFlags(fs)
-}
-
 func main() {
 	const (
 		synopsis = "File system service utility."
-		usage    = "Currently doesn't do much."
 	)
 	var (
-		cmdName     = commandName()
-		cmdArgs     = os.Args[1:]
+		name        = commandName()
+		arguments   = os.Args[1:]
 		subcommands = makeSubcommands()
-		cmd         = command.MakeCommand[*settings](
-			cmdName, synopsis, usage,
-			execute,
-			command.WithSubcommands(subcommands...),
-		)
-		ctx = context.Background()
+		ctx         = context.Background()
+		err         = command.SubcommandGroup(
+			name, synopsis,
+			subcommands,
+		).Execute(ctx, arguments...)
 	)
-	if err := cmd.Execute(ctx, cmdArgs...); err != nil {
+	if err != nil {
 		exitWithErr(err)
 	}
 }
@@ -59,12 +48,6 @@ func commandName() string {
 	)
 }
 
-// execute is the root [command.CommandFunc]
-// and expects to be called with subcommand args.
-func execute(context.Context, *settings, ...string) error {
-	return command.ErrUsage
-}
-
 // makeSubcommands returns a set of subcommands.
 func makeSubcommands() []command.Command {
 	return []command.Command{
@@ -76,25 +59,41 @@ func makeSubcommands() []command.Command {
 }
 
 func exitWithErr(err error) {
+	if errors.Is(err, flag.ErrHelp) {
+		// We must exit with the correct code,
+		// but don't need to print this error itself.
+		// The command library will have already printed
+		// the usage text (as requested).
+		os.Exit(misuse)
+	}
 	var (
 		code     int
-		printErr = func() {
-			errStr := err.Error()
-			if !strings.HasSuffix(errStr, "\n") {
-				errStr += "\n"
-			}
-			os.Stderr.WriteString(errStr)
-		}
+		usageErr command.UsageError
 	)
-	if errors.Is(err, command.ErrUsage) {
+	if errors.As(err, &usageErr) {
+		// Inappropriate input.
 		code = misuse
-		// Only print these errors if they've been wrapped.
-		if errors.Unwrap(err) != nil {
-			printErr()
-		}
 	} else {
+		// Operation failure.
 		code = failure
-		printErr()
 	}
+	errStr := err.Error()
+	if !strings.HasSuffix(errStr, "\n") {
+		errStr += "\n"
+	}
+	os.Stderr.WriteString(errStr)
 	os.Exit(code)
+}
+
+func isWrapped(err error) bool {
+	if errors.Unwrap(err) != nil {
+		return true
+	}
+	joinErrs, ok := err.(interface {
+		Unwrap() []error
+	})
+	if ok {
+		return len(joinErrs.Unwrap()) > 1
+	}
+	return false
 }
