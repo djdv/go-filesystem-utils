@@ -223,7 +223,7 @@ func Daemon() command.Command {
 		synopsis = "Hosts the service."
 		usage    = "Placeholder text."
 	)
-	return command.MakeCommand[*daemonSettings](name, synopsis, usage, daemonExecute)
+	return command.MustMakeCommand[*daemonSettings](name, synopsis, usage, daemonExecute)
 }
 
 func daemonExecute(ctx context.Context, set *daemonSettings) error {

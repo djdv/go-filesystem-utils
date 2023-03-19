@@ -290,7 +290,7 @@ func Mount() command.Command {
 		executeFn   = subonlyExec[*command.HelpArg]()
 		subcommands = makeMountSubcommands()
 	)
-	return command.MakeCommand[*command.HelpArg](name, synopsis, subcommandUsage,
+	return command.MustMakeCommand[*command.HelpArg](name, synopsis, subcommandUsage,
 		executeFn,
 		command.WithSubcommands(subcommands...),
 	)
@@ -310,7 +310,7 @@ func makeMountSubcommands() []command.Command {
 		switch hostAPI {
 		case cgofuse.HostID:
 			guestCommands := makeGuestCommands[fuseSettings](hostAPI)
-			subCommands[i] = command.MakeCommand[*command.HelpArg](
+			subCommands[i] = command.MustMakeCommand[*command.HelpArg](
 				commandName, synopsis, subcommandUsage,
 				subonlyExec[*command.HelpArg](),
 				command.WithSubcommands(guestCommands...),
@@ -324,8 +324,8 @@ func makeMountSubcommands() []command.Command {
 }
 
 // TODO: move; should be part of [command] pkg.
-func subonlyExec[settings command.Settings[T], cmd command.ExecuteFuncArgs[settings, T], T any]() cmd {
-	return func(_ context.Context, _ settings, args ...string) error {
+func subonlyExec[settings command.Settings[T], cmd command.ExecuteFunc[settings, T], T any]() cmd {
+	return func(_ context.Context, _ settings) error {
 		// This command only holds subcommands
 		// and has no functionality on its own.
 		return command.ErrUsage
@@ -373,7 +373,7 @@ func makeMountCommand[
 		synopsis        = fmt.Sprintf("Mount %s via the %s API.", guestFormalName, hostFormalName)
 	)
 	type MS = *mountPointSettings[H, G, HC, GC]
-	return command.MakeCommand[MS](cmdName, synopsis, usage,
+	return command.MustMakeCommand[MS](cmdName, synopsis, usage,
 		func(ctx context.Context, settings MS, args ...string) error {
 			if err := settings.lazyInit(); err != nil {
 				return err

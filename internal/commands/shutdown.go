@@ -48,7 +48,7 @@ func Shutdown() command.Command {
 		synopsis = "Stop the service."
 		usage    = "Placeholder text."
 	)
-	return command.MakeCommand[*shutdownSettings](name, synopsis, usage, shutdownExecute)
+	return command.MustMakeCommand[*shutdownSettings](name, synopsis, usage, shutdownExecute)
 }
 
 func (set *shutdownSettings) BindFlags(flagSet *flag.FlagSet) {
@@ -75,7 +75,7 @@ func (set *shutdownSettings) BindFlags(flagSet *flag.FlagSet) {
 	})
 }
 
-func shutdownExecute(ctx context.Context, set *shutdownSettings, _ ...string) error {
+func shutdownExecute(ctx context.Context, set *shutdownSettings) error {
 	const autoLaunchDaemon = false
 	client, err := set.getClient(autoLaunchDaemon)
 	if err != nil {
