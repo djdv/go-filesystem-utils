@@ -1,6 +1,6 @@
 module github.com/djdv/go-filesystem-utils
 
-go 1.19
+go 1.20
 
 require (
 	github.com/adrg/xdg v0.4.0
