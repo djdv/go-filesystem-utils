@@ -1,9 +1,7 @@
 package ipfs
 
 import (
-	"bytes"
 	"encoding/json"
-	"fmt"
 
 	"github.com/multiformats/go-multiaddr"
 )
@@ -41,17 +39,15 @@ func (mc *multiaddrContainer) MarshalJSON() ([]byte, error) {
 	return []byte("null"), nil
 }
 
-func (mc *multiaddrContainer) UnmarshalJSON(b []byte) (err error) {
-	if len(b) < 2 || bytes.Equal(b, []byte("{}")) {
-		return fmt.Errorf("response was empty or short: `%v`", b)
-	}
-	if bytes.Equal(b, []byte("null")) {
-		return
-	}
+func (mc *multiaddrContainer) UnmarshalJSON(b []byte) error {
 	var mcStr string
-	if err = json.Unmarshal(b, &mcStr); err != nil {
-		return
+	if err := json.Unmarshal(b, &mcStr); err != nil {
+		return err
 	}
-	mc.Multiaddr, err = multiaddr.NewMultiaddr(mcStr)
-	return
+	maddr, err := multiaddr.NewMultiaddr(mcStr)
+	if err != nil {
+		return err
+	}
+	mc.Multiaddr = maddr
+	return nil
 }
