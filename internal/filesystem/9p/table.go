@@ -9,55 +9,50 @@ import (
 )
 
 type (
-	// TODO: [audit] We probably don't need all these table methods. This is what we had already.
-	fileTable interface {
-		exclusiveStore(name string, file p9.File) bool
-		load(name string) (p9.File, bool)
-		length() int
-		flatten(offset uint64, count uint32) ([]string, []p9.File)
-		to9Ents(offset uint64, count uint32) (p9.Dirents, error)
-		delete(name string) bool
-	}
-	tableSync struct {
+	fileTableSync struct {
 		mu    sync.RWMutex
-		table mapTable
+		files fileTableMap
 	}
-	mapTable map[string]p9.File
+	fileTableMap map[string]p9.File
 )
 
-// TODO: alloc hint? Lots of device directories will have single to few entries.
-// Some user dirs may store their element count so it is known ahead of time.
-func newFileTable() *tableSync { return &tableSync{table: make(mapTable)} }
+func newFileTable() *fileTableSync {
+	return &fileTableSync{files: make(fileTableMap)}
+}
 
-func (ft *tableSync) exclusiveStore(name string, file p9.File) bool {
+func (ft *fileTableSync) exclusiveStore(name string, file p9.File) bool {
 	ft.mu.Lock()
 	defer ft.mu.Unlock()
-	if _, ok := ft.table[name]; ok {
+	if _, ok := ft.files[name]; ok {
 		return false
 	}
-	ft.table[name] = file
+	ft.files[name] = file
 	return true
 }
 
-func (ft *tableSync) load(name string) (p9.File, bool) {
+func (ft *fileTableSync) load(name string) (p9.File, bool) {
 	ft.mu.RLock()
 	defer ft.mu.RUnlock()
-	file, ok := ft.table[name]
+	file, ok := ft.files[name]
 	return file, ok
 }
 
-func (ft *tableSync) length() int {
+func (ft *fileTableSync) length() int {
 	ft.mu.RLock()
 	defer ft.mu.RUnlock()
-	return len(ft.table)
+	return ft.lengthLocked()
 }
 
-func (ft *tableSync) flatten(offset uint64, count uint32) ([]string, []p9.File) {
+func (ft *fileTableSync) lengthLocked() int {
+	return len(ft.files)
+}
+
+func (ft *fileTableSync) flatten(offset uint64, count uint32) ([]string, []p9.File) {
 	ft.mu.RLock()
 	defer ft.mu.RUnlock()
 	var (
 		i       int
-		entries = ft.table
+		entries = ft.files
 		names   = make([]string, len(entries))
 	)
 	for name := range entries {
@@ -74,7 +69,7 @@ func (ft *tableSync) flatten(offset uint64, count uint32) ([]string, []p9.File) 
 	return names, files
 }
 
-func (ft *tableSync) to9Ents(offset uint64, count uint32) (p9.Dirents, error) {
+func (ft *fileTableSync) to9Ents(offset uint64, count uint32) (p9.Dirents, error) {
 	// TODO: This is (currently) safe but that might not be true forever.
 	// We shouldn't acquire the read lock recursively.
 	ft.mu.RLock()
@@ -102,10 +97,14 @@ func (ft *tableSync) to9Ents(offset uint64, count uint32) (p9.Dirents, error) {
 	return ents, nil
 }
 
-func (ft *tableSync) delete(name string) bool {
+func (ft *fileTableSync) delete(name string) bool {
 	ft.mu.Lock()
 	defer ft.mu.Unlock()
-	_, ok := ft.table[name]
-	delete(ft.table, name)
+	return ft.deleteLocked(name)
+}
+
+func (ft *fileTableSync) deleteLocked(name string) bool {
+	_, ok := ft.files[name]
+	delete(ft.files, name)
 	return ok
 }
