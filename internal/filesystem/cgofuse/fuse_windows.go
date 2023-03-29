@@ -12,39 +12,72 @@ const (
 	cgoDepPanic   = "cgofuse: cannot find winfsp"
 	cgoDepMessage = "WinFSP(http://www.secfs.net/winfsp/) is required" +
 		"to mount on this platform, but it was not found"
+
+	systemNameOpt = "FileSystemName="
+	volNameOpt    = "volname="
 )
 
-func makeFuseArgs(fsid filesystem.ID, target string) (string, []string) {
-	var opts strings.Builder
-	const (
-		uncPrefix      = `\\`
-		idOpts         = "uid=-1,gid=-1"
-		systemNameOpt  = ",FileSystemName="
-		volNameOpt     = ",volname="
-		averageNameLen = 6
-		arbitraryHint  = len(idOpts) +
-			len(systemNameOpt) + len(volNameOpt) +
-			averageNameLen*2
+func makeFuseArgs(fsid filesystem.ID, host *Host) (string, []string) {
+	const uncPrefix = `\\`
+	var (
+		options        strings.Builder
+		uString, uSize = idOptionPre(host.UID)
+		gString, gSize = idOptionPre(host.GID)
+		nameSize       = nameOptionSize(fsid)
+		size           = uSize + delimiterSize +
+			gSize + nameSize
 	)
-	opts.Grow(arbitraryHint)
-	opts.WriteString(idOpts)
-	if systemName := string(fsid); systemName != "" {
-		opts.WriteString(systemNameOpt)
-		opts.WriteString(systemName)
-		opts.WriteString(volNameOpt)
-		opts.WriteString(systemName)
+	if nameSize != 0 {
+		size += delimiterSize
 	}
-	fuseArgs := []string{"-o", opts.String()}
+	options.Grow(size)
+	idOption(&options, uString, 'u')
+	options.WriteRune(optionDelimiter)
+	idOption(&options, gString, 'g')
+	if nameSize != 0 {
+		options.WriteRune(optionDelimiter)
+		nameOption(&options, fsid)
+	}
+	fuseArgs := []string{"-o", options.String()}
+	// The UNC argument for cgo-fuse/WinFSP uses a single slash prefix.
+	// And a target should not be supplied in addition to the UNC argument.
+	// (This is allowed, but we want 1 or the other, not both.)
+	target := host.Point
 	if isUNC := strings.HasPrefix(target, uncPrefix); isUNC {
-		// The UNC argument for cgo-fuse/WinFSP uses a single slash prefix.
-		// And a target should not be supplied in addition to the UNC argument.
-		// (This is allowed, but we want 1 or the other, not both.)
-		const volumeOpt = "--VolumePrefix="
-		var volOpt strings.Builder
-		volOpt.Grow(len(volumeOpt) + len(target) - 1)
-		volOpt.WriteString(volumeOpt)
-		volOpt.WriteString(target[1:])
-		return "", append(fuseArgs, volOpt.String())
+		return "", append(fuseArgs, uncOption(target))
 	}
 	return target, fuseArgs
+}
+
+func nameOptionSize(id filesystem.ID) int {
+	var (
+		name    = string(id)
+		nameLen = len(name)
+	)
+	if nameLen == 0 {
+		return 0
+	}
+	var (
+		sysSize = len(systemNameOpt) + nameLen
+		volSize = len(volNameOpt) + nameLen
+	)
+	return sysSize + delimiterSize + volSize
+}
+
+func nameOption(b *strings.Builder, id filesystem.ID) {
+	name := string(id)
+	b.WriteString(systemNameOpt)
+	b.WriteString(name)
+	b.WriteRune(optionDelimiter)
+	b.WriteString(volNameOpt)
+	b.WriteString(name)
+}
+
+func uncOption(target string) string {
+	const volumeOpt = "--VolumePrefix="
+	var option strings.Builder
+	option.Grow(len(volumeOpt) + len(target) - 1)
+	option.WriteString(volumeOpt)
+	option.WriteString(target[1:])
+	return option.String()
 }

@@ -247,19 +247,19 @@ func readFile(file fs.File, buff []byte, ofst int64) (int, error) {
 	return n, nil
 }
 
-func getSeeker(file fs.File) (io.Seeker, errNo, error) {
-	if seeker, ok := file.(seekerFile); ok {
-		return seeker, operationSuccess, nil
-	}
-	return nil, -fuse.ESPIPE, fmt.Errorf("file %T does not support seeking", file)
-}
-
 func seekFile(file fs.File, ofst int64) (errNo, error) {
-	seeker, errNo, err := getSeeker(file)
-	if err != nil {
-		return errNo, err
+	const noSeekFmt = "file %T does not support seeking"
+	seeker, ok := file.(seekerFile)
+	if !ok {
+		return -fuse.ESPIPE, fmt.Errorf(noSeekFmt, file)
 	}
 	if _, err := seeker.Seek(ofst, io.SeekStart); err != nil {
+		// HACK: This is probably a bad idea actually.
+		// TODO: Re-evaluate putting the onus
+		// back on the implementation, rather than us.
+		if errors.Is(err, fserrors.ErrUnsupported) {
+			return -fuse.ESPIPE, fmt.Errorf(noSeekFmt, file)
+		}
 		return -fuse.EIO, fmt.Errorf("offset seek error: %w", err)
 	}
 	return operationSuccess, nil
