@@ -48,12 +48,6 @@ type (
 	}
 	mountKeyFSFSSettings = mountIPNSSettings
 
-	mountSettings[T any] interface {
-		command.Settings[T]
-		lazyInitializer
-		marshalMountpoints(...string) ([][]byte, error)
-		getClient(autoLaunchDaemon bool) (*Client, error)
-	}
 	mountPointSettings[
 		HT, GT any,
 		H hostSettings[HT],
