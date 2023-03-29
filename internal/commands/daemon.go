@@ -396,9 +396,14 @@ func newHostFunc(path ninePath) p9fs.MakeHostFunc {
 			name        = string(host)
 			qid, hoster = p9fs.NewHostFile(
 				makeGuestFn,
-				commonOptions[p9fs.HosterOption](
-					parent, name, path,
-					uid, gid, permissions,
+				append(
+					commonOptions[p9fs.HosterOption](
+						parent, name, path,
+						uid, gid, permissions,
+					),
+					// TODO: values should come from caller.
+					p9fs.UnlinkEmptyChildren[p9fs.HosterOption](true),
+					p9fs.UnlinkWhenEmpty[p9fs.HosterOption](true),
 				)...,
 			)
 		)
