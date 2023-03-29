@@ -160,7 +160,7 @@ func (mh *Host) Mount(fsys fs.FS) (io.Closer, error) {
 			return nil
 		}
 		return fmt.Errorf(`unmounting "%s" failed`+
-			"- system log may have more information", mountPoint)
+			" - system log may have more information", mountPoint)
 	}), nil
 }
 
