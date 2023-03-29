@@ -22,13 +22,13 @@ import (
 
 type (
 	mountSettings struct {
-		helpOnly
 		mountIPFSSettings
 		// TODO: bind to cli params
 		// TODO ID types should be raw uint;
 		// used for/with numerical ID systems (Unix, FUSE, 9P, et al.).
 		uid p9.UID
 		gid p9.GID
+		helpOnly
 	}
 	mountFuseSettings struct{ helpOnly }
 	mountIPFSSettings struct {
@@ -58,16 +58,16 @@ func subonlyExec[settings command.Settings[T], cmd command.ExecuteFuncArgs[setti
 	}
 }
 
-func (set *mountSettings) BindFlags(fs *flag.FlagSet) {
-	set.helpOnly.BindFlags(fs)
+func (set *mountSettings) BindFlags(flagSet *flag.FlagSet) {
+	set.helpOnly.BindFlags(flagSet)
 }
 
-func (set *mountFuseSettings) BindFlags(fs *flag.FlagSet) {
-	set.helpOnly.BindFlags(fs)
+func (set *mountFuseSettings) BindFlags(flagSet *flag.FlagSet) {
+	set.helpOnly.BindFlags(flagSet)
 }
 
-func (set *mountIPFSSettings) BindFlags(fs *flag.FlagSet) {
-	set.clientSettings.BindFlags(fs)
+func (set *mountIPFSSettings) BindFlags(flagSet *flag.FlagSet) {
+	set.clientSettings.BindFlags(flagSet)
 	// TODO: this should be a string, not parsed client-side
 	// (server may have different namespaces registered + double parse;
 	// just passthrough argv[x] as-is)
@@ -76,7 +76,7 @@ func (set *mountIPFSSettings) BindFlags(fs *flag.FlagSet) {
 		ipfsUsage = "IPFS API node `maddr`"
 	)
 	set.ipfs.nodeMaddr = &defaultIPFSMaddr{}
-	fs.Func(ipfsName, ipfsUsage, func(s string) (err error) {
+	flagSet.Func(ipfsName, ipfsUsage, func(s string) (err error) {
 		set.ipfs.nodeMaddr, err = multiaddr.NewMultiaddr(s)
 		return
 	})
@@ -169,7 +169,7 @@ func ipfsExecute(ctx context.Context, host filesystem.Host, fsid filesystem.ID,
 		// As-is, ErrUsage really only applies to niladic functions which receive arguments
 		// not variadic one.
 		// [f575114c-9b1d-484c-ade6-b9ce0f6887c8]
-		return fmt.Errorf("%w - expected mountpoint(s)", command.ErrUsage)
+		return fmt.Errorf("%w - expected mount point(s)", command.ErrUsage)
 	}
 	const launch = true
 	client, err := getClient(&set.clientSettings, launch)
@@ -261,9 +261,11 @@ func (c *Client) handleFuse(fsid filesystem.ID,
 	}
 	addCloser(idRoot)
 	for _, target := range targets {
-		data := p9fs.IPFSMountpoint{
-			ApiMaddr: set.ipfs.nodeMaddr,
-			Target:   target,
+		data := p9fs.IPFSMountPoint{
+			APIMaddr: set.ipfs.nodeMaddr,
+			MountPoint: p9fs.MountPoint{
+				Target: target,
+			},
 		}
 		bytes, err := json.Marshal(data)
 		if err != nil {

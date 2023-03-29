@@ -48,8 +48,7 @@ func unmountExecute(ctx context.Context, set *unmountSettings, args ...string) e
 		return fmt.Errorf("%w - `all` flag cannot be combined with arguments", command.ErrUsage)
 	}
 	if !haveArgs && !all {
-		// TODO: [f575114c-9b1d-484c-ade6-b9ce0f6887c8]
-		return fmt.Errorf("%w - expected mountpoint(s)", command.ErrUsage)
+		return fmt.Errorf("%w - expected mount point(s)", command.ErrUsage)
 	}
 
 	const launch = false
@@ -81,12 +80,12 @@ func (c *Client) Unmount(ctx context.Context, targets []string, options ...Unmou
 		return err
 	}
 	if set.all {
-		if err := p9fs.CloseAllMounts(mRoot); err != nil {
+		if err := p9fs.UnmountAll(mRoot); err != nil {
 			return err
 		}
 		return ctx.Err()
 	}
-	if err := p9fs.CloseMounts(mRoot, targets); err != nil {
+	if err := p9fs.UnmountTargets(mRoot, targets); err != nil {
 		return err
 	}
 	return ctx.Err()
