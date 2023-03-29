@@ -93,7 +93,15 @@ func openDir(fsys fs.FS, path string) (fs.ReadDirFile, error) {
 	}
 	directory, ok := file.(fs.ReadDirFile)
 	if !ok {
-		return nil, fserrors.New(fserrors.NotDir)
+		err := errors.New("does not implement ReadDirFile")
+		return nil, &fserrors.Error{
+			PathError: fs.PathError{
+				Op:   "open",
+				Path: path,
+				Err:  err,
+			},
+			Kind: fserrors.NotDir,
+		}
 	}
 	return directory, nil
 }

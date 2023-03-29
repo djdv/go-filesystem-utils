@@ -4,7 +4,6 @@ package cgofuse
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 
@@ -18,13 +17,16 @@ const goRoot = "."
 // fuseToGo converts a FUSE absolute path
 // to a relative [fs.FS] name.
 func fuseToGo(path string) (string, error) {
-	const op fserrors.Op = "path lexer"
 	switch path {
 	case "":
-		return "", fserrors.New(op,
-			fserrors.Path("{empty-string}"),
-			fserrors.InvalidItem,
-		)
+		return "", &fserrors.Error{
+			PathError: fs.PathError{
+				Op:   "fuseToGo",
+				Path: path,
+				Err:  errors.New("empty path argument"),
+			},
+			Kind: fserrors.InvalidItem,
+		}
 	case posixRoot:
 		return goRoot, nil
 	}
@@ -176,5 +178,5 @@ func interpretError(err error) errNo {
 	if errors.As(err, &fsErr) {
 		return fsErrorsTable[fsErr.Kind]
 	}
-	panic(fmt.Sprintf("provided error is not translatable to POSIX error %#v", err))
+	return -fuse.EIO
 }
