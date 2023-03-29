@@ -334,6 +334,13 @@ func commonOptions[OT p9fs.Options](parent p9.File, child string,
 	}
 }
 
+func unlinkEmptyDirs[OT p9fs.GeneratorOptions](autoUnlink bool) []OT {
+	return []OT{
+		p9fs.UnlinkEmptyChildren[OT](autoUnlink),
+		p9fs.UnlinkWhenEmpty[OT](autoUnlink),
+	}
+}
+
 func newFileSystem(ctx context.Context, uid p9.UID, gid p9.GID) (fileSystem, error) {
 	const permissions = p9fs.ReadUser | p9fs.WriteUser | p9fs.ExecuteUser |
 		p9fs.ReadGroup | p9fs.ExecuteGroup |
@@ -364,17 +371,15 @@ func newMounter(parent p9.File, path ninePath,
 		autoUnlink  = true
 	)
 	var (
-		makeHostFn = newHostFunc(path)
-		_, mountFS = p9fs.NewMounter(
-			makeHostFn,
-			append(
-				commonOptions[p9fs.MounterOption](
-					parent, mounterName, path,
-					uid, gid, permissions,
-				),
-				p9fs.UnlinkEmptyChildren[p9fs.MounterOption](autoUnlink),
-			)...,
+		makeHostFn = newHostFunc(path, autoUnlink)
+		options    = append(
+			commonOptions[p9fs.MounterOption](
+				parent, mounterName, path,
+				uid, gid, permissions,
+			),
+			p9fs.UnlinkEmptyChildren[p9fs.MounterOption](autoUnlink),
 		)
+		_, mountFS = p9fs.NewMounter(makeHostFn, options...)
 	)
 	return mountSubsystem{
 		name:      mounterName,
@@ -382,36 +387,34 @@ func newMounter(parent p9.File, path ninePath,
 	}
 }
 
-func newHostFunc(path ninePath) p9fs.MakeHostFunc {
+func newHostFunc(path ninePath, autoUnlink bool) p9fs.MakeHostFunc {
+	linkOptions := unlinkEmptyDirs[p9fs.HosterOption](autoUnlink)
 	return func(parent p9.File, host filesystem.Host, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
 		var makeGuestFn p9fs.MakeGuestFunc
 		switch host {
 		case cgofuse.HostID:
-			makeGuestFn = newGuestFunc[*cgofuse.Host](path)
+			makeGuestFn = newGuestFunc[*cgofuse.Host](path, autoUnlink)
 		default:
 			err := fmt.Errorf(`unexpected host "%v"`, host)
 			return p9.QID{}, nil, err
 		}
 		var (
-			name        = string(host)
-			qid, hoster = p9fs.NewHostFile(
-				makeGuestFn,
-				append(
-					commonOptions[p9fs.HosterOption](
-						parent, name, path,
-						uid, gid, permissions,
-					),
-					// TODO: values should come from caller.
-					p9fs.UnlinkEmptyChildren[p9fs.HosterOption](true),
-					p9fs.UnlinkWhenEmpty[p9fs.HosterOption](true),
-				)...,
+			name    = string(host)
+			options = append(
+				commonOptions[p9fs.HosterOption](
+					parent, name, path,
+					uid, gid, permissions,
+				),
+				linkOptions...,
 			)
+			qid, hoster = p9fs.NewHostFile(makeGuestFn, options...)
 		)
 		return qid, hoster, nil
 	}
 }
 
-func newGuestFunc[H mountHost[T], T any](path ninePath) p9fs.MakeGuestFunc {
+func newGuestFunc[H mountHost[T], T any](path ninePath, autoUnlink bool) p9fs.MakeGuestFunc {
+	linkOptions := unlinkEmptyDirs[p9fs.FSIDOption](autoUnlink)
 	return func(parent p9.File, guest filesystem.ID, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
 		var (
 			makeMountPointFn p9fs.MakeMountPointFunc
@@ -420,9 +423,7 @@ func newGuestFunc[H mountHost[T], T any](path ninePath) p9fs.MakeGuestFunc {
 					parent, string(guest), path,
 					uid, gid, permissions,
 				),
-				// TODO: values should come from caller.
-				p9fs.UnlinkEmptyChildren[p9fs.FSIDOption](true),
-				p9fs.UnlinkWhenEmpty[p9fs.FSIDOption](true),
+				linkOptions...,
 			)
 		)
 		// TODO: share IPFS instances
