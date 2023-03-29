@@ -20,6 +20,7 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/command"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
+	"github.com/djdv/go-filesystem-utils/internal/filesystem/cgofuse"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem/ipfs"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
@@ -38,9 +39,8 @@ type (
 		commonSettings
 		permissions fs.FileMode
 	}
-	defaultServerMaddr struct{ multiaddr.Multiaddr }
-	ninePath           = *atomic.Uint64
-	fileSystem         struct {
+	ninePath   = *atomic.Uint64
+	fileSystem struct {
 		root interface {
 			p9.File
 			p9.Attacher
@@ -50,7 +50,7 @@ type (
 		control controlSubsystem
 	}
 	mountSubsystem struct {
-		*p9fs.Mounter
+		*p9fs.MountFile
 		name string
 	}
 	listenSubsystem struct {
@@ -79,6 +79,39 @@ type (
 	stopperChan  = chan shutdownDisposition
 	stopperRead  = <-chan shutdownDisposition
 	stopperWrite = chan<- shutdownDisposition
+
+	mountHost interface {
+		p9fs.FieldParser
+		p9fs.Mounter
+	}
+	hostConstraint[T any] interface {
+		*T
+		mountHost
+	}
+	mountGuest interface {
+		p9fs.FieldParser
+		p9fs.SystemMaker
+	}
+	guestConstraint[T any] interface {
+		*T
+		mountGuest
+	}
+	// TODO: move this to mountpoint.go?
+	// ^ we should and try to share with mount.go
+	mountPoint[
+		HT, GT any,
+		H interface {
+			*HT
+			mountHost
+		},
+		G interface {
+			*GT
+			mountGuest
+		},
+	] struct {
+		Host  HT
+		Guest GT
+	}
 )
 
 const (
@@ -99,6 +132,19 @@ const (
 	serverFlagName    = "server"
 	exitAfterFlagName = "exit-after"
 )
+
+func (mp mountPoint[HT, GT, H, G]) ParseField(key, value string) error {
+	// TODO: priority order parse both.
+	panic("NIY")
+}
+
+func (mp mountPoint[HT, GT, H, G]) MakeFS() (fs.FS, error) {
+	return G(&mp.Guest).MakeFS()
+}
+
+func (mp mountPoint[HT, GT, H, G]) Mount(fsys fs.FS) (io.Closer, error) {
+	return H(&mp.Host).Mount(fsys)
+}
 
 func (set *daemonSettings) BindFlags(flagSet *flag.FlagSet) {
 	set.commonSettings.BindFlags(flagSet)
@@ -273,7 +319,10 @@ func newFileSystem(ctx context.Context, uid p9.UID, gid p9.GID) (fileSystem, err
 	var (
 		path    = new(atomic.Uint64)
 		_, root = p9fs.NewDirectory(
-			commonOptions[p9fs.DirectoryOption](nil, "", path, uid, gid, permissions)...,
+			commonOptions[p9fs.DirectoryOption](
+				nil, "", path,
+				uid, gid, permissions,
+			)...,
 		)
 		system = fileSystem{
 			root:    root,
@@ -290,54 +339,105 @@ func newMounter(parent p9.File, path ninePath,
 ) mountSubsystem {
 	const (
 		mounterName = "mounts"
+		autoUnlink  = true
 	)
 	var (
-		fsidMap = p9fs.GuestConstructors{
-			ipfs.IPFSID:  newIPFSConstructor(path, ipfs.IPFSID),
-			ipfs.PinFSID: newIPFSConstructor(path, ipfs.PinFSID),
-			ipfs.IPNSID:  newIPFSConstructor(path, ipfs.IPNSID),
-			ipfs.KeyFSID: newIPFSConstructor(path, ipfs.KeyFSID),
-			ipfs.MFSID:   newIPFSConstructor(path, ipfs.MFSID),
-		}
-		hostMap = p9fs.HostConstructors{
-			fuseHost: newFUSEConstructor(path, fsidMap),
-		}
-		_, mountFS = p9fs.NewMounter(hostMap,
-			append(commonOptions[p9fs.MounterOption](parent, mounterName, path, uid, gid, permissions),
-				p9fs.UnlinkEmptyChildren[p9fs.MounterOption](true),
+		makeHostFn = newHostFunc(path)
+		_, mountFS = p9fs.NewMounter(
+			makeHostFn,
+			append(
+				commonOptions[p9fs.MounterOption](
+					parent, mounterName, path,
+					uid, gid, permissions,
+				),
+				p9fs.UnlinkEmptyChildren[p9fs.MounterOption](autoUnlink),
 			)...,
 		)
 	)
 	return mountSubsystem{
-		name:    mounterName,
-		Mounter: mountFS,
+		name:      mounterName,
+		MountFile: mountFS,
 	}
 }
 
-func newFUSEConstructor(path ninePath, idBinder p9fs.GuestConstructors) p9fs.HostConstructor {
+func newHostFunc(path ninePath) p9fs.MakeHostFunc {
+	return func(parent p9.File, host filesystem.Host, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
+		var makeGuestFn p9fs.MakeGuestFunc
+		switch host {
+		case cgofuse.HostID:
+			// TODO: like this?
+			makeGuestFn = newGuestFunc[*cgofuse.MountPoint](path)
+		default:
+			err := fmt.Errorf(`unexpected host "%v"`, host)
+			return p9.QID{}, nil, err
+		}
+		var (
+			name        = string(host)
+			qid, hoster = p9fs.NewHostFile(
+				makeGuestFn,
+				commonOptions[p9fs.HosterOption](
+					parent, name, path,
+					uid, gid, permissions,
+				)...,
+			)
+		)
+		return qid, hoster, nil
+	}
+}
+
+func newGuestFunc[H hostConstraint[T], T any](path ninePath) p9fs.MakeGuestFunc {
+	return func(parent p9.File, guest filesystem.ID, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
+		var (
+			makeMountPointFn p9fs.MakeMountPointFunc
+			options          = append(
+				commonOptions[p9fs.FSIDOption](
+					parent, string(guest), path,
+					uid, gid, permissions,
+				),
+				// TODO: values should come from caller.
+				p9fs.UnlinkEmptyChildren[p9fs.FSIDOption](true),
+				p9fs.UnlinkWhenEmpty[p9fs.FSIDOption](true),
+			)
+		)
+		switch guest {
+		case ipfs.IPFSID:
+			makeMountPointFn = newMountPointFunc[H, *ipfs.IPFSMountPoint](path)
+		case ipfs.PinFSID:
+			makeMountPointFn = newMountPointFunc[H, *ipfs.PinFSMountPoint](path)
+		case ipfs.IPNSID:
+			makeMountPointFn = newMountPointFunc[H, *ipfs.IPNSMountPoint](path)
+		case ipfs.KeyFSID:
+			makeMountPointFn = newMountPointFunc[H, *ipfs.KeyFSMountPoint](path)
+		default:
+			err := fmt.Errorf(`unexpected guest "%v"`, guest)
+			return p9.QID{}, nil, err
+		}
+		qid, file := p9fs.NewGuestFile(makeMountPointFn, options...)
+		return qid, file, nil
+	}
+}
+
+func newMountPointFunc[
+	H hostConstraint[HT],
+	G guestConstraint[GT],
+	HT, GT any,
+](path ninePath,
+) p9fs.MakeMountPointFunc {
 	return func(parent p9.File, name string, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
-		qid, dir := p9fs.NewFuseDir(idBinder,
-			append(commonOptions[p9fs.FuseOption](parent, name, path, uid, gid, permissions),
-				p9fs.UnlinkEmptyChildren[p9fs.FuseOption](true),
-				p9fs.UnlinkWhenEmpty[p9fs.FuseOption](true),
+		/*
+			mountPoint := mountPoint[HT,GT,H,G]{
+				Host:  new(HT),
+				Guest: new(GT),
+			}
+		*/
+		//qid, file := p9fs.NewMountPoint(mountPoint,
+		qid, file := p9fs.NewMountPoint[*mountPoint[HT, GT, H, G]](
+			commonOptions[p9fs.MountPointOption](
+				parent, name, path,
+				uid, gid, permissions,
 			)...,
 		)
-		return qid, dir, nil
-	}
-}
-
-func newIPFSConstructor(path ninePath, fsid filesystem.ID) p9fs.GuestConstructor {
-	// TODO: some optional lazy-client cache?
-	// map[maddr]ipfs.Client.Get()
-	// inside closure we could optionally pass a reference
-	// to the mounter.
-	return func(mountFn p9fs.MountFunc,
-		parent p9.File, name string, permissions p9.FileMode, uid p9.UID, gid p9.GID,
-	) (p9.QID, p9.File, error) {
-		qid, mounter := p9fs.NewIPFSMounter(fsid, mountFn,
-			commonOptions[p9fs.IPFSOption](parent, name, path, uid, gid, permissions)...,
-		)
-		return qid, mounter, nil
+		return qid, file, nil
 	}
 }
 
@@ -346,7 +446,11 @@ func newListener(ctx context.Context, parent p9.File, path ninePath,
 ) listenSubsystem {
 	const name = "listeners"
 	_, listenFS, listeners := p9fs.NewListener(ctx,
-		append(commonOptions[p9fs.ListenerOption](parent, name, path, uid, gid, permissions),
+		append(
+			commonOptions[p9fs.ListenerOption](
+				parent, name, path,
+				uid, gid, permissions,
+			),
 			p9fs.UnlinkEmptyChildren[p9fs.ListenerOption](true),
 		)...,
 	)
@@ -395,7 +499,7 @@ func linkSystems(system fileSystem) error {
 	}{
 		{
 			name: system.mount.name,
-			File: system.mount.Mounter,
+			File: system.mount.MountFile,
 		},
 		{
 			name: system.listen.name,
@@ -596,7 +700,7 @@ func closeWith(levels stopperRead,
 	system mountSubsystem, log ulog.Logger,
 ) <-chan error {
 	var (
-		dir  = system.Mounter
+		dir  = system.MountFile
 		errs = make(chan error)
 	)
 	go func() {
@@ -778,7 +882,6 @@ func makeEmptyChecker(systems *daemonSystem, log ulog.Logger) checkFunc {
 		mountSys     = systems.mount
 		listenersSys = systems.listen
 	)
-	type level = shutdownDisposition
 	return func() (stop bool, sd shutdownDisposition, err error) {
 		var (
 			mounted, mErr   = hasEntries(mountSys)

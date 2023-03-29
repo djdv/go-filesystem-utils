@@ -14,8 +14,6 @@ import (
 	"unsafe"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
-	"github.com/djdv/go-filesystem-utils/internal/filesystem"
-	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/hugelgupf/p9/p9"
 	giconfig "github.com/ipfs/kubo/config"
@@ -86,11 +84,6 @@ func setDefaultValueText(flagSet *flag.FlagSet, defaultText flagDefaultText) {
 	})
 }
 
-// TODO: move this
-func WithIPFS(maddr multiaddr.Multiaddr) MountOption {
-	return func(s *mountSettings) error { s.ipfs.nodeMaddr = maddr; return nil }
-}
-
 func (di *defaultIPFSMaddr) get() (multiaddr.Multiaddr, error) {
 	maddr := di.Multiaddr
 	if maddr == nil {
@@ -119,29 +112,6 @@ func parseID[id p9.UID | p9.GID](arg string) (id, error) {
 	return id(num), nil
 }
 
-func parseFSID(fsid string) (filesystem.ID, error) {
-	normalizedID := filesystem.ID(strings.ToLower(fsid))
-	for _, id := range p9fs.FileSystems() {
-		if normalizedID == id {
-			return id, nil
-		}
-	}
-	err := fmt.Errorf(`unexpected file system id: "%s"`, fsid)
-	return filesystem.ID(""), err
-}
-
-func parseHost(host string) (filesystem.Host, error) {
-	normalizedHost := filesystem.Host(strings.ToLower(host))
-	for _, api := range supportedHosts() {
-		if normalizedHost == api {
-			return api, nil
-		}
-	}
-	err := fmt.Errorf(`unexpected file system host: "%s"`, host)
-	return filesystem.Host(""), err
-}
-
-// TODO: move these to ipfs.go?
 func getIPFSAPI() ([]multiaddr.Multiaddr, error) {
 	location, err := getIPFSAPIPath()
 	if err != nil {

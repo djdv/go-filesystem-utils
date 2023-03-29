@@ -77,7 +77,7 @@ func (set *shutdownSettings) BindFlags(flagSet *flag.FlagSet) {
 
 func shutdownExecute(ctx context.Context, set *shutdownSettings, _ ...string) error {
 	const autoLaunchDaemon = false
-	client, err := getClient(&set.clientSettings, autoLaunchDaemon)
+	client, err := set.getClient(autoLaunchDaemon)
 	if err != nil {
 		return fmt.Errorf("could not get client (already down?): %w", err)
 	}
@@ -92,7 +92,7 @@ func shutdownExecute(ctx context.Context, set *shutdownSettings, _ ...string) er
 
 func (c *Client) Shutdown(level shutdownDisposition) error {
 	// TODO: const name in files pkg?
-	controlDir, err := c.p9Client.Attach("control")
+	controlDir, err := (*p9.Client)(c).Attach("control")
 	if err != nil {
 		return err
 	}

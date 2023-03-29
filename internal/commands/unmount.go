@@ -8,6 +8,7 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/command"
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
+	"github.com/hugelgupf/p9/p9"
 )
 
 type (
@@ -52,7 +53,7 @@ func unmountExecute(ctx context.Context, set *unmountSettings, args ...string) e
 	}
 
 	const autoLaunchDaemon = false
-	client, err := getClient(&set.clientSettings, autoLaunchDaemon)
+	client, err := set.getClient(autoLaunchDaemon)
 	if err != nil {
 		return err
 	}
@@ -73,7 +74,7 @@ func (c *Client) Unmount(ctx context.Context, targets []string, options ...Unmou
 			return err
 		}
 	}
-	mRoot, err := c.p9Client.Attach(p9fs.MounterName)
+	mRoot, err := (*p9.Client)(c).Attach(p9fs.MountFileName)
 	if err != nil {
 		// TODO: if not-exist add context to err msg.
 		// I.e. "client can't ... because ..."
