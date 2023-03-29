@@ -22,7 +22,6 @@ type (
 	id              = uint32
 	uid             = id
 	gid             = id
-	mountTable      map[string]*fuse.FileSystemHost
 	fuseContext     struct {
 		uid
 		gid
@@ -62,10 +61,6 @@ const (
 	executeUser = fuse.S_IXUSR
 	writeUser   = fuse.S_IWUSR
 	readUser    = fuse.S_IRUSR
-
-	executeAll = executeUser | executeGroup | executeOther
-	writeAll   = writeUser | writeGroup | writeOther
-	readAll    = readUser | readGroup | readOther
 
 	HostID filesystem.Host = "FUSE"
 )
