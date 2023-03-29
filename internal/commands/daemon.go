@@ -297,15 +297,14 @@ func newMounter(parent p9.File, path ninePath,
 		mounterName = "mounts"
 	)
 	var (
-		ipfsCtor = newIPFSConstructor(path)
-		fsidMap  = p9fs.GuestThing{
-			ipfs.IPFSID:  ipfsCtor,
-			ipfs.PinFSID: ipfsCtor,
-			ipfs.IPNSID:  ipfsCtor,
-			ipfs.KeyFSID: ipfsCtor,
-			ipfs.MFSID:   ipfsCtor,
+		fsidMap = p9fs.GuestConstructors{
+			ipfs.IPFSID:  newIPFSConstructor(path, ipfs.IPFSID),
+			ipfs.PinFSID: newIPFSConstructor(path, ipfs.PinFSID),
+			ipfs.IPNSID:  newIPFSConstructor(path, ipfs.IPNSID),
+			ipfs.KeyFSID: newIPFSConstructor(path, ipfs.KeyFSID),
+			ipfs.MFSID:   newIPFSConstructor(path, ipfs.MFSID),
 		}
-		hostMap = p9fs.MounterThing{
+		hostMap = p9fs.HostConstructors{
 			fuseHost: newFUSEConstructor(path, fsidMap),
 		}
 		_, mountFS = p9fs.NewMounter(hostMap,
@@ -320,7 +319,7 @@ func newMounter(parent p9.File, path ninePath,
 	}
 }
 
-func newFUSEConstructor(path ninePath, idBinder p9fs.GuestThing) p9fs.HostConstructor {
+func newFUSEConstructor(path ninePath, idBinder p9fs.GuestConstructors) p9fs.HostConstructor {
 	return func(parent p9.File, name string, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
 		qid, dir := p9fs.NewFuseDir(idBinder,
 			append(commonOptions[p9fs.FuseOption](parent, name, path, uid, gid, permissions),
@@ -332,12 +331,12 @@ func newFUSEConstructor(path ninePath, idBinder p9fs.GuestThing) p9fs.HostConstr
 	}
 }
 
-func newIPFSConstructor(path ninePath) p9fs.GuestConstructor {
+func newIPFSConstructor(path ninePath, fsid filesystem.ID) p9fs.GuestConstructor {
 	// TODO: some optional lazy-client cache?
 	// map[maddr]ipfs.Client.Get()
 	// inside closure we could optionally pass a reference
 	// to the mounter.
-	return func(fsid filesystem.ID, mountFn p9fs.MountFunc,
+	return func(mountFn p9fs.MountFunc,
 		parent p9.File, name string, permissions p9.FileMode, uid p9.UID, gid p9.GID,
 	) (p9.QID, p9.File, error) {
 		qid, mounter := p9fs.NewIPFSMounter(fsid, mountFn,
@@ -608,7 +607,7 @@ func closeWith(levels stopperRead,
 	go func() {
 		<-levels
 		log.Print("closing mounts")
-		if err := p9fs.CloseAllMounts(dir); err != nil {
+		if err := p9fs.UnmountAll(dir); err != nil {
 			errs <- err
 		}
 		close(errs)

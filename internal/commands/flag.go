@@ -95,7 +95,7 @@ func parseFSID(fsid string) (filesystem.ID, error) {
 
 func parseHost(host string) (filesystem.Host, error) {
 	normalizedHost := filesystem.Host(strings.ToLower(host))
-	for _, api := range p9fs.Hosts() {
+	for _, api := range supportedHosts() {
 		if normalizedHost == api {
 			return api, nil
 		}
