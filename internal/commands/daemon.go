@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -120,27 +121,43 @@ const (
 )
 
 func (mp *mountPoint[HT, GT, H, G]) ParseField(key, value string) error {
-	// TODO: which order should take precedent?
-	hErr := H(&mp.Host).ParseField(key, value)
-	if hErr == nil {
+	const (
+		hostPrefix  = "host."
+		guestPrefix = "guest."
+	)
+	var (
+		prefix  string
+		parseFn func(_, _ string) error
+	)
+	switch {
+	case strings.HasPrefix(key, hostPrefix):
+		prefix = hostPrefix
+		parseFn = H(&mp.Host).ParseField
+	case strings.HasPrefix(key, guestPrefix):
+		prefix = guestPrefix
+		parseFn = G(&mp.Guest).ParseField
+	default:
+		const wildcard = "*"
+		return p9fs.FieldError{
+			Key:   key,
+			Tried: []string{hostPrefix + wildcard, guestPrefix + wildcard},
+		}
+	}
+	baseKey := key[len(prefix):]
+	err := parseFn(baseKey, value)
+	if err == nil {
 		return nil
 	}
-	var hFieldErr p9fs.FieldError
-	if !errors.As(hErr, &hFieldErr) {
-		return hErr
+	var fErr p9fs.FieldError
+	if !errors.As(err, &fErr) {
+		return err
 	}
-	gErr := G(&mp.Guest).ParseField(key, value)
-	if gErr == nil {
-		return nil
+	tried := fErr.Tried
+	for i, e := range fErr.Tried {
+		tried[i] = prefix + e
 	}
-	var gFieldErr p9fs.FieldError
-	if !errors.As(gErr, &gFieldErr) {
-		return gErr
-	}
-	return p9fs.FieldError{
-		Key:   key,
-		Tried: append(hFieldErr.Tried, gFieldErr.Tried...),
-	}
+	fErr.Tried = tried
+	return fErr
 }
 
 func (mp *mountPoint[HT, GT, H, G]) MakeFS() (fs.FS, error) {
