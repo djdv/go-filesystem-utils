@@ -1,141 +1,189 @@
 package p9
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math"
+	"strings"
+	"sync"
 
+	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/hugelgupf/p9/p9"
 	"github.com/hugelgupf/p9/perrors"
 )
 
-/* TODO: maybe scrap this.
-type WalkDirFunc func(path string, d p9.Dirent, err error) error
+type (
+	chanEmitter[T any] struct {
+		sync.Mutex
+		context.Context
+		ch chan T
+	}
 
-// TODO: dedupe mkdirall, removeEmpties, flattenX, et al. with this.
-func WalkDir(fsys p9.File, fn WalkDirFunc) error {
+	// dataField must be of length 1 with just a key name,
+	// or of length 2 with a key and value.
+	dataField  []string
+	dataTokens []dataField
+	fieldType  uint
+)
+
+const (
+	fileOpened = p9.OpenFlagsModeMask + 1
+
+	keyWord     fieldType = 1
+	keyAndValue fieldType = 2
+)
+
+func (df dataField) typ() fieldType { return fieldType(len(df)) }
+
+func makeChannelEmitter[T any](ctx context.Context, buffer int) *chanEmitter[T] {
 	var (
-		closers  = make([]io.Closer, 0, len(names))
-		closeAll = func() error {
-			for _, c := range closers {
-				if err := c.Close(); err != nil {
-					return err
-				}
-			}
-			closers = nil
-			return nil
+		ch      = make(chan T, buffer)
+		emitter = &chanEmitter[T]{
+			Context: ctx,
+			ch:      ch,
 		}
 	)
-	defer closeAll() // TODO: error needs to be caught and appended if we return early.
-	// TODO: this could be real-time (callbacks or channels vs slices).
-	files, err := flattenDir(fsys)
-	if err != nil {
-		return err
-	}
-	for _, f := range files {
-		// TODO: signature isn't currently very useful for us
-	}
-	return closeAll()
+	emitter.closeWhenDone()
+	return emitter
 }
 
-func flattenDir(dir p9.File) ([]p9.File, error) {
-	ents, err := ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
+func (ce *chanEmitter[T]) closeWhenDone() {
 	var (
-		files = make([]p9.File, 0, len(ents))
-		// TODO: micro-opt; is this faster than allocating in the loop?
-		wnames = make([]string, 1)
+		ctx = ce.Context
+		mu  = &ce.Mutex
+		ch  = ce.ch
 	)
-	for _, ent := range ents {
-		wnames[0] = ent.Name
-		_, entFile, err := dir.Walk(wnames)
+	go func() {
+		<-ctx.Done()
+		mu.Lock()
+		defer mu.Unlock()
+		close(ch)
+		ce.ch = nil // See: [emit].
+	}()
+}
+
+func (ce *chanEmitter[T]) emit(value T) error {
+	ce.Mutex.Lock()
+	defer ce.Mutex.Unlock()
+	var (
+		ctx = ce.Context
+		ch  = ce.ch
+	)
+	if ch == nil { // See: [closeWhenDone].
+		return ctx.Err()
+	}
+	select {
+	case ch <- value:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func createViaMknod(fsys p9.File, name string, flags p9.OpenFlags,
+	permissions p9.FileMode, uid p9.UID, gid p9.GID,
+) (_ p9.File, _ p9.QID, _ ioUnit, err error) {
+	if qid, err := fsys.Mknod(name, permissions, 0, 0, uid, gid); err != nil {
+		return nil, qid, 0, err
+	}
+	defer func() {
 		if err != nil {
-			return nil, err
+			const ulFlags = 0
+			err = fserrors.Join(err, fsys.UnlinkAt(name, ulFlags))
 		}
-		if ent.Type == p9.TypeDir {
-			submaddrs, err := flattenDir(entFile)
-			if err != nil {
-				return nil, err
-			}
-			files = append(files, submaddrs...)
-			continue
-		}
-		files = append(files, entFile)
+	}()
+	_, file, err := fsys.Walk([]string{name})
+	if err != nil {
+		return nil, p9.QID{}, 0, err
 	}
-	return files, nil
+	qid, ioUnit, err := file.Open(flags)
+	if err != nil {
+		return nil, p9.QID{}, 0, err
+	}
+	return file, qid, ioUnit, nil
 }
-*/
 
 func MkdirAll(root p9.File, names []string,
 	permissions p9.FileMode, uid p9.UID, gid p9.GID,
 ) (p9.File, error) {
 	var (
-		closers  = make([]io.Closer, 0, len(names))
-		closeAll = func() error {
-			for _, c := range closers {
-				if err := c.Close(); err != nil {
-					return err
-				}
-			}
-			closers = nil
-			return nil
-		}
+		tail            = len(names) - 1
+		_, current, err = root.Walk(nil)
 	)
-	defer closeAll() // TODO: error needs to be caught and appended if we return early.
-	var (
-		tail   = len(names) - 1
-		wnames = make([]string, 1)
-		next   = root
-	)
-	for i, name := range names {
-		wnames[0] = name
-		_, nextF, err := next.Walk(wnames)
-		if err != nil {
-			if !errors.Is(err, perrors.ENOENT) {
-				return nil, err
-			}
-			if _, err := next.Mkdir(name, permissions, uid, gid); err != nil {
-				return nil, err
-			}
-			if _, nextF, err = next.Walk(wnames); err != nil {
-				return nil, err
-			}
-		}
-		if i != tail {
-			closers = append(closers, nextF)
-		}
-		next = nextF
-	}
-	if err := closeAll(); err != nil {
-		return nil, err
-	}
-	return next, nil
-}
-
-// TODO: export this? But where? What name? ReaddirAll?
-// *We're using the same name as [os] (new canon)
-// and [fs] (newer canon) for now, make sure this causes no issues.
-func ReadDir(dir p9.File) (_ p9.Dirents, err error) {
-	_, dirClone, err := dir.Walk(nil)
 	if err != nil {
 		return nil, err
 	}
-	if _, _, err := dirClone.Open(p9.ReadOnly); err != nil {
+	for i, name := range names {
+		next, err := getOrMkdir(current, name, permissions, uid, gid)
+		if i != tail {
+			err = fserrors.Join(err, current.Close())
+		}
+		if err != nil {
+			return nil, err
+		}
+		current = next
+	}
+	return current, nil
+}
+
+func getOrMkdir(fsys p9.File, name string, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.File, error) {
+	wnames := []string{name}
+	_, dir, err := fsys.Walk(wnames)
+	if err == nil {
+		return dir, nil
+	}
+	if !errors.Is(err, perrors.ENOENT) {
 		return nil, err
 	}
-	defer func() {
-		cErr := dirClone.Close()
-		if err == nil {
-			err = cErr
+	if _, err = fsys.Mkdir(name, permissions, uid, gid); err != nil {
+		return nil, err
+	}
+	_, dir, err = fsys.Walk(wnames)
+	return dir, err
+}
+
+// mkPreamble makes sure name does not exist
+// and may substitute ID values.
+// Intended to be called at the beginning of
+// mk* functions {mkdir, mknod, etc.}.
+func mkPreamble(parent p9.File, name string,
+	uid p9.UID, gid p9.GID,
+) (p9.UID, p9.GID, error) {
+	exists, err := childExists(parent, name)
+	if err != nil {
+		return p9.NoUID, p9.NoGID, err
+	}
+	if exists {
+		return p9.NoUID, p9.NoGID, perrors.EEXIST
+	}
+	return maybeInheritIDs(parent, uid, gid)
+}
+
+func ReadDir(dir p9.File) (_ p9.Dirents, err error) {
+	_, dirClone, err := dir.Walk(nil)
+	closeClone := func() {
+		if cErr := dirClone.Close(); cErr != nil {
+			if err == nil {
+				err = cErr
+			} else {
+				err = fserrors.Join(err, cErr)
+			}
 		}
-	}()
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer closeClone()
+	if _, _, err = dirClone.Open(p9.ReadOnly); err != nil {
+		return nil, err
+	}
 	var (
 		offset uint64
 		ents   p9.Dirents
 	)
-	for { // TODO: [Ame] double check correctness (offsets and that)
+	for {
 		entBuf, err := dirClone.Readdir(offset, math.MaxUint32)
 		if err != nil {
 			return nil, err
@@ -150,6 +198,14 @@ func ReadDir(dir p9.File) (_ p9.Dirents, err error) {
 	return ents, nil
 }
 
+func walkEnt(parent p9.File, ent p9.Dirent) (p9.File, error) {
+	wnames := []string{ent.Name}
+	_, child, err := parent.Walk(wnames)
+	return child, err
+}
+
+// ReadAll performs the following sequence on file:
+// clone, stat(size), open(read-only), read, close.
 func ReadAll(file p9.File) (_ []byte, err error) {
 	// TODO: walkgetattr with fallback.
 	_, fileClone, err := file.Walk(nil)
@@ -169,12 +225,138 @@ func ReadAll(file p9.File) (_ []byte, err error) {
 	if _, _, err := fileClone.Open(p9.ReadOnly); err != nil {
 		return nil, err
 	}
-	defer func() {
-		cErr := fileClone.Close()
-		if err == nil {
-			err = cErr
+	sr := io.NewSectionReader(fileClone, 0, int64(attr.Size))
+	data, err := io.ReadAll(sr)
+	return data, fserrors.Join(err, fileClone.Close())
+}
+
+func renameAt(oldDir, newDir p9.File, oldName, newName string) error {
+	_, file, err := oldDir.Walk([]string{oldName})
+	if err != nil {
+		return err
+	}
+	err = rename(file, oldDir, newDir, oldName, newName)
+	if cErr := file.Close(); cErr != nil {
+		const closeFmt = "could not close old file: %w"
+		err = fserrors.Join(err, fmt.Errorf(closeFmt, cErr))
+	}
+	return err
+}
+
+func rename(file, oldDir, newDir p9.File, oldName, newName string) error {
+	if err := newDir.Link(file, newName); err != nil {
+		return err
+	}
+	const flags uint32 = 0
+	err := oldDir.UnlinkAt(oldName, flags)
+	if err != nil {
+		if uErr := newDir.UnlinkAt(newName, flags); uErr != nil {
+			const unlinkFmt = "could not unlink new file: %w"
+			err = fserrors.Join(err, fmt.Errorf(unlinkFmt, uErr))
+		}
+	}
+	return err
+}
+
+// TODO better name?
+// Flatten returns all files within a directory (recursively).
+// It is the callers responsibility to
+// close the returned files when done.
+func Flatten(dir p9.File) (_ []p9.File, err error) {
+	ents, err := ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var (
+		files           = make([]p9.File, 0, len(ents))
+		closeAllOnError = func() {
+			if err == nil {
+				return
+			}
+			for _, file := range files {
+				if cErr := file.Close(); cErr != nil {
+					err = fserrors.Join(err, cErr)
+				}
+			}
+		}
+	)
+	defer closeAllOnError()
+	for _, ent := range ents {
+		file, err := walkEnt(dir, ent)
+		if err != nil {
+			return nil, err
+		}
+		if ent.Type == p9.TypeDir {
+			subFiles, err := Flatten(file)
+			if err != nil {
+				return nil, err
+			}
+			if err := file.Close(); err != nil {
+				return nil, err
+			}
+			files = append(files, subFiles...)
+			continue
+		}
+		files = append(files, file)
+	}
+	return files, nil
+}
+
+func gatherEnts(fsys p9.File, errs chan<- error) (<-chan p9.File, error) {
+	ents, err := ReadDir(fsys)
+	if err != nil {
+		return nil, err
+	}
+	files := make(chan p9.File, len(ents))
+	go func() {
+		defer close(files)
+		for _, ent := range ents {
+			file, err := walkEnt(fsys, ent)
+			if err != nil {
+				errs <- err
+				continue
+			}
+			files <- file
 		}
 	}()
-	sr := io.NewSectionReader(fileClone, 0, int64(attr.Size))
-	return io.ReadAll(sr)
+	return files, nil
+}
+
+func unlinkAllChildren(dir p9.File, errs chan<- error) {
+	entries, err := ReadDir(dir)
+	if err != nil {
+		errs <- err
+		return
+	}
+	const flags = 0
+	for _, entry := range entries {
+		name := entry.Name
+		if err := dir.UnlinkAt(name, flags); err != nil {
+			errs <- err
+		}
+	}
+}
+
+// tokenize is for parsing data from Read/Write.
+// Returning a list of tokens
+// which contain a list of fields.
+func tokenize(p []byte) dataTokens {
+	var (
+		str   = string(p)
+		split = strings.FieldsFunc(str, func(r rune) bool {
+			return r == '\t' || r == '\r' || r == '\n'
+		})
+		tokens = make(dataTokens, len(split))
+	)
+	for i, token := range split {
+		fields := strings.Fields(token)
+		if len(fields) > 2 { // Preserve spaces in values.
+			fields = dataField{
+				fields[0],
+				strings.Join(fields[1:], " "),
+			}
+		}
+		tokens[i] = fields
+	}
+	return tokens
 }

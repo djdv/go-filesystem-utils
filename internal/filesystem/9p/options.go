@@ -1,13 +1,10 @@
 package p9
 
 import (
-	"context"
-	"fmt"
-	"reflect" // [fa0f68c3-8fdc-445a-9ddf-699da39a77c2]
+	"reflect"
 	"sync/atomic"
-	"unsafe" // [fa0f68c3-8fdc-445a-9ddf-699da39a77c2]
+	"unsafe"
 
-	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	"github.com/hugelgupf/p9/p9"
 )
 
@@ -24,26 +21,29 @@ import (
 // we'll uhhh... figure something out later I guess.
 
 type (
-	metaSettings struct {
-		metadata
-		withTimestamps bool
+	// TODO: docs; commonly shared options.
+	Options interface {
+		DirectoryOption |
+			ListenerOption |
+			ChannelOption |
+			MounterOption |
+			HosterOption |
+			FSIDOption |
+			MountPointOption
 	}
-	MetaOption func(*metaSettings) error
+	// TODO: docs; systems which generate files.
+	GeneratorOptions interface {
+		ListenerOption |
+			MounterOption |
+			HosterOption |
+			FSIDOption
+	}
 
-	linkSettings struct {
-		parent p9.File
-		name   string
-	}
-	LinkOption func(*linkSettings) error
-
-	fileSettings struct {
-		metaSettings
-		linkSettings
-	}
-	FileOption func(*fileSettings) error
+	linkSettings = link
 
 	directorySettings struct {
-		fileSettings
+		metadata
+		linkSettings
 	}
 	DirectoryOption func(*directorySettings) error
 
@@ -59,32 +59,22 @@ type (
 	}
 	ListenerOption func(*listenerSettings) error
 
-	mounterSettings struct {
-		directorySettings
-		generatorSettings
-	}
-	MounterOption func(*mounterSettings) error
-
-	fuseSettings struct {
-		directorySettings
-		generatorSettings
-	}
-	FuseOption func(*fuseSettings) error
-
 	fsidSettings struct {
 		directorySettings
 		generatorSettings
-		hostAPI filesystem.Host
 	}
 	FSIDOption func(*fsidSettings) error
 
-	ipfsSettings struct {
-		fileSettings
-		// TODO: node addr, etc.
+	channelSettings struct {
+		metadata
+		linkSettings
+		buffer int
 	}
-	IPFSOption func(*ipfsSettings) error
+	ChannelOption func(*channelSettings) error
 
 	NineOption (func()) // TODO stub
+
+	reflectFunc = func([]reflect.Value) (results []reflect.Value)
 )
 
 func parseOptions[ST any, OT ~func(*ST) error](settings *ST, options ...OT) error {
@@ -96,213 +86,111 @@ func parseOptions[ST any, OT ~func(*ST) error](settings *ST, options ...OT) erro
 	return nil
 }
 
-// TODO: This needs an example code to make sense.
+// TODO: See if we can coerce the type system
+// to allow us to return a union of specific options.
+// So we can pass them through instead of reconstructing them.
+// I.e. someGeneratorOption() (f1|f2, error)
+// parsing would need some special handling to accrue them.
 //
-// WithSuboptions converts shared option types
-// into the requested option type.
-func WithSuboptions[
-	NOT ~func(*NST) error, // New Option Type.
-	NST, OST any, // X Settings Type.
-	OOT ~func(*OST) error, // Old Option Type.
-](options ...OOT,
-) NOT {
-	return func(s *NST) error {
-		ptr, err := hackGetPtr[OST](s)
-		if err != nil {
-			return err
-		}
-		return parseOptions(ptr, options...)
+// alternatively we could store a slice of them
+// on the settings type itself.
+// someGeneratoreSettings.[]diropts
+// ^ This might cause problems for things like the path.
+func (settings *directorySettings) asOptions() []DirectoryOption {
+	return []DirectoryOption{
+		WithPath[DirectoryOption](settings.ninePath),
+		WithPermissions[DirectoryOption](settings.Mode),
+		WithUID[DirectoryOption](settings.UID),
+		WithGID[DirectoryOption](settings.GID),
+		WithParent[DirectoryOption](settings.parent, settings.child),
 	}
 }
 
-func WithPath(path *atomic.Uint64) MetaOption {
-	return func(set *metaSettings) error { set.ninePath = path; return nil }
+// XXX: We're using reflection to work around
+// a constraint in the 1.18 Go spec. Specifically regarding
+// generic access to common struct fields.
+// "We may remove this restriction in a future release"
+// It's possible to implement this without reflection
+// today [1.20], but it requires a lot of duplication
+// type switch cases. (1 for each type for each option).
+// We'll take the runtime hit until the aforementioned
+// compiler constraint is renounced.
+func makeSetter[OT Options, V any](name string, value V) OT {
+	optTyp := getOptionType[OT]()
+	return makeReflectFn[OT, V](optTyp,
+		func(args []reflect.Value) (results []reflect.Value) {
+			fieldPtr := unsafeFieldAccess(args[0], name)
+			fieldPtr.Elem().Set(reflect.ValueOf(value))
+			return []reflect.Value{reflect.Zero(optTyp.Out(0))}
+		},
+	)
 }
 
-// TODO: docs
-// Constructors may use this attr freely.
-// (Fields may be ignored or modified.)
-func WithBaseAttr(attr *p9.Attr) MetaOption {
-	return func(set *metaSettings) error {
-		/* TODO: lint; disallow this? Merge attrs? <- yeah probably.
-		if existing := set.Attr; existing != nil {
-			return fmt.Errorf("base attr already set:%v", existing)
-		}
-		*/
-		set.Attr = attr
+func makeSetterFn[OT Options, V any](name string, fn func(*V) error) OT {
+	optTyp := getOptionType[OT]()
+	return makeReflectFn[OT, V](optTyp,
+		func(args []reflect.Value) (results []reflect.Value) {
+			var (
+				fieldPtr = unsafeFieldAccess(args[0], name)
+				fnRet    = fn(fieldPtr.Interface().(*V))
+				rvRet    = reflect.ValueOf(&fnRet).Elem()
+			)
+			return []reflect.Value{rvRet}
+		},
+	)
+}
+
+// XXX: defeat CanSet/CanAddr guard for unexported fields.
+func unsafeFieldAccess(structPtr reflect.Value, name string) reflect.Value {
+	var (
+		field   = structPtr.Elem().FieldByName(name)
+		srcAddr = unsafe.Pointer(field.UnsafeAddr())
+	)
+	return reflect.NewAt(field.Type(), srcAddr)
+}
+
+func makeReflectFn[OT Options, V any](optTyp reflect.Type, fn reflectFunc) OT {
+	return reflect.MakeFunc(optTyp, fn).Interface().(OT)
+}
+
+func getOptionType[OT Options]() reflect.Type {
+	return reflect.TypeOf([0]OT{}).Elem()
+}
+
+func WithPath[OT Options](path *atomic.Uint64) (option OT) {
+	return makeSetter[OT]("ninePath", path)
+}
+
+func WithParent[OT Options](parent p9.File, child string) (option OT) {
+	return makeSetter[OT]("linkSettings", linkSettings{
+		parent: parent,
+		child:  child,
+	})
+}
+
+func WithPermissions[OT Options](permissions p9.FileMode) (option OT) {
+	return makeSetterFn[OT]("Mode", func(mode *p9.FileMode) error {
+		*mode = mode.FileType() | permissions.Permissions()
 		return nil
-	}
+	})
 }
 
-func WithAttrTimestamps(b bool) MetaOption {
-	return func(ms *metaSettings) error { ms.withTimestamps = true; return nil }
+func WithUID[OT Options](uid p9.UID) (option OT) {
+	return makeSetter[OT]("UID", uid)
 }
 
-// TODO: name is the name of the child, in relation to the parent, not the parent node's name.
-// We need a good variable-name for this. selfName? ourName?
-func WithParent(parent p9.File, name string) LinkOption {
-	return func(ls *linkSettings) error { ls.parent = parent; ls.name = name; return nil }
+func WithGID[OT Options](gid p9.GID) (option OT) {
+	return makeSetter[OT]("GID", gid)
 }
 
-// TODO: name? + docs
-func CleanupSelf(b bool) GeneratorOption {
-	return func(set *generatorSettings) error { set.cleanupSelf = b; return nil }
+func UnlinkWhenEmpty[OT GeneratorOptions](b bool) (option OT) {
+	return makeSetter[OT]("cleanupSelf", b)
 }
 
-// TODO: name? + docs
-func CleanupEmpties(b bool) GeneratorOption {
-	return func(set *generatorSettings) error { set.cleanupElements = b; return nil }
+func UnlinkEmptyChildren[OT GeneratorOptions](b bool) (option OT) {
+	return makeSetter[OT]("cleanupElements", b)
 }
 
-// TODO: we should either export these settings reflectors or make a comparable function.
-// Even better would be to eliminate the need for them all together.
-
-func (settings *metaSettings) asOptions() []MetaOption {
-	return []MetaOption{
-		WithPath(settings.ninePath),
-		WithBaseAttr(settings.Attr),
-		WithAttrTimestamps(settings.withTimestamps),
-	}
-}
-
-func (settings *linkSettings) asOptions() []LinkOption {
-	return []LinkOption{
-		WithParent(settings.parent, settings.name),
-	}
-}
-
-// TODO: [Ame] Words words words. How about some concision?
-// HACK: [Go 1.19] [fa0f68c3-8fdc-445a-9ddf-699da39a77c2]
-// Several proposals have been accepted within Go [*1]
-// which allow several possible implementations of what we're trying to do here.
-// None of which have been implemented in the compiler yet.
-// Until then, this is the best I could come up with.
-// [*1] common struct fields; type parameters on methods; mixed concrete+interface unions; and more.
-//
-// The implementation is bad, but should be amendable later
-// without changing the calling code.
-//
-// This should be done with generics in a type safe, compile-time way
-// when that's possible.
-func hackGetPtr[T, V any](source *V) (*T, error) {
-	var (
-		sourceValue = reflect.ValueOf(source).Elem()
-		targetType  = reflect.TypeOf((*T)(nil)).Elem()
-		ctx, cancel = context.WithCancel(context.Background())
-	)
-	defer cancel()
-	for field := range fieldsFromStruct(ctx, sourceValue.Type()) {
-		if field.Type == targetType {
-			fieldVal := sourceValue.FieldByIndex(field.Index)
-			if !field.IsExported() {
-				return hackEscapeRuntime[T](fieldVal)
-			}
-			return hackAssert[T](fieldVal.Interface())
-		}
-	}
-	// TODO: can we prevent this at compile time today (v1.19)?
-	// use an "implements" interface? Probably not.
-	return nil, fmt.Errorf("could not find type \"%s\" within \"%T\"",
-		targetType.Name(), source,
-	)
-}
-
-// XXX: [Go 1.19] [fa0f68c3-8fdc-445a-9ddf-699da39a77c2]
-// Returns an instance of the field's address,
-// without the runtime's read-only flag.
-func hackEscapeRuntime[T any](field reflect.Value) (*T, error) {
-	var (
-		fieldAddr  = unsafe.Pointer(field.UnsafeAddr())
-		fieldWrite = reflect.NewAt(field.Type(), fieldAddr)
-	)
-	return hackAssert[T](fieldWrite.Interface())
-}
-
-// TODO: [Go 1.19] [fa0f68c3-8fdc-445a-9ddf-699da39a77c2]
-func hackAssert[T any](value any) (*T, error) {
-	concrete, ok := value.(*T)
-	if !ok {
-		err := fmt.Errorf("type mismatch"+
-			"\n\tgot: %T"+
-			"\n\twant: %T",
-			concrete, (*T)(nil),
-		)
-		return nil, err
-	}
-	return concrete, nil
-}
-
-// TODO: [micro-opt] [benchmarks]
-// Considering we're searching for structs that are very likely to be top level embeds,
-// we want breadth first search on structs.
-// (As opposed to [reflect.VisibleFields]'s lexical-depth order, or whatever.)
-// However, it's likely more effect to use slices, not channels+goroutines here.
-// This code was already written for something else, and re-used/adapted here.
-// (Author: djdv, Takers: anyone)
-
-type structFields = <-chan reflect.StructField
-
-// fieldsFromStruct returns the fields from [typ] in breadth first order.
-func fieldsFromStruct(ctx context.Context, typ reflect.Type) structFields {
-	out := make(chan reflect.StructField)
-	go func() {
-		defer close(out)
-		queue := []structFields{generateFields(ctx, typ)}
-		for len(queue) != 0 {
-			var cur structFields
-			cur, queue = queue[0], queue[1:]
-			for field := range cur {
-				select {
-				case out <- field:
-					if kind := field.Type.Kind(); kind == reflect.Struct {
-						queue = append(queue, expandField(ctx, field))
-					}
-				case <-ctx.Done():
-					return
-				}
-			}
-		}
-	}()
-	return out
-}
-
-func generateFields(ctx context.Context, typ reflect.Type) structFields {
-	var (
-		fieldCount = typ.NumField()
-		fields     = make(chan reflect.StructField, fieldCount)
-	)
-	go func() {
-		defer close(fields)
-		for i := 0; i < fieldCount; i++ {
-			if ctx.Err() != nil {
-				return
-			}
-			fields <- typ.Field(i)
-		}
-	}()
-	return fields
-}
-
-// expandField generates fields from a field,
-// and prefixes their index with their container's index.
-// (I.e. received [field.Index] may be passed to [container.FieldByIndex])
-func expandField(ctx context.Context, field reflect.StructField) structFields {
-	embeddedFields := generateFields(ctx, field.Type)
-	return prefixIndex(ctx, field.Index, embeddedFields)
-}
-
-func prefixIndex(ctx context.Context, prefix []int, fields structFields) structFields {
-	prefixed := make(chan reflect.StructField, cap(fields))
-	go func() {
-		defer close(prefixed)
-		for field := range fields {
-			field.Index = append(prefix, field.Index...)
-			select {
-			case prefixed <- field:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return prefixed
+func WithBuffer(size int) ChannelOption {
+	return func(cs *channelSettings) error { cs.buffer = size; return nil }
 }
