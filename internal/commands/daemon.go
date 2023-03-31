@@ -384,6 +384,10 @@ func newGuestFunc[H mountHost[T], T any](path ninePath) p9fs.MakeGuestFunc {
 				p9fs.UnlinkWhenEmpty[p9fs.FSIDOption](true),
 			)
 		)
+		// TODO: share IPFS instances
+		// when server API is the same
+		// (needs some wrapper too so
+		// Close works properly.)
 		switch guest {
 		case ipfs.IPFSID:
 			makeMountPointFn = newMountPointFunc[H, *ipfs.IPFSGuest](path)
