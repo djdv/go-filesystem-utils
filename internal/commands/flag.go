@@ -21,11 +21,8 @@ import (
 )
 
 type (
-	helpOnly struct {
-		command.HelpArg
-	}
 	commonSettings struct {
-		helpOnly
+		command.HelpArg
 		verbose bool
 	}
 	daemonDecay struct {
@@ -57,6 +54,15 @@ type (
 	// set it explicitly, or for values that belong
 	// to another command than the one being invoked.
 	lazyFlag[T any] interface{ get() (T, error) }
+
+	// lazyInitializer may be implemented by a guest or host
+	// settings structure, typically to cascade
+	// initialization of lazy flags.
+	// Such as by type checking each field
+	// and initializing its value if it is of type [lazyFlag].
+	lazyInitializer interface {
+		lazyInit() error
+	}
 
 	// defaultIPFSMaddr distinguishes
 	// the default maddr value, from an arbitrary maddr value.
@@ -103,7 +109,7 @@ func (set *commonSettings) BindFlags(flagSet *flag.FlagSet) {
 		false, "enable log messages")
 }
 
-func parseID[id p9.UID | p9.GID](arg string) (id, error) {
+func parseID[id uint32 | p9.UID | p9.GID](arg string) (id, error) {
 	const idSize = 32
 	num, err := strconv.ParseUint(arg, 0, idSize)
 	if err != nil {

@@ -80,34 +80,20 @@ type (
 	stopperRead  = <-chan shutdownDisposition
 	stopperWrite = chan<- shutdownDisposition
 
-	mountHost interface {
+	mountHost[T any] interface {
+		*T
 		p9fs.FieldParser
 		p9fs.Mounter
 	}
-	hostConstraint[T any] interface {
+	mountGuest[T any] interface {
 		*T
-		mountHost
-	}
-	mountGuest interface {
 		p9fs.FieldParser
 		p9fs.SystemMaker
 	}
-	guestConstraint[T any] interface {
-		*T
-		mountGuest
-	}
-	// TODO: move this to mountpoint.go?
-	// ^ we should and try to share with mount.go
 	mountPoint[
 		HT, GT any,
-		H interface {
-			*HT
-			mountHost
-		},
-		G interface {
-			*GT
-			mountGuest
-		},
+		H mountHost[HT],
+		G mountGuest[GT],
 	] struct {
 		Host  HT
 		Guest GT
@@ -365,8 +351,7 @@ func newHostFunc(path ninePath) p9fs.MakeHostFunc {
 		var makeGuestFn p9fs.MakeGuestFunc
 		switch host {
 		case cgofuse.HostID:
-			// TODO: like this?
-			makeGuestFn = newGuestFunc[*cgofuse.MountPoint](path)
+			makeGuestFn = newGuestFunc[*cgofuse.Host](path)
 		default:
 			err := fmt.Errorf(`unexpected host "%v"`, host)
 			return p9.QID{}, nil, err
@@ -385,7 +370,7 @@ func newHostFunc(path ninePath) p9fs.MakeHostFunc {
 	}
 }
 
-func newGuestFunc[H hostConstraint[T], T any](path ninePath) p9fs.MakeGuestFunc {
+func newGuestFunc[H mountHost[T], T any](path ninePath) p9fs.MakeGuestFunc {
 	return func(parent p9.File, guest filesystem.ID, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
 		var (
 			makeMountPointFn p9fs.MakeMountPointFunc
@@ -401,13 +386,13 @@ func newGuestFunc[H hostConstraint[T], T any](path ninePath) p9fs.MakeGuestFunc 
 		)
 		switch guest {
 		case ipfs.IPFSID:
-			makeMountPointFn = newMountPointFunc[H, *ipfs.IPFSMountPoint](path)
+			makeMountPointFn = newMountPointFunc[H, *ipfs.IPFSGuest](path)
 		case ipfs.PinFSID:
-			makeMountPointFn = newMountPointFunc[H, *ipfs.PinFSMountPoint](path)
+			makeMountPointFn = newMountPointFunc[H, *ipfs.PinFSGuest](path)
 		case ipfs.IPNSID:
-			makeMountPointFn = newMountPointFunc[H, *ipfs.IPNSMountPoint](path)
+			makeMountPointFn = newMountPointFunc[H, *ipfs.IPNSGuest](path)
 		case ipfs.KeyFSID:
-			makeMountPointFn = newMountPointFunc[H, *ipfs.KeyFSMountPoint](path)
+			makeMountPointFn = newMountPointFunc[H, *ipfs.KeyFSGuest](path)
 		default:
 			err := fmt.Errorf(`unexpected guest "%v"`, guest)
 			return p9.QID{}, nil, err
@@ -418,19 +403,12 @@ func newGuestFunc[H hostConstraint[T], T any](path ninePath) p9fs.MakeGuestFunc 
 }
 
 func newMountPointFunc[
-	H hostConstraint[HT],
-	G guestConstraint[GT],
+	H mountHost[HT],
+	G mountGuest[GT],
 	HT, GT any,
 ](path ninePath,
 ) p9fs.MakeMountPointFunc {
 	return func(parent p9.File, name string, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
-		/*
-			mountPoint := mountPoint[HT,GT,H,G]{
-				Host:  new(HT),
-				Guest: new(GT),
-			}
-		*/
-		//qid, file := p9fs.NewMountPoint(mountPoint,
 		qid, file := p9fs.NewMountPoint[*mountPoint[HT, GT, H, G]](
 			commonOptions[p9fs.MountPointOption](
 				parent, name, path,

@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"strconv"
+	"runtime"
 	"strings"
 	"time"
 
@@ -25,28 +25,48 @@ import (
 )
 
 type (
-	mountSettings interface {
-		getClient(autoLaunchDaemon bool) (*Client, error)
-		marshalMountpoint() ([]byte, error)
-	}
-	mountSettingsConstraint[T any] interface {
-		command.Settings[T]
-		mountSettings
+	hostSettings[T any] interface {
+		*T
+		command.FlagBinder
+		marshal(arg string) ([]byte, error)
 	}
 	fuseSettings struct {
-		cgofuse.MountPoint
-	}
-	hostCommand interface {
-		command.FlagBinder
-		setTarget(string) error
-	}
-	hostCommandConstraint[T any] interface {
-		*T
-		hostCommand
+		cgofuse.Host
+		haveFUSEFlags bool
 	}
 
-	mountIPFSSettings  ipfs.IPFSMountPoint
-	mountPinFSSettings ipfs.PinFSMountPoint
+	guestSettings[T any] interface {
+		*T
+		command.FlagBinder
+		marshal(arg string) ([]byte, error)
+	}
+
+	ipfsSettings[
+		T ipfs.IPFSGuest | ipfs.PinFSGuest |
+			ipfs.IPNSGuest | ipfs.KeyFSGuest,
+	] struct {
+		mountPoint T
+	}
+	mountIPFSSettings    ipfs.IPFSGuest
+	mountPinFSSettings   ipfs.PinFSGuest
+	mountIPNSSettings    = mountIPFSSettings
+	mountKeyFSFSSettings = mountIPNSSettings
+
+	mountSettings[T any] interface {
+		command.Settings[T]
+		lazyInitializer
+		marshalMountpoints(...string) ([][]byte, error)
+		getClient(autoLaunchDaemon bool) (*Client, error)
+	}
+	mountPointSettings[
+		HT, GT any,
+		H hostSettings[HT],
+		G guestSettings[GT],
+	] struct {
+		Host  HT
+		Guest GT
+		clientSettings
+	}
 )
 
 const subcommandUsage = "Must be called with a subcommand."
@@ -85,57 +105,162 @@ func makeIPFSAPIFlag(flagSet *flag.FlagSet, field *multiaddr.Multiaddr) {
 	})
 }
 
-func (set *fuseSettings) BindFlags(flagSet *flag.FlagSet) {
-	// TODO the rest
-	const (
-		uidName = "fuse-uid"
-		// TODO: real usage message
-		uidUsage = "host `uid` to mount with" +
-			"\nnegative values something something..."
-	)
-	flagSet.Func(uidName, uidUsage, func(s string) error {
-		num, err := strconv.Atoi(s)
-		if err != nil {
-			return err
-		}
-		set.UID = uint32(num)
-		return nil
-	})
+func (mp *mountPointSettings[HT, GT, H, G]) BindFlags(flagSet *flag.FlagSet) {
+	mp.clientSettings.BindFlags(flagSet)
+	H(&mp.Host).BindFlags(flagSet)
+	G(&mp.Guest).BindFlags(flagSet)
 }
 
-func (set *fuseSettings) setTarget(target string) error {
-	set.Point = target
+func (mp *mountPointSettings[HT, GT, H, G]) lazyInit() error {
+	if host, ok := any(&mp.Host).(lazyInitializer); ok {
+		if err := host.lazyInit(); err != nil {
+			return err
+		}
+	}
+	if guest, ok := any(&mp.Guest).(lazyInitializer); ok {
+		if err := guest.lazyInit(); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func (mp *mountPointSettings[HT, GT, H, G]) marshalMountpoints(args ...string) ([][]byte, error) {
+	if len(args) == 0 {
+		args = []string{""}
+	}
+	data := make([][]byte, len(args))
+	for i, arg := range args {
+		hostData, err := H(&mp.Host).marshal(arg)
+		if err != nil {
+			return nil, err
+		}
+		guestData, err := G(&mp.Guest).marshal(arg)
+		if err != nil {
+			return nil, err
+		}
+		datum, err := json.Marshal(struct {
+			Host  json.RawMessage `json:"host,omitempty"`
+			Guest json.RawMessage `json:"guest,omitempty"`
+		}{
+			Host:  hostData,
+			Guest: guestData,
+		})
+		if err != nil {
+			return nil, err
+		}
+		data[i] = datum
+	}
+	return data, nil
+}
+
+
+func (set *fuseSettings) BindFlags(flagSet *flag.FlagSet) {
+	const (
+		host    = "fuse"
+		prefix  = host + "-"
+		uidName = prefix + "uid"
+		gidName = prefix + "gid"
+	)
+	flagMonitor := &set.haveFUSEFlags
+	bindFUSEUIDFlag(uidName, &set.UID, flagSet, flagMonitor)
+	bindFUSEGIDFlag(gidName, &set.GID, flagSet, flagMonitor)
+	const (
+		optionsName  = prefix + "options"
+		optionsUsage = "raw options passed directly to mount" +
+			"\nmust be specified once per `FUSE flag`" +
+			"\n (E.g. `-" + optionsName +
+			" \"-o uid=0,gid=0\" -" +
+			optionsName + "\"--VolumePrefix=somePrefix\"`)"
+	)
+	flagSet.Func(optionsName, optionsUsage, func(s string) error {
+		set.Options = append(set.Options, s)
+		return nil
+	})
+	const (
+		logName  = prefix + "log"
+		logUsage = "sets a log `prefix` and enables logging in FUSE operations"
+	)
+	flagSet.StringVar(&set.LogPrefix, logName, "", logUsage)
+	const (
+		readdirName  = prefix + "readdir-plus"
+		readdirUsage = "informs the host that the hosted file system has the readdir-plus capability"
+	)
+	readdirPlusCapible := runtime.GOOS == "windows"
+	flagSet.BoolVar(&set.ReaddirPlus, readdirName, readdirPlusCapible, readdirUsage)
+	const (
+		caseName  = prefix + "case-insensitive"
+		caseUsage = "informs the host that the hosted file system is case insensitive"
+	)
+	flagSet.BoolVar(&set.CaseInsensitive, caseName, false, caseUsage)
+	const (
+		deleteName  = prefix + "delete-access"
+		deleteUsage = "informs the host that the hosted file system implements \"Access\" which understands the \"DELETE_OK\" flag"
+	)
+	flagSet.BoolVar(&set.CaseInsensitive, deleteName, false, deleteUsage)
+}
+
+func bindFUSEUIDFlag(name string, reference *uint32,
+	flagSet *flag.FlagSet, setMonitor *bool,
+) {
+	bindFUSEIDFlag(name, "uid", reference, flagSet, setMonitor)
+}
+
+func bindFUSEGIDFlag(name string, reference *uint32,
+	flagSet *flag.FlagSet, setMonitor *bool,
+) {
+	bindFUSEIDFlag(name, "gid", reference, flagSet, setMonitor)
+}
+
+func (set *fuseSettings) marshal(arg string) ([]byte, error) {
+	if arg == "" &&
+		set.Options == nil {
+		err := fmt.Errorf(
+			"%w - expected mount point",
+			command.ErrUsage,
+		)
+		return nil, err
+	}
+	if set.Options != nil &&
+		set.haveFUSEFlags {
+		err := fmt.Errorf("%w - cannot combine"+
+			" built-in/common FUSE flags"+
+			" with raw/platform-specific flags"+
+			" (the former can be "+
+			"provided manually within the latter)",
+			command.ErrUsage,
+		)
+		return nil, err
+	}
+	host := set.Host
+	host.Point = arg
+	return json.Marshal(host)
 }
 
 func (set *mountIPFSSettings) BindFlags(flagSet *flag.FlagSet) {
 	makeIPFSAPIFlag(flagSet, &set.APIMaddr)
 }
 
-func (set *mountIPFSSettings) lazy() error {
-	fmt.Printf("%#T\n", set.APIMaddr)
-	if lazy, ok := set.APIMaddr.(lazyFlag[multiaddr.Multiaddr]); ok {
-		var err error
-		if set.APIMaddr, err = lazy.get(); err != nil {
+func (set *mountIPFSSettings) lazyInit() error {
+	return lazyMaddr(&set.APIMaddr)
+}
+
+func (set *mountPinFSSettings) lazyInit() error {
+	return lazyMaddr(&set.APIMaddr)
+}
+
+func lazyMaddr(maddrPtr *multiaddr.Multiaddr) error {
+	if lazy, ok := (*maddrPtr).(lazyFlag[multiaddr.Multiaddr]); ok {
+		maddr, err := lazy.get()
+		if err != nil {
 			return err
 		}
+		*maddrPtr = maddr
 	}
 	return nil
 }
 
-// FIXME: we need to cascade these through embedding.
-// not 1 method per type.
-func (set *mountPinFSSettings) lazy() error {
-	if lazy, ok := set.APIMaddr.(lazyFlag[multiaddr.Multiaddr]); ok {
-		var err error
-		if set.APIMaddr, err = lazy.get(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (set *mountIPFSSettings) marshalMountpoint() ([]byte, error) {
+func (set *mountIPFSSettings) marshal(string) ([]byte, error) {
 	return json.Marshal(set)
 }
 
@@ -143,17 +268,14 @@ func (set *mountPinFSSettings) BindFlags(flagSet *flag.FlagSet) {
 	makeIPFSAPIFlag(flagSet, &set.APIMaddr)
 	const (
 		expiryName  = "expiry"
-		expiryUsage = "Pin cache `duration`" +
+		expiryUsage = "`duration` pins are cached for" +
 			"\nnegative values retain cache forever, 0 disables cache"
+		expiryDefault = 30 * time.Second
 	)
-	set.CacheExpiry = 30 * time.Second
-	flagSet.Func(expiryName, expiryUsage, func(s string) (err error) {
-		set.CacheExpiry, err = time.ParseDuration(s)
-		return
-	})
+	flagSet.DurationVar(&set.CacheExpiry, expiryName, expiryDefault, expiryUsage)
 }
 
-func (set *mountPinFSSettings) marshalMountpoint() ([]byte, error) {
+func (set *mountPinFSSettings) marshal(string) ([]byte, error) {
 	return json.Marshal(set)
 }
 
@@ -165,10 +287,10 @@ func Mount() command.Command {
 		synopsis = "Mount a file system."
 	)
 	var (
-		executeFn   = subonlyExec[*helpOnly]()
+		executeFn   = subonlyExec[*command.HelpArg]()
 		subcommands = makeMountSubcommands()
 	)
-	return command.MakeCommand[*helpOnly](name, synopsis, subcommandUsage,
+	return command.MakeCommand[*command.HelpArg](name, synopsis, subcommandUsage,
 		executeFn,
 		command.WithSubcommands(subcommands...),
 	)
@@ -184,17 +306,13 @@ func makeMountSubcommands() []command.Command {
 			formalName  = string(hostAPI)
 			commandName = strings.ToLower(formalName)
 			synopsis    = fmt.Sprintf("Mount a file system via the %s API.", formalName)
-			// subCommands       = makeFSIDCommands(hostAPI)
-			// subCommands       = makeFSIDCommands(hostAPI)
-			// subcommandsOption = command.WithSubcommands(subCommands...)
 		)
 		switch hostAPI {
 		case cgofuse.HostID:
-			// subCommands       = makeFSIDCommands(hostAPI)
 			guestCommands := makeGuestCommands[fuseSettings](hostAPI)
-			subCommands[i] = command.MakeCommand[*helpOnly](
+			subCommands[i] = command.MakeCommand[*command.HelpArg](
 				commandName, synopsis, subcommandUsage,
-				subonlyExec[*helpOnly](),
+				subonlyExec[*command.HelpArg](),
 				command.WithSubcommands(guestCommands...),
 			)
 		default:
@@ -207,7 +325,7 @@ func makeMountSubcommands() []command.Command {
 
 // TODO: move; should be part of [command] pkg.
 func subonlyExec[settings command.Settings[T], cmd command.ExecuteFuncArgs[settings, T], T any]() cmd {
-	return func(context.Context, settings, ...string) error {
+	return func(_ context.Context, _ settings, args ...string) error {
 		// This command only holds subcommands
 		// and has no functionality on its own.
 		return command.ErrUsage
@@ -217,34 +335,23 @@ func subonlyExec[settings command.Settings[T], cmd command.ExecuteFuncArgs[setti
 // func makeGuestCommands[H hostCommand](host filesystem.Host) []command.Command {
 func makeGuestCommands[
 	H any,
-	HC hostCommandConstraint[H],
+	HC hostSettings[H],
 ](host filesystem.Host,
 ) []command.Command {
 	var (
-		fsidTable = supportedSystems()
-		// subcommands = make([]command.Command, len(fsidTable))
-		subcommands = make([]command.Command, 2)
+		fsidTable   = supportedSystems()
+		subcommands = make([]command.Command, len(fsidTable))
 	)
 	for i, fsid := range fsidTable {
-		// TODO: we should only pass in the external guest type
-		// (and later the host type)
-		// let makeMountCommand compose its own type internally.
-		// ^ this should be compiler legal now.
-		// i.e. local only anonymous type
-		// type x stuct {clientSettings; G; H}
-		// ^ This likely can't work because we require methods
-		// that wouldn't be composable (BindFlags)
-		// (at least not in 1.20's compiler)
-		// ^^ Generic adapter?
-		// struct [A,B] BindFlags() { self.A.BindFlags, self.B.Bindflags?}
 		switch fsid {
 		case ipfs.IPFSID:
 			subcommands[i] = makeMountCommand[HC, mountIPFSSettings](host, fsid)
 		case ipfs.PinFSID:
 			subcommands[i] = makeMountCommand[HC, mountPinFSSettings](host, fsid)
-		case ipfs.IPNSID, ipfs.KeyFSID,
-			ipfs.MFSID:
-			// TODO implement
+		case ipfs.IPNSID:
+			subcommands[i] = makeMountCommand[HC, mountIPNSSettings](host, fsid)
+		case ipfs.KeyFSID:
+			subcommands[i] = makeMountCommand[HC, mountKeyFSFSSettings](host, fsid)
 		default:
 			panic("unexpected API ID for host file system interface")
 		}
@@ -253,9 +360,9 @@ func makeGuestCommands[
 }
 
 func makeMountCommand[
-	HC hostCommandConstraint[H],
+	HC hostSettings[H],
 	G, H any,
-	GC guestCommandConstraint[G],
+	GC guestSettings[G],
 ](host filesystem.Host, fsid filesystem.ID,
 ) command.Command {
 	const usage = "Placeholder text."
@@ -267,72 +374,27 @@ func makeMountCommand[
 	)
 	type MS = *mountPointSettings[H, G, HC, GC]
 	return command.MakeCommand[MS](cmdName, synopsis, usage,
-		// return command.MakeCommand[MS](cmdName, synopsis, usage,
-		// return command.MakeCommand[*mountPointSettings[H,G]](cmdName, synopsis, usage,
 		func(ctx context.Context, settings MS, args ...string) error {
-			client, err := mountPreamble(settings, args...)
+			if err := settings.lazyInit(); err != nil {
+				return err
+			}
+			data, err := settings.marshalMountpoints(args...)
 			if err != nil {
 				return err
 			}
-			data := make([][]byte, len(args))
-			for i, target := range args {
-				// HACK: We re-use settings instead of
-				// creating disparate copies.
-				HC(&settings.Host).setTarget(target)
-				// setMountPointTarget(settings, target)
-				datum, err := settings.marshalMountpoint()
-				if err != nil {
-					return err
-				}
-				data[i] = datum
+			const autoLaunchDaemon = true
+			client, err := settings.getClient(autoLaunchDaemon)
+			if err != nil {
+				return err
 			}
 			if err := client.Mount(host, fsid, data); err != nil {
 				return fserrors.Join(err, client.Close())
 			}
-			return fserrors.Join(ctx.Err(), client.Close())
-		})
-}
-
-func mountPreamble[MS mountSettingsConstraint[T], T any](settings MS, args ...string) (*Client, error) {
-	if len(args) == 0 {
-		err := fmt.Errorf("%w - expected mount point(s)", command.ErrUsage)
-		return nil, err
-	}
-	const autoLaunchDaemon = true
-	if err := mountInitLazyFlags(settings); err != nil {
-		return nil, err
-	}
-	return settings.getClient(autoLaunchDaemon)
-}
-
-// HACK: An elegant way to handle this is not yet obvious.
-// We either need to put interfaces on the mount point types
-// at the external pkg, duplicate those definitions here, or
-// write duplicate methods (`initLazy`) for each settings type.
-// Or do it like this; per field check,
-// which can be adapted to a list per type if needed.
-func mountInitLazyFlags[MS mountSettingsConstraint[T], T any](settings MS) error {
-	/*
-		var apiField *multiaddr.Multiaddr
-		switch typed := any(settings).(type) {
-		case *mountIPFSSettings:
-			apiField = &typed.APIMaddr
-		case *mountPinFSSettings:
-			apiField = &typed.APIMaddr
-		}
-		if lazy, ok := (*apiField).(lazyFlag[multiaddr.Multiaddr]); ok {
-			var err error
-			if *apiField, err = lazy.get(); err != nil {
+			if err := client.Close(); err != nil {
 				return err
 			}
-		}
-	*/
-	if lazy, ok := any(settings).(lazyInterface); ok {
-		if err := lazy.lazy(); err != nil {
-			return err
-		}
-	}
-	return nil
+			return ctx.Err()
+		})
 }
 
 func (c *Client) Mount(host filesystem.Host, fsid filesystem.ID, data [][]byte) (err error) {
