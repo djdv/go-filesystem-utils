@@ -119,16 +119,35 @@ const (
 	exitAfterFlagName = "exit-after"
 )
 
-func (mp mountPoint[HT, GT, H, G]) ParseField(key, value string) error {
-	// TODO: priority order parse both.
-	panic("NIY")
+func (mp *mountPoint[HT, GT, H, G]) ParseField(key, value string) error {
+	// TODO: which order should take precedent?
+	hErr := H(&mp.Host).ParseField(key, value)
+	if hErr == nil {
+		return nil
+	}
+	var hFieldErr p9fs.FieldError
+	if !errors.As(hErr, &hFieldErr) {
+		return hErr
+	}
+	gErr := G(&mp.Guest).ParseField(key, value)
+	if gErr == nil {
+		return nil
+	}
+	var gFieldErr p9fs.FieldError
+	if !errors.As(gErr, &gFieldErr) {
+		return gErr
+	}
+	return p9fs.FieldError{
+		Key:   key,
+		Tried: append(hFieldErr.Tried, gFieldErr.Tried...),
+	}
 }
 
-func (mp mountPoint[HT, GT, H, G]) MakeFS() (fs.FS, error) {
+func (mp *mountPoint[HT, GT, H, G]) MakeFS() (fs.FS, error) {
 	return G(&mp.Guest).MakeFS()
 }
 
-func (mp mountPoint[HT, GT, H, G]) Mount(fsys fs.FS) (io.Closer, error) {
+func (mp *mountPoint[HT, GT, H, G]) Mount(fsys fs.FS) (io.Closer, error) {
 	return H(&mp.Host).Mount(fsys)
 }
 
