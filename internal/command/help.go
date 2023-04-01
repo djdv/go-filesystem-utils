@@ -20,7 +20,7 @@ func (b *HelpArg) String() string { return strconv.FormatBool(bool(*b)) }
 
 // BindFlags defines a `-help` flag in the [flag.FlagSet].
 func (b *HelpArg) BindFlags(fs *flag.FlagSet) {
-	const usage = "Prints out this help text."
+	const usage = "prints out this help text"
 	fs.BoolVar((*bool)(b), "help", false, usage)
 }
 

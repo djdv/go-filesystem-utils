@@ -141,9 +141,9 @@ func wrapExecute[settings Settings[T], T any,
 		case func(context.Context, settings) error:
 			if haveArgs {
 				execErr = ErrUsage
-			} else {
-				execErr = execFn(ctx, set)
+				break
 			}
+			execErr = execFn(ctx, set)
 		case func(context.Context, settings, ...string) error:
 			execErr = execFn(ctx, set, arguments...)
 		}
