@@ -9,7 +9,7 @@ type (
 	KeyfsOption func(*IPFSKeyAPI) error
 )
 
-func WithIPFS[OT IPFSOption](ipfs FS) (option OT) {
+func WithIPFS[OT IPFSOption](ipfs OpenDirFS) (option OT) {
 	switch fnPtrPtr := any(&option).(type) {
 	case *PinfsOption:
 		*fnPtrPtr = func(pa *IPFSPinAPI) error { pa.ipfs = ipfs; return nil }
@@ -17,7 +17,7 @@ func WithIPFS[OT IPFSOption](ipfs FS) (option OT) {
 	return option
 }
 
-func WithIPNS[OT IPFSOption](ipns FS) (option OT) {
+func WithIPNS[OT IPFSOption](ipns OpenDirFS) (option OT) {
 	switch fnPtrPtr := any(&option).(type) {
 	case *KeyfsOption:
 		*fnPtrPtr = func(ka *IPFSKeyAPI) error { ka.ipns = ipns; return nil }
