@@ -13,10 +13,6 @@ import (
 	"github.com/hugelgupf/p9/perrors"
 )
 
-// TODO: docs; recommended value for this file's name
-// TODO: remove this; kind of pointless.
-const MountFileName = "mounts"
-
 type (
 	MountFile struct {
 		directory
