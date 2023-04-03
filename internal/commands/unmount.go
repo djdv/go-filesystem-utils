@@ -74,7 +74,7 @@ func (c *Client) Unmount(ctx context.Context, targets []string, options ...Unmou
 			return err
 		}
 	}
-	mRoot, err := (*p9.Client)(c).Attach(p9fs.MountFileName)
+	mRoot, err := (*p9.Client)(c).Attach(mountsFileName)
 	if err != nil {
 		// TODO: if not-exist add context to err msg.
 		// I.e. "client can't ... because ..."
