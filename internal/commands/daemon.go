@@ -104,20 +104,6 @@ type (
 const (
 	errServe               = generic.ConstError("encountered error while serving")
 	errShutdownDisposition = generic.ConstError("invalid shutdown disposition")
-
-	// TODO: [Ame] docs.
-	// serverRootName defines a name which servers and clients may use
-	// to refer to the service in namespace oriented APIs.
-	serverRootName = "fs"
-
-	// TODO: [Ame] docs.
-	// serverName defines a name which servers and clients may use
-	// to form or find connections to a named server instance.
-	// (E.g. a Unix socket of path `.../$ServerRootName/$serverName`.)
-	serverName = "server"
-
-	serverFlagName    = "server"
-	exitAfterFlagName = "exit-after"
 )
 
 func (mp *mountPoint[HT, GT, H, G]) ParseField(key, value string) error {
@@ -365,16 +351,13 @@ func newFileSystem(ctx context.Context, uid p9.UID, gid p9.GID) (fileSystem, err
 
 func newMounter(parent p9.File, path ninePath,
 	uid p9.UID, gid p9.GID, permissions p9.FileMode,
-) mountSubsystem {
-	const (
-		mounterName = "mounts"
-		autoUnlink  = true
-	)
+) (mountSubsystem, error) {
+	const autoUnlink = true
 	var (
 		makeHostFn = newHostFunc(path, autoUnlink)
 		options    = append(
 			commonOptions[p9fs.MounterOption](
-				parent, mounterName, path,
+				parent, mountsFileName, path,
 				uid, gid, permissions,
 			),
 			p9fs.UnlinkEmptyChildren[p9fs.MounterOption](autoUnlink),
@@ -382,7 +365,7 @@ func newMounter(parent p9.File, path ninePath,
 		_, mountFS = p9fs.NewMounter(makeHostFn, options...)
 	)
 	return mountSubsystem{
-		name:      mounterName,
+		name:      mountsFileName,
 		MountFile: mountFS,
 	}
 }

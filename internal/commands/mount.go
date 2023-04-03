@@ -432,7 +432,7 @@ func (c *Client) Mount(host filesystem.Host, fsid filesystem.ID, data [][]byte) 
 	addCloser, closeWith := makeCloserFuncs(addCloserCount)
 	defer func() { err = fserrors.Join(closeWith(err)...) }()
 
-	mRoot, err := (*p9.Client)(c).Attach(p9fs.MountFileName)
+	mRoot, err := (*p9.Client)(c).Attach(mountsFileName)
 	if err != nil {
 		return err
 	}
