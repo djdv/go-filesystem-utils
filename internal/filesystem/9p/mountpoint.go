@@ -56,7 +56,7 @@ type (
 	mountPointIO struct {
 		reader *bytes.Reader
 		buffer *bytes.Buffer
-		p9.OpenFlags
+		openFlags
 		fieldMode bool
 		modified  bool
 	}
@@ -159,10 +159,6 @@ func (mf *MountPointFile[MP]) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.
 	return mf.metadata.GetAttr(req)
 }
 
-func (mf *MountPointFile[MP]) opened() bool {
-	return mf.OpenFlags&fileOpened != 0
-}
-
 func (mf *MountPointFile[MP]) Walk(names []string) ([]p9.QID, p9.File, error) {
 	if len(names) > 0 {
 		return nil, nil, perrors.ENOTDIR
@@ -185,20 +181,8 @@ func (mf *MountPointFile[MP]) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
 	if mf.opened() {
 		return p9.QID{}, noIOUnit, perrors.EBADF
 	}
-	mf.OpenFlags = mode.Mode() | fileOpened
+	mf.openFlags = mf.withOpenedFlag(mode)
 	return *mf.QID, noIOUnit, nil
-}
-
-func (mf *MountPointFile[MP]) canRead() bool {
-	flags := mf.OpenFlags.Mode()
-	return mf.opened() &&
-		(flags == p9.ReadOnly || flags == p9.ReadWrite)
-}
-
-func (mf *MountPointFile[MP]) canWrite() bool {
-	flags := mf.OpenFlags.Mode()
-	return mf.opened() &&
-		(flags == p9.WriteOnly || flags == p9.ReadWrite)
 }
 
 func (mf *MountPointFile[MP]) WriteAt(p []byte, offset int64) (int, error) {
@@ -400,7 +384,7 @@ func (mf *MountPointFile[MP]) ReadAt(p []byte, offset int64) (int, error) {
 
 func (mf *MountPointFile[MP]) Close() error {
 	err := mf.FSync()
-	mf.OpenFlags = 0
+	mf.openFlags = 0
 	mf.reader = nil
 	mf.buffer = nil
 	return err
