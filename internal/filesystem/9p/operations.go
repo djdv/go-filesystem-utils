@@ -26,16 +26,40 @@ type (
 	dataField  []string
 	dataTokens []dataField
 	fieldType  uint
+
+	openFlags p9.OpenFlags
 )
 
 const (
-	fileOpened = p9.OpenFlagsModeMask + 1
+	fileOpened = openFlags(p9.OpenFlagsModeMask + 1)
 
 	keyWord     fieldType = 1
 	keyAndValue fieldType = 2
 )
 
 func (df dataField) typ() fieldType { return fieldType(len(df)) }
+
+func (of openFlags) withOpenedFlag(mode p9.OpenFlags) openFlags {
+	return openFlags(mode.Mode()) | fileOpened
+}
+
+func (of openFlags) opened() bool {
+	return of&fileOpened != 0
+}
+
+func (of openFlags) Mode() p9.OpenFlags {
+	return p9.OpenFlags(of).Mode()
+}
+
+func (of openFlags) canRead() bool {
+	return of.opened() &&
+		(of.Mode() == p9.ReadOnly || of.Mode() == p9.ReadWrite)
+}
+
+func (of openFlags) canWrite() bool {
+	return of.opened() &&
+		(of.Mode() == p9.WriteOnly || of.Mode() == p9.ReadWrite)
+}
 
 func makeChannelEmitter[T any](ctx context.Context, buffer int) *chanEmitter[T] {
 	var (
