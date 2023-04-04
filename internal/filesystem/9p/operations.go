@@ -16,9 +16,9 @@ import (
 
 type (
 	chanEmitter[T any] struct {
-		sync.Mutex
 		context.Context
 		ch chan T
+		sync.Mutex
 	}
 
 	// dataField must be of length 1 with just a key name,
