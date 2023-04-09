@@ -15,6 +15,10 @@ import (
 )
 
 type (
+	AttacherFile interface {
+		p9.Attacher
+		p9.File
+	}
 	chanEmitter[T any] struct {
 		context.Context
 		ch chan T
