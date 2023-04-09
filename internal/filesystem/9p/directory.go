@@ -102,8 +102,9 @@ func (dir *Directory) Walk(names []string) ([]p9.QID, p9.File, error) {
 		return nil, nil, err
 	}
 	var (
-		nwNames = len(names)
-		qids    = make([]p9.QID, 1, nwNames)
+		nwNames      = len(names)
+		qids         = make([]p9.QID, 1, nwNames)
+		attrMaskNone p9.AttrMask
 	)
 	if qids[0], _, _, err = clone.GetAttr(attrMaskNone); err != nil {
 		return nil, nil, fserrors.Join(err, clone.Close())
@@ -127,7 +128,10 @@ func (dir *Directory) backtrack(names []string) ([]p9.QID, p9.File, error) {
 		parent = dir
 		qids[0] = *dir.QID
 	} else {
-		var err error
+		var (
+			err          error
+			attrMaskNone p9.AttrMask
+		)
 		if qids[0], _, _, err = parent.GetAttr(attrMaskNone); err != nil {
 			return nil, nil, err
 		}

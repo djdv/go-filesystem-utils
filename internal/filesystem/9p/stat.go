@@ -37,9 +37,7 @@ type (
 	metadataOption func(*metadata) error
 )
 
-var attrMaskNone p9.AttrMask
-
-func makeMetadata(mode p9.FileMode, options ...metadataOptions) (metadata, error) {
+func makeMetadata(mode p9.FileMode, options ...metadataOption) (metadata, error) {
 	var (
 		now       = time.Now()
 		sec, nano = uint64(now.Unix()), uint64(now.UnixNano())
