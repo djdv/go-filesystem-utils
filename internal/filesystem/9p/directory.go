@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/hugelgupf/p9/fsimpl/templatefs"
 	"github.com/hugelgupf/p9/p9"
 	"github.com/hugelgupf/p9/perrors"
@@ -20,18 +21,16 @@ type (
 		*fileTableSync
 		metadata
 		*linkSync
-		opened bool
+		opened,
+		cleanupElements bool
 	}
-	// ephemeralDir will unlink from its parent,
-	// on its final FID [Close].
-	// But only after a call to [UnlinkAt]
-	// has been performed on the last entry.
-	// I.e. empty directories are allowed once,
-	// for sequences like this:
-	// `mkdir ed;cd ed;>file;rm file;cd ..` (ed is unlinked)
-	// But also this:
-	// `mkdir ed;cd ed;>file;rm file;>file2;cd ..` (ed is not unlinked)
-	ephemeralDir struct {
+	directorySettings struct {
+		fileOptions
+		cleanupSelf,
+		cleanupElements bool
+	}
+	DirectoryOption func(*directorySettings) error
+	ephemeralDir    struct {
 		directory
 		refs          *atomic.Uintptr
 		unlinkOnClose *atomic.Bool
@@ -39,40 +38,41 @@ type (
 	}
 )
 
-func NewDirectory(options ...DirectoryOption) (p9.QID, *Directory) {
-	settings := directorySettings{
-		metadata: makeMetadata(p9.ModeDirectory),
-	}
+func NewDirectory(options ...DirectoryOption) (p9.QID, AttacherFile, error) {
+	var settings directorySettings
 	if err := parseOptions(&settings, options...); err != nil {
-		panic(err)
+		return p9.QID{}, nil, err
 	}
-	settings.QID.Path = settings.ninePath.Add(1)
-	return *settings.QID, &Directory{
-		fileTableSync: newFileTable(),
-		metadata:      settings.metadata,
-		linkSync: &linkSync{
-			link: settings.linkSettings,
-		},
+	metadata, err := makeMetadata(p9.ModeDirectory, settings.metaOptions...)
+	if err != nil {
+		return p9.QID{}, nil, err
 	}
-}
-
-func newDirectory(ephemeral bool, options ...DirectoryOption) (p9.QID, directory) {
-	if ephemeral {
-		return newEphemeralDirectory(options...)
+	linkSync, err := newLinkSync(settings.linkOptions...)
+	if err != nil {
+		return p9.QID{}, nil, err
 	}
-	return NewDirectory(options...)
-}
-
-func newEphemeralDirectory(options ...DirectoryOption) (p9.QID, *ephemeralDir) {
-	qid, fsys := NewDirectory(options...)
-	if parent := fsys.parent; parent == nil {
-		panic("parent file missing, dir unlinkable") // TODO: better message
+	var (
+		directory = Directory{
+			fileTableSync: newFileTable(),
+			metadata:      metadata,
+			linkSync:      linkSync,
+		}
+		qid               = metadata.QID
+		file AttacherFile = &directory
+	)
+	if settings.cleanupSelf {
+		if parent := linkSync.parent; parent == nil {
+			err := generic.ConstError("cannot unlink self without parent file")
+			return p9.QID{}, nil, err
+		}
+		file = &ephemeralDir{
+			directory:     file,
+			refs:          new(atomic.Uintptr),
+			unlinkOnClose: new(atomic.Bool),
+		}
 	}
-	return qid, &ephemeralDir{
-		directory:     fsys,
-		refs:          new(atomic.Uintptr),
-		unlinkOnClose: new(atomic.Bool),
-	}
+	metadata.incrementPath()
+	return *qid, file, nil
 }
 
 func (dir *Directory) Attach() (p9.File, error) { return dir, nil }
@@ -83,9 +83,10 @@ func (dir *Directory) Walk(names []string) ([]p9.QID, p9.File, error) {
 	}
 	if len(names) == 0 {
 		return nil, &Directory{
-			fileTableSync: dir.fileTableSync,
-			metadata:      dir.metadata,
-			linkSync:      dir.linkSync,
+			fileTableSync:   dir.fileTableSync,
+			metadata:        dir.metadata,
+			linkSync:        dir.linkSync,
+			cleanupElements: dir.cleanupElements,
 		}, nil
 	}
 	name := names[0]
@@ -176,14 +177,20 @@ func (dir *Directory) Mkdir(name string, permissions p9.FileMode, uid p9.UID, gi
 	if err != nil {
 		return p9.QID{}, err
 	}
-	qid, newDir := NewDirectory(
+	qid, newDir, err := NewDirectory(
 		WithPath[DirectoryOption](dir.ninePath),
 		WithPermissions[DirectoryOption](permissions),
 		WithUID[DirectoryOption](uid),
 		WithGID[DirectoryOption](gid),
 		WithParent[DirectoryOption](dir, name),
+		UnlinkWhenEmpty[DirectoryOption](dir.cleanupElements),
+		UnlinkEmptyChildren[DirectoryOption](dir.cleanupElements),
+		WithoutRename[DirectoryOption](dir.linkSync.disabled),
 	)
-	return qid, dir.Link(newDir, name)
+	if err == nil {
+		err = dir.Link(newDir, name)
+	}
+	return qid, err
 }
 
 func (dir *Directory) Readdir(offset uint64, count uint32) (p9.Dirents, error) {
@@ -201,6 +208,8 @@ func (dir *Directory) RenameAt(oldName string, newDir p9.File, newName string) e
 func (dir *Directory) Renamed(newDir p9.File, newName string) {
 	dir.linkSync.Renamed(newDir, newName)
 }
+
+func (ed *ephemeralDir) Attach() (p9.File, error) { return ed, nil }
 
 func (ed *ephemeralDir) Walk(names []string) ([]p9.QID, p9.File, error) {
 	qids, file, err := ed.directory.Walk(names)
@@ -227,21 +236,6 @@ func (ed *ephemeralDir) Close() error {
 		return nil
 	}
 	return ed.unlinkSelf()
-}
-
-func (ed *ephemeralDir) Mkdir(name string, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, error) {
-	uid, gid, err := mkPreamble(ed, name, uid, gid)
-	if err != nil {
-		return p9.QID{}, err
-	}
-	qid, newDir := newEphemeralDirectory(
-		WithPath[DirectoryOption](ed.directory.(*Directory).ninePath),
-		WithPermissions[DirectoryOption](permissions),
-		WithUID[DirectoryOption](uid),
-		WithGID[DirectoryOption](gid),
-		WithParent[DirectoryOption](ed, name),
-	)
-	return qid, ed.Link(newDir, name)
 }
 
 func (ed *ephemeralDir) Link(file p9.File, name string) error {
@@ -278,30 +272,6 @@ func (ed *ephemeralDir) unlinkSelf() error {
 	)
 	const flags = 0
 	return parent.UnlinkAt(self, flags)
-}
-
-// XXX: arity. See if we can do something about this.
-func mkSubdir(parent p9.File, path ninePath,
-	name string, permissions p9.FileMode,
-	uid p9.UID, gid p9.GID,
-	ephemeral bool,
-) (p9.QID, p9.File, error) {
-	uid, gid, err := mkPreamble(parent,
-		name, uid, gid)
-	if err != nil {
-		return p9.QID{}, nil, err
-	}
-	var (
-		dirOpts = []DirectoryOption{
-			WithPath[DirectoryOption](path),
-			WithPermissions[DirectoryOption](permissions),
-			WithUID[DirectoryOption](uid),
-			WithGID[DirectoryOption](gid),
-			WithParent[DirectoryOption](parent, name),
-		}
-		subQID, subDir = newDirectory(ephemeral, dirOpts...)
-	)
-	return subQID, subDir, nil
 }
 
 func childExists(fsys p9.File, name string) (bool, error) {
