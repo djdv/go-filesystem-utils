@@ -16,9 +16,7 @@ import (
 type (
 	MountFile struct {
 		directory
-		path           ninePath
-		makeHostFn     MakeHostFunc
-		cleanupEmpties bool
+		makeHostFn MakeHostFunc
 	}
 	// TODO: Concern:
 	// clients could return a file when we want a directory
@@ -36,8 +34,7 @@ type (
 		permissions p9.FileMode,
 		uid p9.UID, gid p9.GID) (p9.QID, p9.File, error)
 	mounterSettings struct {
-		directorySettings
-		generatorSettings
+		directoryOptions []DirectoryOption
 	}
 	MounterOption func(*mounterSettings) error
 
@@ -56,36 +53,27 @@ func (ue unmountError) Error() string {
 	)
 }
 
-func NewMounter(makeHostFn MakeHostFunc, options ...MounterOption) (p9.QID, *MountFile) {
-	settings := mounterSettings{
-		directorySettings: directorySettings{
-			metadata: makeMetadata(p9.ModeDirectory),
-		},
-	}
+func NewMounter(makeHostFn MakeHostFunc, options ...MounterOption) (p9.QID, *MountFile, error) {
+	var settings mounterSettings
 	if err := parseOptions(&settings, options...); err != nil {
-		panic(err)
+		return p9.QID{}, nil, err
 	}
-	var (
-		unlinkSelf = settings.cleanupSelf
-		dirOpts    = settings.directorySettings.asOptions()
-		qid, fsys  = newDirectory(unlinkSelf, dirOpts...)
-	)
+	qid, directory, err := NewDirectory(settings.directoryOptions...)
+	if err != nil {
+		return p9.QID{}, nil, err
+	}
 	return qid, &MountFile{
-		path:           settings.ninePath,
-		directory:      fsys,
-		cleanupEmpties: settings.cleanupElements,
-		makeHostFn:     makeHostFn,
-	}
+		directory:  directory,
+		makeHostFn: makeHostFn,
+	}, nil
 }
 
 func (mf *MountFile) Walk(names []string) ([]p9.QID, p9.File, error) {
 	qids, file, err := mf.directory.Walk(names)
 	if len(names) == 0 {
 		file = &MountFile{
-			path:           mf.path,
-			directory:      file,
-			cleanupEmpties: mf.cleanupEmpties,
-			makeHostFn:     mf.makeHostFn,
+			directory:  file,
+			makeHostFn: mf.makeHostFn,
 		}
 	}
 	return qids, file, err
