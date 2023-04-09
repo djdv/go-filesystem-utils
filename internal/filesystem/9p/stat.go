@@ -2,7 +2,6 @@ package p9
 
 import (
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -29,14 +28,6 @@ const noIOUnit ioUnit = 0
 type (
 	ioUnit   = uint32
 	ninePath = *atomic.Uint64
-	link     struct {
-		parent p9.File
-		child  string
-	}
-	linkSync struct {
-		mu sync.Mutex
-		link
-	}
 	metadata struct { // TODO: R/W guard or atomic operations.
 		ninePath
 		*p9.Attr
@@ -160,23 +151,4 @@ func attrErr(got, want p9.AttrMask) error {
 		"\n\twant: %s",
 		got, want,
 	)
-}
-
-func (ls *linkSync) rename(file, newDir p9.File, newName string) error {
-	ls.mu.Lock()
-	defer ls.mu.Unlock()
-	return rename(file, ls.parent, newDir, ls.child, newName)
-}
-
-func (ls *linkSync) renameAt(oldDir, newDir p9.File, oldName, newName string) error {
-	ls.mu.Lock()
-	defer ls.mu.Unlock()
-	return renameAt(oldDir, newDir, oldName, newName)
-}
-
-func (ls *linkSync) Renamed(newDir p9.File, newName string) {
-	ls.mu.Lock()
-	defer ls.mu.Unlock()
-	ls.link.parent = newDir
-	ls.link.child = newName
 }

@@ -30,24 +30,9 @@ type (
 			HosterOption |
 			FSIDOption
 	}
-
-	linkSettings = link
-
-	directorySettings struct {
-		metadata
-		linkSettings
-	}
-	DirectoryOption func(*directorySettings) error
-
-	generatorSettings struct {
-		cleanupSelf     bool // TODO: better name? Different container?
-		cleanupElements bool // TODO: better name? cleanupItems?
-	}
-	GeneratorOption func(*generatorSettings) error
-
-	listenerSettings struct {
-		directorySettings
-		generatorSettings
+	fileOptions struct {
+		metaOptions []metadataOption
+		linkOptions []linkOption
 	}
 	ListenerOption func(*listenerSettings) error
 
