@@ -32,6 +32,38 @@ func newLinkSync(options ...linkOption) (*linkSync, error) {
 	return &link, nil
 }
 
+func WithParent[OT Options](parent p9.File, child string) (option OT) {
+	return makeFieldFunc[OT]("link", func(lnk *link) error {
+		*lnk = link{
+			parent: parent,
+			child:  child,
+		}
+		return nil
+	})
+}
+
+// TODO: docs
+// ephemeralDir will unlink from its parent,
+// on its final FID [Close].
+// But only after a call to [UnlinkAt]
+// has been performed on the last entry.
+// I.e. empty directories are allowed once,
+// for sequences like this:
+// `mkdir ed;cd ed;>file;rm file;cd ..` (ed is unlinked)
+// But also this:
+// `mkdir ed;cd ed;>file;rm file;>file2;cd ..` (ed is not unlinked)
+func UnlinkWhenEmpty[OT DirectoryOptions](b bool) (option OT) {
+	return makeFieldSetter[OT]("cleanupSelf", b)
+}
+
+// TODO: docs
+// tells the file that files it creates
+// should be unlinked when they become empty.
+// essentially cascading UnlinkWhenEmpty.
+func UnlinkEmptyChildren[OT DirectoryOptions](b bool) (option OT) {
+	return makeFieldSetter[OT]("cleanupElements", b)
+}
+
 func WithoutRename[OT Options](disabled bool) OT {
 	return makeFieldSetter[OT]("disabled", disabled)
 }
