@@ -1,8 +1,6 @@
 package p9
 
 import (
-	"sync/atomic"
-
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/hugelgupf/p9/p9"
 	"github.com/hugelgupf/p9/perrors"
@@ -11,10 +9,12 @@ import (
 type (
 	GuestFile struct {
 		directory
-		path             *atomic.Uint64
 		makeMountPointFn MakeMountPointFunc
-		cleanupEmpties   bool
 	}
+	guestSettings struct {
+		directoryOptions []DirectoryOption
+	}
+	GuestOption func(*guestSettings) error
 	// MakeMountPointFunc should handle file creation operations
 	// for files representing mount points.
 	MakeMountPointFunc func(parent p9.File, name string,
@@ -25,36 +25,27 @@ type (
 	}
 )
 
-func NewGuestFile(makeMountPointFn MakeMountPointFunc, options ...FSIDOption,
-) (p9.QID, *GuestFile) {
-	settings := fsidSettings{
-		directorySettings: directorySettings{
-			metadata: makeMetadata(p9.ModeDirectory),
-		},
-	}
+func NewGuestFile(makeMountPointFn MakeMountPointFunc, options ...GuestOption,
+) (p9.QID, *GuestFile, error) {
+	var settings guestSettings
 	if err := parseOptions(&settings, options...); err != nil {
-		panic(err)
+		return p9.QID{}, nil, err
 	}
-	var (
-		unlinkSelf = settings.cleanupSelf
-		dirOpts    = settings.directorySettings.asOptions()
-		qid, fsys  = newDirectory(unlinkSelf, dirOpts...)
-	)
+	qid, directory, err := NewDirectory(settings.directoryOptions...)
+	if err != nil {
+		return p9.QID{}, nil, err
+	}
 	return qid, &GuestFile{
-		path:             settings.ninePath,
-		directory:        fsys,
-		cleanupEmpties:   settings.cleanupElements,
+		directory:        directory,
 		makeMountPointFn: makeMountPointFn,
-	}
+	}, nil
 }
 
 func (gf *GuestFile) Walk(names []string) ([]p9.QID, p9.File, error) {
 	qids, file, err := gf.directory.Walk(names)
 	if len(names) == 0 {
 		file = &GuestFile{
-			path:             gf.path,
 			directory:        file,
-			cleanupEmpties:   gf.cleanupEmpties,
 			makeMountPointFn: gf.makeMountPointFn,
 		}
 	}
