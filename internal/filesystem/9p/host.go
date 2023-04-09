@@ -1,8 +1,6 @@
 package p9
 
 import (
-	"sync/atomic"
-
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/hugelgupf/p9/p9"
@@ -12,13 +10,10 @@ import (
 type (
 	HostFile struct {
 		directory
-		path           *atomic.Uint64
-		makeGuestFn    MakeGuestFunc
-		cleanupEmpties bool
+		makeGuestFn MakeGuestFunc
 	}
 	hosterSettings struct {
-		directorySettings
-		generatorSettings
+		directoryOptions []DirectoryOption
 	}
 	HosterOption func(*hosterSettings) error
 	// MakeGuestFunc should handle file creation operations
@@ -30,36 +25,27 @@ type (
 
 func NewHostFile(makeGuestFn MakeGuestFunc,
 	options ...HosterOption,
-) (p9.QID, *HostFile) {
-	settings := hosterSettings{
-		directorySettings: directorySettings{
-			metadata: makeMetadata(p9.ModeDirectory),
-		},
-	}
+) (p9.QID, *HostFile, error) {
+	var settings hosterSettings
 	if err := parseOptions(&settings, options...); err != nil {
-		panic(err)
+		return p9.QID{}, nil, err
 	}
-	var (
-		unlinkSelf = settings.cleanupSelf
-		dirOpts    = settings.directorySettings.asOptions()
-		qid, fsys  = newDirectory(unlinkSelf, dirOpts...)
-	)
+	qid, directory, err := NewDirectory(settings.directoryOptions...)
+	if err != nil {
+		return p9.QID{}, nil, err
+	}
 	return qid, &HostFile{
-		path:           settings.ninePath,
-		directory:      fsys,
-		cleanupEmpties: settings.cleanupElements,
-		makeGuestFn:    makeGuestFn,
-	}
+		directory:   directory,
+		makeGuestFn: makeGuestFn,
+	}, nil
 }
 
 func (hd *HostFile) Walk(names []string) ([]p9.QID, p9.File, error) {
 	qids, file, err := hd.directory.Walk(names)
 	if len(names) == 0 {
 		file = &HostFile{
-			directory:      file,
-			path:           hd.path,
-			cleanupEmpties: hd.cleanupEmpties,
-			makeGuestFn:    hd.makeGuestFn,
+			directory:   file,
+			makeGuestFn: hd.makeGuestFn,
 		}
 	}
 	return qids, file, err
