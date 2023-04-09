@@ -26,9 +26,14 @@ import (
 type (
 	Listener struct {
 		directory
-		*linkSync
 		listenerShared
 	}
+	listenerSettings struct {
+		metaOptions      []metadataOption
+		directoryOptions []DirectoryOption
+		directorySettings
+	}
+	ListenerOption func(*listenerSettings) error
 	listenerShared struct {
 		emitter        *chanEmitter[manet.Listener]
 		path           ninePath
@@ -66,35 +71,37 @@ type (
 	}
 )
 
-func NewListener(ctx context.Context, options ...ListenerOption) (p9.QID, *Listener, <-chan manet.Listener) {
-	settings := listenerSettings{
-		directorySettings: directorySettings{
-			metadata: makeMetadata(p9.ModeDirectory),
-		},
-	}
+func NewListener(ctx context.Context, options ...ListenerOption) (p9.QID, *Listener, <-chan manet.Listener, error) {
+	var settings listenerSettings
 	if err := parseOptions(&settings, options...); err != nil {
-		panic(err)
+		return p9.QID{}, nil, nil, err
+	}
+	metadata, err := makeMetadata(p9.ModeDirectory, settings.metaOptions...)
+	if err != nil {
+		return p9.QID{}, nil, nil, err
+	}
+	directoryOptions := append(
+		settings.directoryOptions,
+		WithoutRename[DirectoryOption](true),
+	)
+	qid, directory, err := NewDirectory(directoryOptions...)
+	if err != nil {
+		return p9.QID{}, nil, nil, err
 	}
 	const channelBuffer = 0
 	var (
-		unlinkSelf = settings.cleanupSelf
-		dirOpts    = settings.directorySettings.asOptions()
-		qid, fsys  = newDirectory(unlinkSelf, dirOpts...)
-		emitter    = makeChannelEmitter[manet.Listener](ctx, channelBuffer)
-		listeners  = emitter.ch
-		listener   = &Listener{
-			directory: fsys,
-			linkSync: &linkSync{
-				link: settings.linkSettings,
-			},
+		emitter   = makeChannelEmitter[manet.Listener](ctx, channelBuffer)
+		listeners = emitter.ch
+		listener  = &Listener{
+			directory: directory,
 			listenerShared: listenerShared{
-				path:           settings.ninePath,
+				path:           metadata.ninePath,
 				emitter:        emitter,
 				cleanupEmpties: settings.cleanupElements,
 			},
 		}
 	)
-	return qid, listener, listeners
+	return qid, listener, listeners, nil
 }
 
 // TODO: [Ame] English.
@@ -124,14 +131,9 @@ func (ld *Listener) Walk(names []string) ([]p9.QID, p9.File, error) {
 		file = &Listener{
 			directory:      file,
 			listenerShared: ld.listenerShared,
-			linkSync:       ld.linkSync,
 		}
 	}
 	return qids, file, err
-}
-
-func (ld *Listener) Renamed(newDir p9.File, newName string) {
-	ld.linkSync.Renamed(newDir, newName)
 }
 
 func (ld *Listener) Link(file p9.File, name string) error {
@@ -146,23 +148,25 @@ func (ld *Listener) Mkdir(name string, permissions p9.FileMode, uid p9.UID, gid 
 	if err != nil {
 		return p9.QID{}, fmt.Errorf("%w - %s", perrors.EIO, err)
 	}
-	var (
-		qid, dir, mkErr = ld.mkdir(ld, name,
-			permissions, uid, gid)
-		protoDir = &protocolDir{
-			listenerShared: &ld.listenerShared,
-			linkSync: &linkSync{
-				link: link{
-					parent: ld,
-					child:  name,
-				},
-			},
-			directory: dir,
-			protocol:  protocol,
-		}
+	link, err := newLinkSync(
+		WithParent[linkOption](ld, name),
+		WithoutRename[linkOption](true),
 	)
-	if mkErr != nil {
-		return p9.QID{}, mkErr
+	if err != nil {
+		return p9.QID{}, err
+	}
+	qid, directory, err := ld.mkdir(ld.directory,
+		name, permissions, uid, gid,
+	)
+	if err != nil {
+		return p9.QID{}, err
+	}
+	protoDir := &protocolDir{
+		listenerShared: &ld.listenerShared,
+		linkSync:       link,
+		directory:      directory,
+		protocol:       protocol,
+		renameAllowed:  new(atomic.Bool),
 	}
 	return qid, ld.directory.Link(protoDir, name)
 }
@@ -195,43 +199,56 @@ func (ls *listenerShared) listen(maddr multiaddr.Multiaddr, permissions p9.FileM
 	return &listenerOnceCloser{Listener: listener}, nil
 }
 
-func (ls *listenerShared) mkdir(parent p9.File, name string,
+func (ls *listenerShared) mkdir(directory p9.File, name string,
 	permissions p9.FileMode, uid p9.UID, gid p9.GID,
 ) (p9.QID, p9.File, error) {
-	var (
-		path    = ls.path
-		cleanup = ls.cleanupEmpties
+	uid, gid, err := mkPreamble(directory, name, uid, gid)
+	if err != nil {
+		return p9.QID{}, nil, err
+	}
+	cleanup := ls.cleanupEmpties
+	return NewDirectory(
+		WithPath[DirectoryOption](ls.path),
+		WithPermissions[DirectoryOption](permissions),
+		WithUID[DirectoryOption](uid),
+		WithGID[DirectoryOption](gid),
+		WithParent[DirectoryOption](directory, name),
+		UnlinkWhenEmpty[DirectoryOption](cleanup),
+		UnlinkEmptyChildren[DirectoryOption](cleanup),
 	)
-	return mkSubdir(parent, path,
-		name, permissions, uid, gid,
-		cleanup)
 }
 
 func (ls *listenerShared) mkListenerFile(parent p9.File, name string,
 	permissions p9.FileMode, uid p9.UID, gid p9.GID,
 	listener manet.Listener,
-) (p9.QID, *listenerFile) {
+) (p9.QID, *listenerFile, error) {
 	var (
-		path     = ls.path
-		metadata = makeMetadata(p9.ModeRegular | permissions.Permissions())
+		path          = ls.path
+		metadata, err = makeMetadata(p9.ModeRegular|permissions.Permissions(),
+			WithUID[metadataOption](uid),
+			WithGID[metadataOption](gid),
+			WithPath[metadataOption](path),
+		)
 	)
-	metadata.UID = uid
-	metadata.GID = gid
-	metadata.ninePath = path
-	metadata.QID.Path = path.Add(1)
+	if err != nil {
+		return p9.QID{}, nil, err
+	}
+	link, err := newLinkSync(
+		WithParent[linkOption](parent, name),
+		WithoutRename[linkOption](true),
+	)
+	if err != nil {
+		return p9.QID{}, nil, err
+	}
 	metadata.Size = uint64(len(listener.Multiaddr().String()))
 	listenerFile := &listenerFile{
 		metadata: metadata,
 		unlinked: new(atomic.Bool),
-		linkSync: &linkSync{
-			link: link{
-				parent: parent,
-				child:  name,
-			},
-		},
+		linkSync: link,
 		Listener: listener,
 	}
-	return *metadata.QID, listenerFile
+	metadata.incrementPath()
+	return *metadata.QID, listenerFile, nil
 }
 
 func (ls *listenerShared) mknod(parent p9.File, maddr multiaddr.Multiaddr,
@@ -245,7 +262,10 @@ func (ls *listenerShared) mknod(parent p9.File, maddr multiaddr.Multiaddr,
 	if err != nil {
 		return p9.QID{}, err
 	}
-	qid, file := ls.mkListenerFile(parent, name, mode, uid, gid, listener)
+	qid, file, err := ls.mkListenerFile(parent, name, mode, uid, gid, listener)
+	if err != nil {
+		return p9.QID{}, err
+	}
 	if err := parent.Link(file, name); err != nil {
 		return p9.QID{}, fserrors.Join(err, listener.Close())
 	}
@@ -310,7 +330,7 @@ func (pd *protocolDir) RenameAt(oldName string, newDir p9.File, newName string) 
 }
 
 func (pd *protocolDir) Renamed(newDir p9.File, newName string) {
-	pd.linkSync.Renamed(newDir, newName)
+	pd.directory.Renamed(newDir, newName)
 }
 
 func (pd *protocolDir) Link(file p9.File, name string) error {
@@ -334,23 +354,22 @@ func (pd *protocolDir) Mkdir(name string, permissions p9.FileMode, uid p9.UID, g
 			return p9.QID{}, err
 		}
 	}
-	var (
-		qid, dir, err = pd.mkdir(pd, name,
-			permissions, uid, gid)
-		newDir = &valueDir{
-			listenerShared: pd.listenerShared,
-			linkSync: &linkSync{
-				link: link{
-					parent: pd,
-					child:  name,
-				},
-			},
-			directory: dir,
-			component: component,
-		}
+	qid, directory, err := pd.mkdir(pd.directory,
+		name, permissions, uid, gid,
 	)
 	if err != nil {
 		return p9.QID{}, err
+	}
+	link, err := newLinkSync(WithParent[linkOption](pd, name))
+	if err != nil {
+		return p9.QID{}, err
+	}
+	newDir := &valueDir{
+		listenerShared: pd.listenerShared,
+		linkSync:       link,
+		directory:      directory,
+		component:      component,
+		renameAllowed:  new(atomic.Bool),
 	}
 	return qid, pd.directory.Link(newDir, name)
 }
@@ -376,25 +395,24 @@ func (pd *protocolDir) UnlinkAt(name string, flags uint32) error {
 }
 
 func (pd *protocolDir) assemble(name string) (multiaddr.Multiaddr, error) {
+	tail, err := multiaddr.NewComponent(pd.protocol.Name, name)
+	if err != nil {
+		return nil, err
+	}
 	var components []multiaddr.Multiaddr
-	for current := pd.parent; current != nil; {
+	for current := pd.linkSync.parent; current != nil; {
 		switch v := current.(type) {
 		case *protocolDir:
-			current = v.parent
+			current = v.linkSync.parent
 		case *valueDir:
 			components = append(components, v.component)
-			current = v.parent
+			current = v.linkSync.parent
 		default:
 			current = nil
 		}
 	}
 	reverse(components)
-	final, err := multiaddr.NewComponent(pd.protocol.Name, name)
-	if err != nil {
-		return nil, err
-	}
-	components = append(components, final)
-	return multiaddr.Join(components...), nil
+	return multiaddr.Join(append(components, tail)...), nil
 }
 
 func (vd *valueDir) Walk(names []string) ([]p9.QID, p9.File, error) {
@@ -424,40 +442,44 @@ func (vd *valueDir) Link(file p9.File, name string) error {
 }
 
 func (vd *valueDir) Mkdir(name string, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, error) {
-	var (
-		newDir        directory
-		qid, dir, err = vd.mkdir(vd, name,
-			permissions, uid, gid)
+	link, err := newLinkSync(WithParent[linkOption](vd, name))
+	if err != nil {
+		return p9.QID{}, err
+	}
+	if isPathType := vd.component == nil; isPathType {
+		qid, directory, err := vd.mkdir(vd.directory,
+			name, permissions, uid, gid,
+		)
+		if err != nil {
+			return p9.QID{}, err
+		}
+		valueDir := &valueDir{
+			listenerShared: vd.listenerShared,
+			linkSync:       link,
+			directory:      directory,
+			renameAllowed:  new(atomic.Bool),
+		}
+		return qid, vd.directory.Link(valueDir, name)
+	}
+	protocol, err := getProtocol(name)
+	if err != nil {
+		// TODO: error value
+		return p9.QID{}, fmt.Errorf("%w - %s", perrors.EIO, err)
+	}
+	qid, directory, err := vd.mkdir(vd.directory,
+		name, permissions, uid, gid,
 	)
 	if err != nil {
 		return p9.QID{}, err
 	}
-	link := &linkSync{
-		link: link{
-			parent: vd,
-			child:  name,
-		},
+	protoDir := &protocolDir{
+		listenerShared: vd.listenerShared,
+		linkSync:       link,
+		directory:      directory,
+		protocol:       protocol,
+		renameAllowed:  new(atomic.Bool),
 	}
-	if isPathType := vd.component == nil; isPathType {
-		newDir = &valueDir{
-			listenerShared: vd.listenerShared,
-			linkSync:       link,
-			directory:      dir,
-		}
-	} else {
-		protocol, err := getProtocol(name)
-		if err != nil {
-			// TODO: error value
-			return p9.QID{}, fmt.Errorf("%w - %s", perrors.EIO, err)
-		}
-		newDir = &protocolDir{
-			listenerShared: vd.listenerShared,
-			linkSync:       link,
-			directory:      dir,
-			protocol:       protocol,
-		}
-	}
-	return qid, vd.directory.Link(newDir, name)
+	return qid, vd.directory.Link(protoDir, name)
 }
 
 func (vd *valueDir) Create(name string, flags p9.OpenFlags,
@@ -482,12 +504,12 @@ func (vd *valueDir) UnlinkAt(name string, flags uint32) error {
 
 func (vd *valueDir) assemble(name string) (multiaddr.Multiaddr, error) {
 	var (
-		names   = []string{name, vd.link.child}
-		current = vd.parent
+		names   = []string{name, vd.linkSync.child}
+		current = vd.linkSync.parent
 	)
 	for intermediate, ok := current.(*valueDir); ok; intermediate, ok = current.(*valueDir) {
-		current = intermediate.parent
-		names = append(names, intermediate.link.child)
+		current = intermediate.linkSync.parent
+		names = append(names, intermediate.linkSync.child)
 	}
 	protoDir, ok := current.(*protocolDir)
 	if !ok {

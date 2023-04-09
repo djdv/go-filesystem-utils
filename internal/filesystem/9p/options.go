@@ -34,7 +34,6 @@ type (
 		metaOptions []metadataOption
 		linkOptions []linkOption
 	}
-	ListenerOption func(*listenerSettings) error
 
 	channelSettings struct {
 		metadata
