@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/hugelgupf/p9/p9"
 )
 
@@ -33,28 +34,59 @@ type (
 		*p9.Attr
 		*p9.QID
 	}
+	metadataOption func(*metadata) error
 )
 
 var attrMaskNone p9.AttrMask
 
-func makeMetadata(mode p9.FileMode) metadata {
+func makeMetadata(mode p9.FileMode, options ...metadataOptions) (metadata, error) {
 	var (
 		now       = time.Now()
 		sec, nano = uint64(now.Unix()), uint64(now.UnixNano())
+		meta      = metadata{
+			ninePath: new(atomic.Uint64),
+			Attr: &p9.Attr{
+				Mode: mode,
+				UID:  p9.NoUID, GID: p9.NoGID,
+				ATimeSeconds: sec, ATimeNanoSeconds: nano,
+				MTimeSeconds: sec, MTimeNanoSeconds: nano,
+				CTimeSeconds: sec, CTimeNanoSeconds: nano,
+			},
+			QID: &p9.QID{
+				Type: mode.QIDType(),
+			},
+		}
 	)
-	return metadata{
-		ninePath: new(atomic.Uint64),
-		Attr: &p9.Attr{
-			Mode: mode,
-			UID:  p9.NoUID, GID: p9.NoGID,
-			ATimeSeconds: sec, ATimeNanoSeconds: nano,
-			MTimeSeconds: sec, MTimeNanoSeconds: nano,
-			CTimeSeconds: sec, CTimeNanoSeconds: nano,
-		},
-		QID: &p9.QID{
-			Type: mode.QIDType(),
-		},
+	if err := parseOptions(&meta, options...); err != nil {
+		return metadata{}, err
 	}
+	if meta.ninePath == nil {
+		return metadata{}, generic.ConstError("[path] option's value is `nil`")
+	}
+	return meta, nil
+}
+
+func WithPath[OT Options](path *atomic.Uint64) (option OT) {
+	return makeFieldSetter[OT]("ninePath", path)
+}
+
+func WithPermissions[OT Options](permissions p9.FileMode) (option OT) {
+	return makeFieldFunc[OT]("Mode", func(mode *p9.FileMode) error {
+		*mode = mode.FileType() | permissions.Permissions()
+		return nil
+	})
+}
+
+func WithUID[OT Options](uid p9.UID) (option OT) {
+	return makeFieldSetter[OT]("UID", uid)
+}
+
+func WithGID[OT Options](gid p9.GID) (option OT) {
+	return makeFieldSetter[OT]("GID", gid)
+}
+
+func (md metadata) incrementPath() {
+	md.QID.Path = md.ninePath.Add(1)
 }
 
 func (md metadata) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {

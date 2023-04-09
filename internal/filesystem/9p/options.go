@@ -83,21 +83,6 @@ func WithParent[OT Options](parent p9.File, child string) (option OT) {
 	})
 }
 
-func WithPermissions[OT Options](permissions p9.FileMode) (option OT) {
-	return makeFieldFunc[OT]("Mode", func(mode *p9.FileMode) error {
-		*mode = mode.FileType() | permissions.Permissions()
-		return nil
-	})
-}
-
-func WithUID[OT Options](uid p9.UID) (option OT) {
-	return makeFieldSetter[OT]("UID", uid)
-}
-
-func WithGID[OT Options](gid p9.GID) (option OT) {
-	return makeFieldSetter[OT]("GID", gid)
-}
-
 func UnlinkWhenEmpty[OT GeneratorOptions](b bool) (option OT) {
 	return makeFieldSetter[OT]("cleanupSelf", b)
 }
