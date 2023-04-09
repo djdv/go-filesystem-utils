@@ -1,13 +1,5 @@
 package p9
 
-import (
-	"reflect"
-	"sync/atomic"
-	"unsafe"
-
-	"github.com/hugelgupf/p9/p9"
-)
-
 // TODO: some way to provide statfs for files that are themselves,
 // not devices, but hosted inside one.
 //
@@ -73,18 +65,7 @@ type (
 	ChannelOption func(*channelSettings) error
 
 	NineOption (func()) // TODO stub
-
-	reflectFunc = func([]reflect.Value) (results []reflect.Value)
 )
-
-func parseOptions[ST any, OT ~func(*ST) error](settings *ST, options ...OT) error {
-	for _, setFunc := range options {
-		if err := setFunc(settings); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 // TODO: See if we can coerce the type system
 // to allow us to return a union of specific options.
@@ -106,89 +87,38 @@ func (settings *directorySettings) asOptions() []DirectoryOption {
 	}
 }
 
-// XXX: We're using reflection to work around
-// a constraint in the 1.18 Go spec. Specifically regarding
-// generic access to common struct fields.
-// "We may remove this restriction in a future release"
-// It's possible to implement this without reflection
-// today [1.20], but it requires a lot of duplication
-// type switch cases. (1 for each type for each option).
-// We'll take the runtime hit until the aforementioned
-// compiler constraint is renounced.
-func makeSetter[OT Options, V any](name string, value V) OT {
-	optTyp := getOptionType[OT]()
-	return makeReflectFn[OT, V](optTyp,
-		func(args []reflect.Value) (results []reflect.Value) {
-			fieldPtr := unsafeFieldAccess(args[0], name)
-			fieldPtr.Elem().Set(reflect.ValueOf(value))
-			return []reflect.Value{reflect.Zero(optTyp.Out(0))}
-		},
-	)
-}
-
-func makeSetterFn[OT Options, V any](name string, fn func(*V) error) OT {
-	optTyp := getOptionType[OT]()
-	return makeReflectFn[OT, V](optTyp,
-		func(args []reflect.Value) (results []reflect.Value) {
-			var (
-				fieldPtr = unsafeFieldAccess(args[0], name)
-				fnRet    = fn(fieldPtr.Interface().(*V))
-				rvRet    = reflect.ValueOf(&fnRet).Elem()
-			)
-			return []reflect.Value{rvRet}
-		},
-	)
-}
-
-// XXX: defeat CanSet/CanAddr guard for unexported fields.
-func unsafeFieldAccess(structPtr reflect.Value, name string) reflect.Value {
-	var (
-		field   = structPtr.Elem().FieldByName(name)
-		srcAddr = unsafe.Pointer(field.UnsafeAddr())
-	)
-	return reflect.NewAt(field.Type(), srcAddr)
-}
-
-func makeReflectFn[OT Options, V any](optTyp reflect.Type, fn reflectFunc) OT {
-	return reflect.MakeFunc(optTyp, fn).Interface().(OT)
-}
-
-func getOptionType[OT Options]() reflect.Type {
-	return reflect.TypeOf([0]OT{}).Elem()
-}
-
 func WithPath[OT Options](path *atomic.Uint64) (option OT) {
-	return makeSetter[OT]("ninePath", path)
+	return makeFieldSetter[OT]("ninePath", path)
 }
 
 func WithParent[OT Options](parent p9.File, child string) (option OT) {
-	return makeSetter[OT]("linkSettings", linkSettings{
+	return makeFieldSetter[OT]("linkSettings", linkSettings{
 		parent: parent,
 		child:  child,
 	})
 }
 
 func WithPermissions[OT Options](permissions p9.FileMode) (option OT) {
-	return makeSetterFn[OT]("Mode", func(mode *p9.FileMode) error {
+	return makeFieldFunc[OT]("Mode", func(mode *p9.FileMode) error {
 		*mode = mode.FileType() | permissions.Permissions()
 		return nil
 	})
 }
 
 func WithUID[OT Options](uid p9.UID) (option OT) {
-	return makeSetter[OT]("UID", uid)
+	return makeFieldSetter[OT]("UID", uid)
 }
 
 func WithGID[OT Options](gid p9.GID) (option OT) {
-	return makeSetter[OT]("GID", gid)
+	return makeFieldSetter[OT]("GID", gid)
 }
 
 func UnlinkWhenEmpty[OT GeneratorOptions](b bool) (option OT) {
-	return makeSetter[OT]("cleanupSelf", b)
+	return makeFieldSetter[OT]("cleanupSelf", b)
 }
 
 func UnlinkEmptyChildren[OT GeneratorOptions](b bool) (option OT) {
-	return makeSetter[OT]("cleanupElements", b)
+	return makeFieldSetter[OT]("cleanupElements", b)
 }
 
 func WithBuffer(size int) ChannelOption {
