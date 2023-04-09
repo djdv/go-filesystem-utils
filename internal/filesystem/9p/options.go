@@ -36,12 +36,6 @@ type (
 	}
 	ListenerOption func(*listenerSettings) error
 
-	fsidSettings struct {
-		directorySettings
-		generatorSettings
-	}
-	FSIDOption func(*fsidSettings) error
-
 	channelSettings struct {
 		metadata
 		linkSettings
