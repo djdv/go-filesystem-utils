@@ -381,7 +381,7 @@ func accumulateRelayClose(ctx context.Context,
 		return sawError, accumulator
 	}
 	// NOTE: `unsent` is slice of `accumulator`.
-	clone := cloneSlice(unsent) // (which could be modified by the caller.)
+	clone := generic.CloneSlice(unsent) // (which could be modified by the caller.)
 	go func() {
 		defer close(relay)
 		for _, entry := range clone {
@@ -397,36 +397,8 @@ func accumulateRelayClose(ctx context.Context,
 }
 
 func drainThenSendErr(ch chan filesystem.StreamDirEntry, err error) {
-	drainBuffer(ch)
+	generic.DrainBuffer(ch)
 	ch <- newErrorEntry(err)
-}
-
-func drainBuffer[T any](ch <-chan T) {
-	for {
-		select {
-		case <-ch:
-		default:
-			return
-		}
-	}
-}
-
-// [2023.03.29] [slices.Clone] intentionally uses append. #53643
-// We spawn clones in this pkg for reading, not for appending to.
-// So the overallocation of `append` only harms us.
-func cloneSlice[T any](slice []T) []T {
-	clone := make([]T, len(slice))
-	copy(clone, slice)
-	return clone
-}
-
-func compactSlice[T any](slice []T) []T {
-	if len(slice) == cap(slice) {
-		return slice
-	}
-	compacted := make([]T, len(slice))
-	copy(compacted, slice)
-	return compacted
 }
 
 func walkLinks(root cid.Cid, names []string, getNodeFn getNodeFunc) (cid.Cid, error) {
