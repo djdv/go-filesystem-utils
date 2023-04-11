@@ -27,13 +27,13 @@ type (
 	// Server adds Close and Shutdown methods
 	// similar to [net/http.Server], for a [p9.Server].
 	Server struct {
-		sync.Mutex
-		listenersWg sync.WaitGroup
 		shutdown    atomic.Bool
+		log         ulog.Logger
 		server      *p9.Server
 		listeners   listenerMap
 		connections connectionMap
-		log         ulog.Logger
+		sync.Mutex
+		listenersWg sync.WaitGroup
 	}
 	// The same notes in [net/http]'s pkg apply to us.
 	// Specifically; interfaces as keys will panic
@@ -69,8 +69,8 @@ type (
 	}
 
 	onceCloser struct {
-		sync.Once
 		error
+		sync.Once
 	}
 	// TODO: Cross pkg witchcraft.
 	// We need to export this interface so that pkgs can be
