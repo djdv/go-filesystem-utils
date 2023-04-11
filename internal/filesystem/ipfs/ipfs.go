@@ -9,6 +9,7 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/ipfs/go-cid"
 	cbor "github.com/ipfs/go-ipld-cbor"
@@ -394,7 +395,7 @@ func (fsys *IPFS) fetchAndCacheEntries(ctx context.Context, cid cid.Cid, info *n
 		if sawError || fetchCtx.Err() != nil {
 			return // Invalid|short results, don't cache.
 		}
-		snapshot = compactSlice(snapshot)
+		snapshot = generic.CompactSlice(snapshot)
 		fsys.dirCache.Add(cid, snapshot)
 	}()
 	return relay, nil

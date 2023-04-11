@@ -9,6 +9,7 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 	coreoptions "github.com/ipfs/interface-go-ipfs-core/options"
 )
@@ -254,7 +255,7 @@ func (pfs *PinFS) fetchAndCacheThenUnlock(ctx context.Context) (<-chan filesyste
 			// Time stamp remains expired.
 			return // Caller must try to fetch again.
 		}
-		pfs.snapshot = compactSlice(snapshot)
+		pfs.snapshot = generic.CompactSlice(snapshot)
 		now := time.Now()
 		pfs.info.modTime.Store(&now)
 	}()
