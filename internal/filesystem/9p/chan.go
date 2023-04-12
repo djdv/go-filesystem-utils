@@ -17,30 +17,43 @@ type (
 		emitter  *chanEmitter[[]byte]
 		openFlags
 	}
+	channelSettings struct {
+		fileOptions
+		buffer int
+	}
+	ChannelOption func(*channelSettings) error
 )
 
 func NewChannelFile(ctx context.Context,
 	options ...ChannelOption,
-) (p9.QID, *ChannelFile, <-chan []byte) {
-	settings := channelSettings{
-		metadata: makeMetadata(p9.ModeRegular),
-	}
+) (p9.QID, *ChannelFile, <-chan []byte, error) {
+	var settings channelSettings
 	if err := parseOptions(&settings, options...); err != nil {
-		panic(err)
+		return p9.QID{}, nil, nil, err
 	}
-	settings.QID.Path = settings.ninePath.Add(1)
+	metadata, err := makeMetadata(p9.ModeRegular, settings.metaOptions...)
+	if err != nil {
+		return p9.QID{}, nil, nil, err
+	}
+	linkSync, err := newLinkSync(settings.linkOptions...)
+	if err != nil {
+		return p9.QID{}, nil, nil, err
+	}
 	var (
 		emitter   = makeChannelEmitter[[]byte](ctx, settings.buffer)
 		bytesChan = emitter.ch
 		chanFile  = &ChannelFile{
-			metadata: settings.metadata,
-			linkSync: &linkSync{
-				link: settings.linkSettings,
-			},
-			emitter: emitter,
+			metadata: metadata,
+			linkSync: linkSync,
+			emitter:  emitter,
 		}
 	)
-	return *chanFile.QID, chanFile, bytesChan
+	metadata.incrementPath()
+	return *chanFile.QID, chanFile, bytesChan, nil
+}
+
+func WithBuffer[OT ChannelOptions](size int) OT {
+	return makeFieldSetter[OT]("buffer", size)
 }
 
 func (cf *ChannelFile) Walk(names []string) ([]p9.QID, p9.File, error) {
