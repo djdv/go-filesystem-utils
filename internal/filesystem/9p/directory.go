@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/hugelgupf/p9/fsimpl/templatefs"
 	"github.com/hugelgupf/p9/p9"
@@ -275,7 +276,14 @@ func (ed *ephemeralDir) unlinkSelf() error {
 		self   = link.child
 	)
 	const flags = 0
-	return parent.UnlinkAt(self, flags)
+	_, clone, err := parent.Walk(nil)
+	if err != nil {
+		return err
+	}
+	return fserrors.Join(
+		parent.UnlinkAt(self, flags),
+		clone.Close(),
+	)
 }
 
 func childExists(fsys p9.File, name string) (bool, error) {
