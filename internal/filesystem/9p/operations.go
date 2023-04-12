@@ -136,20 +136,20 @@ func createViaMknod(fsys p9.File, name string, flags p9.OpenFlags,
 func MkdirAll(root p9.File, names []string,
 	permissions p9.FileMode, uid p9.UID, gid p9.GID,
 ) (p9.File, error) {
-	var (
-		tail            = len(names) - 1
-		_, current, err = root.Walk(nil)
-	)
+	_, current, err := root.Walk(nil)
 	if err != nil {
 		return nil, err
 	}
-	for i, name := range names {
-		next, err := getOrMkdir(current, name, permissions, uid, gid)
-		if i != tail {
-			err = fserrors.Join(err, current.Close())
-		}
+	for _, name := range names {
+		var (
+			next, err = getOrMkdir(current, name, permissions, uid, gid)
+			cErr      = current.Close()
+		)
 		if err != nil {
-			return nil, err
+			return nil, fserrors.Join(err, cErr)
+		}
+		if cErr != nil {
+			return nil, fserrors.Join(cErr, next.Close())
 		}
 		current = next
 	}
