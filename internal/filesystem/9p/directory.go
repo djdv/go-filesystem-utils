@@ -115,7 +115,10 @@ func (dir *Directory) Walk(names []string) ([]p9.QID, p9.File, error) {
 	}
 	subQIDS, descendant, err := clone.Walk(names[1:])
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fserrors.Join(err, clone.Close())
+	}
+	if err := clone.Close(); err != nil {
+		return nil, nil, fserrors.Join(err, descendant.Close())
 	}
 	return append(qids, subQIDS...), descendant, nil
 }
