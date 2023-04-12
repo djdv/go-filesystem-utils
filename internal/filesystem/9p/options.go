@@ -35,12 +35,5 @@ type (
 		linkOptions []linkOption
 	}
 
-	channelSettings struct {
-		metadata
-		linkSettings
-		buffer int
-	}
-	ChannelOption func(*channelSettings) error
-
 	NineOption (func()) // TODO stub
 )
