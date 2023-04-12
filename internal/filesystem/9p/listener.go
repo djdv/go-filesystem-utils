@@ -31,6 +31,7 @@ type (
 		metaOptions      []metadataOption
 		directoryOptions []DirectoryOption
 		directorySettings
+		channelSettings
 	}
 	ListenerOption func(*listenerSettings) error
 	listenerShared struct {
@@ -89,9 +90,8 @@ func NewListener(ctx context.Context, options ...ListenerOption) (p9.QID, *Liste
 	if err != nil {
 		return p9.QID{}, nil, nil, err
 	}
-	const channelBuffer = 0
 	var (
-		emitter   = makeChannelEmitter[manet.Listener](ctx, channelBuffer)
+		emitter   = makeChannelEmitter[manet.Listener](ctx, settings.channelSettings.buffer)
 		listeners = emitter.ch
 		listener  = &Listener{
 			directory: directory,
