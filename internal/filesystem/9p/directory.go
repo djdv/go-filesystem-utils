@@ -128,22 +128,30 @@ func (dir *Directory) backtrack(names []string) ([]p9.QID, p9.File, error) {
 		qids   = make([]p9.QID, 1, len(names)+1)
 		parent = dir.parent
 	)
-	if areRoot := parent == nil; areRoot {
+	if dirIsRoot := parent == nil; dirIsRoot {
 		parent = dir
-		qids[0] = *dir.QID
-	} else {
-		var (
-			err          error
-			attrMaskNone p9.AttrMask
-		)
-		if qids[0], _, _, err = parent.GetAttr(attrMaskNone); err != nil {
-			return nil, nil, err
-		}
+	}
+	_, clone, err := parent.Walk(nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	var attrMaskNone p9.AttrMask
+	if qids[0], _, _, err = clone.GetAttr(attrMaskNone); err != nil {
+		return nil, nil, fserrors.Join(err, clone.Close())
 	}
 	if noRemainder := len(names) == 0; noRemainder {
-		return qids, parent, nil
+		return qids, clone, nil
 	}
-	return parent.Walk(names)
+	// These could be ancestors, siblings, cousins, etc.
+	// depending on the remaining names.
+	relQIDS, relative, err := clone.Walk(names)
+	if err != nil {
+		return nil, nil, fserrors.Join(err, clone.Close())
+	}
+	if err := clone.Close(); err != nil {
+		return nil, nil, fserrors.Join(err, relative.Close())
+	}
+	return append(qids, relQIDS...), relative, nil
 }
 
 func (dir Directory) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
