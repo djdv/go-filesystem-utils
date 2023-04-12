@@ -51,7 +51,7 @@ type (
 		templatefs.NoopFile
 		metadata
 		*sync.Mutex
-		*linkSync
+		linkSync *linkSync
 	}
 	mountPointIO struct {
 		reader *bytes.Reader
@@ -65,8 +65,7 @@ type (
 		unmountFn *detachFunc
 	}
 	mountPointSettings struct {
-		metadata
-		linkSettings
+		fileOptions
 	}
 	MountPointOption func(*mountPointSettings) error
 )
@@ -124,31 +123,32 @@ func NewMountPoint[
 	},
 	T any,
 ](options ...MountPointOption,
-) (p9.QID, *MountPointFile[MP]) {
-	settings := mountPointSettings{
-		metadata: makeMetadata(p9.ModeRegular),
-	}
+) (p9.QID, *MountPointFile[MP], error) {
+	var settings mountPointSettings
 	if err := parseOptions(&settings, options...); err != nil {
-		panic(err)
+		return p9.QID{}, nil, err
 	}
-	var (
-		file = &MountPointFile[MP]{
-			mountPoint: new(T),
-			mountPointFile: mountPointFile{
-				metadata: settings.metadata,
-				linkSync: &linkSync{
-					link: settings.linkSettings,
-				},
-				Mutex: new(sync.Mutex),
-			},
-			mountPointHost: mountPointHost{
-				unmountFn: new(detachFunc),
-			},
-		}
-		path = settings.ninePath
-	)
-	file.QID.Path = path.Add(1)
-	return *file.QID, file
+	metadata, err := makeMetadata(p9.ModeRegular, settings.metaOptions...)
+	if err != nil {
+		return p9.QID{}, nil, err
+	}
+	linkSync, err := newLinkSync(settings.linkOptions...)
+	if err != nil {
+		return p9.QID{}, nil, err
+	}
+	file := &MountPointFile[MP]{
+		mountPoint: new(T),
+		mountPointFile: mountPointFile{
+			metadata: metadata,
+			linkSync: linkSync,
+			Mutex:    new(sync.Mutex),
+		},
+		mountPointHost: mountPointHost{
+			unmountFn: new(detachFunc),
+		},
+	}
+	metadata.incrementPath()
+	return *file.QID, file, nil
 }
 
 func (mf *MountPointFile[MP]) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
@@ -353,9 +353,9 @@ func (mf *MountPointFile[MP]) mountFileLocked() error {
 		*mf.unmountFn = closer.Close
 		return nil
 	}
-	if parent := mf.link.parent; parent != nil {
+	if parent := mf.linkSync.parent; parent != nil {
 		const flags = 0
-		child := mf.link.child
+		child := mf.linkSync.child
 		err = fserrors.Join(err,
 			parent.UnlinkAt(child, flags),
 		)
