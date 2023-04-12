@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -43,13 +42,15 @@ type (
 		directory
 		*linkSync
 		*listenerShared
-		protocol *multiaddr.Protocol
+		protocol      *multiaddr.Protocol
+		renameAllowed *atomic.Bool
 	}
 	valueDir struct {
 		directory
 		*linkSync
 		*listenerShared
-		component *multiaddr.Component
+		component     *multiaddr.Component
+		renameAllowed *atomic.Bool
 	}
 	listenerFile struct {
 		templatefs.NoopFile
@@ -61,8 +62,8 @@ type (
 	}
 	listenerOnceCloser struct {
 		manet.Listener
-		sync.Once
 		error
+		sync.Once
 	}
 	listenerCloser struct {
 		manet.Listener
@@ -122,6 +123,9 @@ func Listen(listener p9.File, maddr multiaddr.Multiaddr, permissions p9.FileMode
 		return err
 	}
 	_, err = protocolDir.Mknod(socket, permissions, 0, 0, p9.NoUID, p9.NoGID)
+	if cErr := protocolDir.Close(); cErr != nil {
+		err = fserrors.Join(err, cErr)
+	}
 	return err
 }
 
@@ -251,6 +255,25 @@ func (ls *listenerShared) mkListenerFile(parent p9.File, name string,
 	return *metadata.QID, listenerFile, nil
 }
 
+func (ls *listenerShared) rename(directory p9.File, oldName, newName string) error {
+	_, oldFile, err := directory.Walk([]string{oldName})
+	if err != nil {
+		return err
+	}
+	_, _, attr, err := oldFile.GetAttr(p9.AttrMask{Mode: true})
+	if err != nil {
+		return err
+	}
+	if _, err := directory.Mknod(newName, attr.Mode, 0, 0, p9.NoUID, p9.NoGID); err != nil {
+		return err
+	}
+	const flags = 0
+	if err := ls.unlinkAt(directory, oldName, flags); err != nil {
+		return err
+	}
+	return oldFile.Close()
+}
+
 func (ls *listenerShared) mknod(parent p9.File, maddr multiaddr.Multiaddr,
 	name string, mode p9.FileMode, uid p9.UID, gid p9.GID,
 ) (p9.QID, error) {
@@ -300,33 +323,21 @@ func (pd *protocolDir) Walk(names []string) ([]p9.QID, p9.File, error) {
 			listenerShared: pd.listenerShared,
 			linkSync:       pd.linkSync,
 			protocol:       pd.protocol,
+			renameAllowed:  pd.renameAllowed,
 		}
 	}
 	return qids, file, err
 }
 
 func (pd *protocolDir) RenameAt(oldName string, newDir p9.File, newName string) error {
+	if !pd.renameAllowed.Load() {
+		return fmt.Errorf("%w - only directories containing listeners may rename", perrors.EACCES)
+	}
 	clone, ok := newDir.(*protocolDir)
 	if !ok || clone.protocol != pd.protocol {
-		return fmt.Errorf("%w - only direct descendants may be moved", perrors.EINVAL)
+		return fmt.Errorf("%w - only direct descendants may be moved", perrors.EACCES)
 	}
-	_, oldFile, err := pd.Walk([]string{oldName})
-	if err != nil {
-		return err
-	}
-	_, _, attr, err := oldFile.GetAttr(p9.AttrMask{Mode: true})
-	if err != nil {
-		return err
-	}
-	if _, err := pd.Mknod(newName, attr.Mode, 0, 0, p9.NoUID, p9.NoGID); err != nil {
-		log.Println("rename t6")
-		return err
-	}
-	const flags = 0
-	if err := pd.unlinkAt(pd.directory, oldName, flags); err != nil {
-		return err
-	}
-	return oldFile.Close()
+	return pd.listenerShared.rename(pd, oldName, newName)
 }
 
 func (pd *protocolDir) Renamed(newDir p9.File, newName string) {
@@ -382,12 +393,16 @@ func (pd *protocolDir) Create(name string, flags p9.OpenFlags,
 
 func (pd *protocolDir) Mknod(name string, mode p9.FileMode,
 	major, minor uint32, uid p9.UID, gid p9.GID,
-) (_ p9.QID, err error) {
+) (p9.QID, error) {
 	maddr, err := pd.assemble(name)
 	if err != nil {
 		return p9.QID{}, err
 	}
-	return pd.mknod(pd, maddr, name, mode, uid, gid)
+	qid, err := pd.mknod(pd, maddr, name, mode, uid, gid)
+	if err == nil {
+		pd.renameAllowed.Store(true)
+	}
+	return qid, err
 }
 
 func (pd *protocolDir) UnlinkAt(name string, flags uint32) error {
@@ -423,9 +438,21 @@ func (vd *valueDir) Walk(names []string) ([]p9.QID, p9.File, error) {
 			listenerShared: vd.listenerShared,
 			linkSync:       vd.linkSync,
 			component:      vd.component,
+			renameAllowed:  vd.renameAllowed,
 		}
 	}
 	return qids, file, err
+}
+
+func (vd *valueDir) RenameAt(oldName string, newDir p9.File, newName string) error {
+	if !vd.renameAllowed.Load() {
+		return fmt.Errorf("%w - only directories containing listeners may rename", perrors.EACCES)
+	}
+	clone, ok := newDir.(*valueDir)
+	if !ok || clone.component != vd.component {
+		return fmt.Errorf("%w - only direct descendants may be moved", perrors.EACCES)
+	}
+	return vd.listenerShared.rename(vd, oldName, newName)
 }
 
 func (vd *valueDir) Renamed(newDir p9.File, newName string) {
@@ -490,12 +517,16 @@ func (vd *valueDir) Create(name string, flags p9.OpenFlags,
 
 func (vd *valueDir) Mknod(name string, mode p9.FileMode,
 	major, minor uint32, uid p9.UID, gid p9.GID,
-) (_ p9.QID, err error) {
+) (p9.QID, error) {
 	maddr, err := vd.assemble(name)
 	if err != nil {
 		return p9.QID{}, err
 	}
-	return vd.mknod(vd, maddr, name, mode, uid, gid)
+	qid, err := vd.mknod(vd, maddr, name, mode, uid, gid)
+	if err == nil {
+		vd.renameAllowed.Store(true)
+	}
+	return qid, err
 }
 
 func (vd *valueDir) UnlinkAt(name string, flags uint32) error {
