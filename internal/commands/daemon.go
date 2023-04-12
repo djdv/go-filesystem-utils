@@ -60,8 +60,8 @@ type (
 		name      string
 	}
 	controlSubsystem struct {
-		*p9fs.Directory
-		name string
+		directory p9.File
+		name      string
 		shutdown
 	}
 	shutdown struct {
@@ -320,7 +320,7 @@ func commonOptions[OT p9fs.Options](parent p9.File, child string,
 	}
 }
 
-func unlinkEmptyDirs[OT p9fs.GeneratorOptions](autoUnlink bool) []OT {
+func unlinkEmptyDirs[OT p9fs.DirectoryOptions](autoUnlink bool) []OT {
 	return []OT{
 		p9fs.UnlinkEmptyChildren[OT](autoUnlink),
 		p9fs.UnlinkWhenEmpty[OT](autoUnlink),
@@ -332,20 +332,37 @@ func newFileSystem(ctx context.Context, uid p9.UID, gid p9.GID) (fileSystem, err
 		p9fs.ReadGroup | p9fs.ExecuteGroup |
 		p9fs.ReadOther | p9fs.ExecuteOther
 	var (
-		path    = new(atomic.Uint64)
-		_, root = p9fs.NewDirectory(
+		path         = new(atomic.Uint64)
+		_, root, err = p9fs.NewDirectory(append(
 			commonOptions[p9fs.DirectoryOption](
 				nil, "", path,
 				uid, gid, permissions,
-			)...,
+			),
+			p9fs.WithoutRename[p9fs.DirectoryOption](true),
+		)...,
 		)
-		system = fileSystem{
-			root:    root,
-			mount:   newMounter(root, path, uid, gid, permissions),
-			listen:  newListener(ctx, root, path, uid, gid, permissions),
-			control: newControl(ctx, root, path, uid, gid, permissions),
-		}
 	)
+	if err != nil {
+		return fileSystem{}, err
+	}
+	mount, err := newMounter(root, path, uid, gid, permissions)
+	if err != nil {
+		return fileSystem{}, err
+	}
+	listen, err := newListener(ctx, root, path, uid, gid, permissions)
+	if err != nil {
+		return fileSystem{}, err
+	}
+	control, err := newControl(ctx, root, path, uid, gid, permissions)
+	if err != nil {
+		return fileSystem{}, err
+	}
+	system := fileSystem{
+		root:    root,
+		mount:   mount,
+		listen:  listen,
+		control: control,
+	}
 	return system, linkSystems(system)
 }
 
@@ -361,13 +378,17 @@ func newMounter(parent p9.File, path ninePath,
 				uid, gid, permissions,
 			),
 			p9fs.UnlinkEmptyChildren[p9fs.MounterOption](autoUnlink),
+			p9fs.WithoutRename[p9fs.MounterOption](true),
 		)
-		_, mountFS = p9fs.NewMounter(makeHostFn, options...)
+		_, mountFS, err = p9fs.NewMounter(makeHostFn, options...)
 	)
+	if err != nil {
+		return mountSubsystem{}, err
+	}
 	return mountSubsystem{
 		name:      mountsFileName,
 		MountFile: mountFS,
-	}
+	}, nil
 }
 
 func newHostFunc(path ninePath, autoUnlink bool) p9fs.MakeHostFunc {
@@ -390,19 +411,21 @@ func newHostFunc(path ninePath, autoUnlink bool) p9fs.MakeHostFunc {
 				),
 				linkOptions...,
 			)
-			qid, hoster = p9fs.NewHostFile(makeGuestFn, options...)
 		)
-		return qid, hoster, nil
+		options = append(options,
+			p9fs.WithoutRename[p9fs.HosterOption](true),
+		)
+		return p9fs.NewHostFile(makeGuestFn, options...)
 	}
 }
 
 func newGuestFunc[H mountHost[T], T any](path ninePath, autoUnlink bool) p9fs.MakeGuestFunc {
-	linkOptions := unlinkEmptyDirs[p9fs.FSIDOption](autoUnlink)
+	linkOptions := unlinkEmptyDirs[p9fs.GuestOption](autoUnlink)
 	return func(parent p9.File, guest filesystem.ID, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
 		var (
 			makeMountPointFn p9fs.MakeMountPointFunc
 			options          = append(
-				commonOptions[p9fs.FSIDOption](
+				commonOptions[p9fs.GuestOption](
 					parent, string(guest), path,
 					uid, gid, permissions,
 				),
@@ -426,8 +449,7 @@ func newGuestFunc[H mountHost[T], T any](path ninePath, autoUnlink bool) p9fs.Ma
 			err := fmt.Errorf(`unexpected guest "%v"`, guest)
 			return p9.QID{}, nil, err
 		}
-		qid, file := p9fs.NewGuestFile(makeMountPointFn, options...)
-		return qid, file, nil
+		return p9fs.NewGuestFile(makeMountPointFn, options...)
 	}
 }
 
@@ -438,64 +460,71 @@ func newMountPointFunc[
 ](path ninePath,
 ) p9fs.MakeMountPointFunc {
 	return func(parent p9.File, name string, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
-		qid, file := p9fs.NewMountPoint[*mountPoint[HT, GT, H, G]](
+		return p9fs.NewMountPoint[*mountPoint[HT, GT, H, G]](
 			commonOptions[p9fs.MountPointOption](
 				parent, name, path,
 				uid, gid, permissions,
 			)...,
 		)
-		return qid, file, nil
 	}
 }
 
 func newListener(ctx context.Context, parent p9.File, path ninePath,
 	uid p9.UID, gid p9.GID, permissions p9.FileMode,
-) listenSubsystem {
+) (listenSubsystem, error) {
 	const name = "listeners"
-	_, listenFS, listeners := p9fs.NewListener(ctx,
-		append(
-			commonOptions[p9fs.ListenerOption](
-				parent, name, path,
-				uid, gid, permissions,
-			),
-			p9fs.UnlinkEmptyChildren[p9fs.ListenerOption](true),
-		)...,
+	_, listenFS, listeners, err := p9fs.NewListener(ctx, append(
+		commonOptions[p9fs.ListenerOption](
+			parent, name, path,
+			uid, gid, permissions,
+		),
+		p9fs.UnlinkEmptyChildren[p9fs.ListenerOption](true),
+	)...,
 	)
+	if err != nil {
+		return listenSubsystem{}, err
+	}
 	return listenSubsystem{
 		name:      name,
 		Listener:  listenFS,
 		listeners: listeners,
-	}
+	}, nil
 }
 
 func newControl(ctx context.Context,
 	parent p9.File, path ninePath,
 	uid p9.UID, gid p9.GID, permissions p9.FileMode,
-) controlSubsystem {
+) (controlSubsystem, error) {
 	const (
 		controlName  = "control"
 		shutdownName = "shutdown"
 	)
-	var (
-		_, control = p9fs.NewDirectory(
-			commonOptions[p9fs.DirectoryOption](parent, controlName, path, uid, gid, permissions)...,
-		)
-		_, shutdownFile, shutdownCh = p9fs.NewChannelFile(ctx,
-			commonOptions[p9fs.ChannelOption](control, shutdownName, path, uid, gid, permissions)...,
-		)
+	_, control, err := p9fs.NewDirectory(append(
+		commonOptions[p9fs.DirectoryOption](parent, controlName, path, uid, gid, permissions),
+		p9fs.WithoutRename[p9fs.DirectoryOption](true),
+	)...,
 	)
+	if err != nil {
+		return controlSubsystem{}, err
+	}
+	_, shutdownFile, shutdownCh, err := p9fs.NewChannelFile(ctx,
+		commonOptions[p9fs.ChannelOption](control, shutdownName, path, uid, gid, permissions)...,
+	)
+	if err != nil {
+		return controlSubsystem{}, err
+	}
 	if err := control.Link(shutdownFile, shutdownName); err != nil {
-		panic(err)
+		return controlSubsystem{}, err
 	}
 	return controlSubsystem{
 		name:      controlName,
-		Directory: control,
+		directory: control,
 		shutdown: shutdown{
 			ChannelFile: shutdownFile,
 			name:        shutdownName,
 			ch:          shutdownCh,
 		},
-	}
+	}, nil
 }
 
 func linkSystems(system fileSystem) error {
@@ -514,7 +543,7 @@ func linkSystems(system fileSystem) error {
 		},
 		{
 			name: system.control.name,
-			File: system.control.Directory,
+			File: system.control.directory,
 		},
 	} {
 		if err := root.Link(file.File, file.name); err != nil {
