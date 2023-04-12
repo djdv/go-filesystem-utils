@@ -581,9 +581,19 @@ func (lf *listenerFile) unlinkOnListenerClose() manet.Listener {
 			if unlinked.Load() {
 				return nil
 			}
-			unlinked.Store(true)
 			const flags = 0
-			return link.parent.UnlinkAt(link.child, flags)
+			_, clone, err := link.parent.Walk(nil)
+			if err != nil {
+				return err
+			}
+			if err := fserrors.Join(
+				clone.UnlinkAt(link.child, flags),
+				clone.Close(),
+			); err != nil {
+				return err
+			}
+			unlinked.Store(true)
+			return nil
 		},
 	}
 }
