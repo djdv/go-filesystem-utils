@@ -15,20 +15,25 @@ package p9
 type (
 	// TODO: docs; commonly shared options.
 	Options interface {
+		DirectoryOptions |
+			FileOptions
+	}
+	DirectoryOptions interface {
 		DirectoryOption |
 			ListenerOption |
-			ChannelOption |
 			MounterOption |
 			HosterOption |
-			FSIDOption |
-			MountPointOption
+			GuestOption
 	}
-	// TODO: docs; systems which generate files.
-	GeneratorOptions interface {
-		ListenerOption |
-			MounterOption |
-			HosterOption |
-			FSIDOption
+	FileOptions interface {
+		ChannelOption |
+			MountPointOption |
+			metadataOption |
+			linkOption
+	}
+	ChannelOptions interface {
+		ChannelOption |
+			ListenerOption
 	}
 	fileOptions struct {
 		metaOptions []metadataOption
