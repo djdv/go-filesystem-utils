@@ -191,6 +191,9 @@ func mkPreamble(parent p9.File, name string,
 
 func ReadDir(dir p9.File) (_ p9.Dirents, err error) {
 	_, dirClone, err := dir.Walk(nil)
+	if err != nil {
+		return nil, err
+	}
 	closeClone := func() {
 		if cErr := dirClone.Close(); cErr != nil {
 			if err == nil {
@@ -199,9 +202,6 @@ func ReadDir(dir p9.File) (_ p9.Dirents, err error) {
 				err = fserrors.Join(err, cErr)
 			}
 		}
-	}
-	if err != nil {
-		return nil, err
 	}
 	defer closeClone()
 	if _, _, err = dirClone.Open(p9.ReadOnly); err != nil {
