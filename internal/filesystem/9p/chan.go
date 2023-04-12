@@ -9,13 +9,15 @@ import (
 	"github.com/hugelgupf/p9/perrors"
 )
 
-type ChannelFile struct {
-	templatefs.NoopFile
-	metadata
-	*linkSync
-	emitter *chanEmitter[[]byte]
-	open    bool
-}
+type (
+	ChannelFile struct {
+		templatefs.NoopFile
+		metadata
+		linkSync *linkSync
+		emitter  *chanEmitter[[]byte]
+		openFlags
+	}
+)
 
 func NewChannelFile(ctx context.Context,
 	options ...ChannelOption,
@@ -55,8 +57,6 @@ func (cf *ChannelFile) Walk(names []string) ([]p9.QID, p9.File, error) {
 	}, nil
 }
 
-func (cf *ChannelFile) opened() bool { return cf.open }
-
 func (cf *ChannelFile) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
 	if cf.opened() {
 		return p9.QID{}, 0, perrors.EBADF
@@ -65,12 +65,17 @@ func (cf *ChannelFile) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
 		// TODO: [spec] correct evalue?
 		return p9.QID{}, 0, perrors.EINVAL
 	}
-	cf.open = true
+	cf.openFlags = cf.withOpenedFlag(mode)
 	return *cf.QID, 0, nil
 }
 
+func (cf *ChannelFile) Close() error {
+	cf.openFlags = 0
+	return nil
+}
+
 func (cf *ChannelFile) WriteAt(p []byte, _ int64) (int, error) {
-	if !cf.opened() {
+	if !cf.canWrite() {
 		return -1, perrors.EBADF
 	}
 	if err := cf.emitter.emit(p); err != nil {
