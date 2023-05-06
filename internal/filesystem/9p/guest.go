@@ -53,7 +53,7 @@ func (gf *GuestFile) Walk(names []string) ([]p9.QID, p9.File, error) {
 }
 
 // TODO: stub out [Link] too?
-func (gf *GuestFile) Mkdir(name string, permissions p9.FileMode, _ p9.UID, gid p9.GID) (p9.QID, error) {
+func (gf *GuestFile) Mkdir(string, p9.FileMode, p9.UID, p9.GID) (p9.QID, error) {
 	return p9.QID{}, perrors.ENOSYS
 }
 
@@ -64,7 +64,7 @@ func (gf *GuestFile) Create(name string, flags p9.OpenFlags, permissions p9.File
 }
 
 func (gf *GuestFile) Mknod(name string, mode p9.FileMode,
-	major, minor uint32, uid p9.UID, gid p9.GID,
+	_, _ uint32, uid p9.UID, gid p9.GID,
 ) (p9.QID, error) {
 	uid, gid, err := mkPreamble(gf, name, uid, gid)
 	if err != nil {
