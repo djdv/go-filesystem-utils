@@ -181,7 +181,7 @@ func (dir *Directory) Link(file p9.File, name string) error {
 	return nil
 }
 
-func (dir *Directory) UnlinkAt(name string, flags uint32) error {
+func (dir *Directory) UnlinkAt(name string, _ uint32) error {
 	if !dir.delete(name) {
 		return perrors.ENOENT // TODO: spec; evalue
 	}
@@ -263,7 +263,7 @@ func (ed *ephemeralDir) Link(file p9.File, name string) error {
 	return nil
 }
 
-func (ed *ephemeralDir) UnlinkAt(name string, flags uint32) error {
+func (ed *ephemeralDir) UnlinkAt(name string, _ uint32) error {
 	var (
 		dir   = ed.directory.(*Directory)
 		table = dir.fileTableSync
