@@ -440,7 +440,7 @@ func (c *Client) Mount(host filesystem.Host, fsid filesystem.ID, data [][]byte) 
 	var (
 		hostName = string(host)
 		fsName   = string(fsid)
-		wname    = []string{hostName, fsName}
+		wnames   = []string{hostName, fsName}
 	)
 	const ( // TODO: from options
 		permissions = p9fs.ReadUser | p9fs.WriteUser | p9fs.ExecuteUser |
@@ -449,7 +449,7 @@ func (c *Client) Mount(host filesystem.Host, fsid filesystem.ID, data [][]byte) 
 		uid = p9.NoUID
 		gid = p9.NoGID
 	)
-	idRoot, err := p9fs.MkdirAll(mRoot, wname, permissions, uid, gid)
+	idRoot, err := p9fs.MkdirAll(mRoot, wnames, permissions, uid, gid)
 	if err != nil {
 		return err
 	}
