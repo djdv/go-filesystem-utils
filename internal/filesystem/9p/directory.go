@@ -33,9 +33,10 @@ type (
 	DirectoryOption func(*directorySettings) error
 	ephemeralDir    struct {
 		directory
-		refs          *atomic.Uintptr
-		unlinkOnClose *atomic.Bool
-		closed        bool
+		refs *atomic.Uintptr
+		unlinkOnClose,
+		unlinking *atomic.Bool
+		closed bool
 	}
 )
 
@@ -70,6 +71,7 @@ func NewDirectory(options ...DirectoryOption) (p9.QID, AttacherFile, error) {
 			directory:     file,
 			refs:          new(atomic.Uintptr),
 			unlinkOnClose: new(atomic.Bool),
+			unlinking:     new(atomic.Bool),
 		}
 	}
 	metadata.incrementPath()
@@ -236,6 +238,7 @@ func (ed *ephemeralDir) Walk(names []string) ([]p9.QID, p9.File, error) {
 			directory:     file,
 			refs:          refs,
 			unlinkOnClose: ed.unlinkOnClose,
+			unlinking:     ed.unlinking,
 		}
 	}
 	return qids, file, err
@@ -248,9 +251,11 @@ func (ed *ephemeralDir) Close() error {
 	ed.closed = true
 	const decriment = ^uintptr(0)
 	if active := ed.refs.Add(decriment); active != 0 ||
-		!ed.unlinkOnClose.Load() {
+		!ed.unlinkOnClose.Load() ||
+		ed.unlinking.Load() {
 		return nil
 	}
+	ed.unlinking.Store(true)
 	return ed.unlinkSelf()
 }
 
@@ -281,20 +286,10 @@ func (ed *ephemeralDir) UnlinkAt(name string, _ uint32) error {
 
 func (ed *ephemeralDir) unlinkSelf() error {
 	var (
-		dir    = ed.directory.(*Directory)
-		link   = dir.link
-		parent = link.parent
-		self   = link.child
+		dir  = ed.directory.(*Directory)
+		link = dir.linkSync
 	)
-	const flags = 0
-	_, clone, err := parent.Walk(nil)
-	if err != nil {
-		return err
-	}
-	return fserrors.Join(
-		parent.UnlinkAt(self, flags),
-		clone.Close(),
-	)
+	return unlinkChildSync(link)
 }
 
 func childExists(fsys p9.File, name string) (bool, error) {
