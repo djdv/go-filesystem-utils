@@ -10,8 +10,8 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
-	coreiface "github.com/ipfs/interface-go-ipfs-core"
-	coreoptions "github.com/ipfs/interface-go-ipfs-core/options"
+	coreiface "github.com/ipfs/boxo/coreiface"
+	coreoptions "github.com/ipfs/boxo/coreiface/options"
 )
 
 var ( // TODO: move this to a test file
