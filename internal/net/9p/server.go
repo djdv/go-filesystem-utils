@@ -3,6 +3,7 @@ package p9
 
 import (
 	"context"
+	"errors"
 	"io"
 	"math/rand"
 	"net"
@@ -27,77 +28,107 @@ type (
 	// Server adds Close and Shutdown methods
 	// similar to [net/http.Server], for a [p9.Server].
 	Server struct {
-		shutdown    atomic.Bool
-		log         ulog.Logger
-		server      *p9.Server
-		listeners   listenerMap
-		connections connectionMap
-		sync.Mutex
-		listenersWg sync.WaitGroup
+		log          ulog.Logger
+		server       *p9.Server
+		connections  connectionMap
+		listeners    listenerMap
+		listenersWg  sync.WaitGroup
+		idleDuration time.Duration
+		mu           sync.Mutex
+		shutdown     atomic.Bool
+	}
+	// TrackedIO exposes metrics around an IO interface.
+	TrackedIO interface {
+		LastRead() time.Time
+		LastWrite() time.Time
+		io.ReadWriteCloser
+	}
+	trackedReads interface {
+		io.ReadCloser
+		LastRead() time.Time
+	}
+	trackedWrites interface {
+		io.WriteCloser
+		LastWrite() time.Time
+	}
+	trackedIOpair struct {
+		trackedReads
+		trackedWrites
+	}
+	postCloseFunc     = func()
+	trackedReadCloser struct {
+		trackedReads
+		postCloseFn postCloseFunc
+	}
+	trackedWriteCloser struct {
+		trackedWrites
+		postCloseFn postCloseFunc
 	}
 	// The same notes in [net/http]'s pkg apply to us.
 	// Specifically; interfaces as keys will panic
 	// if the underlying type is unhashable;
-	// thus the rare pointer-to-interface.
+	// thus the pointer-to-interface.
 	listenerMap   map[*manet.Listener]struct{}
-	connectionMap map[*trackedIO]struct{}
-
-	trackedIO struct {
-		last
+	connectionMap map[*trackedIOpair]struct{}
+	manetConn     = manet.Conn
+	// TrackedConn records metrics
+	// of a network connection.
+	TrackedConn struct {
+		read, wrote *atomic.Pointer[time.Time]
+		manetConn
+	}
+	trackedReader struct {
+		last *atomic.Pointer[time.Time]
 		io.ReadCloser
+	}
+	trackedWriter struct {
+		last *atomic.Pointer[time.Time]
 		io.WriteCloser
-		dropSelf func(*trackedIO)
 	}
-	last struct {
-		read, write time.Time
-	}
-
 	// onceCloseListener wraps a net.Listener, protecting it from
 	// multiple Close calls. (Specifically in Serve; Close; Shutdown)
 	onceCloseListener struct {
 		manet.Listener
-		onceCloser
+		*onceCloser
 	}
-	// onceCloseConn wraps a [net.Conn], protecting it from
-	// multiple Close calls.
+	// onceCloseIO wraps an [io.ReadWriteCloser],
+	// protecting it from multiple Close calls.
 	// This is necessary before passing to
 	// [p9.Server.Handle] (which implicitly calls close
 	// on both its arguments).
-	onceCloseConn struct {
-		net.Conn
-		onceCloser
+	onceCloseIO struct {
+		io.ReadWriteCloser
+		*onceCloser
 	}
-
+	onceCloseTrackedIO struct {
+		TrackedIO
+		*onceCloser
+	}
 	onceCloser struct {
 		error
 		sync.Once
 	}
-	// TODO: Cross pkg witchcraft.
-	// We need to export this interface so that pkgs can be
-	// aware of it. Specifically, p9fs' listenerFile should
-	// implement this but only import it via its test pkg.
-	// Alternatively, we could consider giving listenerFile
-	// a callback which halts Serve (<- this seems less good)
-	fsListener interface {
-		// TODO: this name should probably be changed to be more general
-		// Graceful, Closed, or something.
-		Unlinked() bool
-	}
 )
 
+// ErrServerClosed may be returned by [Server.Serve] methods
+// after [Server.Shutdown] or [Server.Close] is called.
 const ErrServerClosed generic.ConstError = "p9: Server closed"
 
-// NewServer simply wraps the native
+// NewServer wraps the
 // [p9.NewServer] constructor.
 func NewServer(attacher p9.Attacher, options ...ServerOpt) *Server {
+	const defaultIdleDuration = 30 * time.Second
 	var (
-		passthrough = make([]p9.ServerOpt, len(options))
+		passthrough []p9.ServerOpt
 		srv         = Server{
-			log: ulog.Null,
+			log:          ulog.Null,
+			idleDuration: defaultIdleDuration,
 		}
 	)
-	for i, applyAndUnwrap := range options {
-		passthrough[i] = applyAndUnwrap(&srv)
+	for _, applyAndUnwrap := range options {
+		if relayedOpt := applyAndUnwrap(&srv); relayedOpt != nil {
+			passthrough = append(passthrough, relayedOpt)
+		}
 	}
 	srv.server = p9.NewServer(attacher, passthrough...)
 	return &srv
@@ -111,17 +142,117 @@ func WithServerLogger(l ulog.Logger) ServerOpt {
 	}
 }
 
+// WithIdleDuration sets the duration used by the server
+// when evaluating connection idleness.
+// If the time since the last connection operation
+// exceeds the duration, it will be considered idle.
+func WithIdleDuration(d time.Duration) ServerOpt {
+	return func(s *Server) p9.ServerOpt {
+		s.idleDuration = d
+		return nil
+	}
+}
+
 // Handle handles a single connection.
+// If [TrackedIO] is passed in for either or both
+// of the transmit and receive parameters, they will be
+// asserted and re-used. This allows the [Server] and caller
+// to share metrics without requiring extra overhead.
 func (srv *Server) Handle(t io.ReadCloser, r io.WriteCloser) error {
-	tracked := srv.trackIO(t, r)
-	return srv.server.Handle(tracked, tracked)
+	var (
+		trackedT, trackedR = makeTrackedIO(t, r)
+		connection         = &trackedIOpair{
+			trackedReads:  trackedT,
+			trackedWrites: trackedR,
+		}
+		connections             = srv.getConnections()
+		closedRead, closedWrite bool
+		deleteFn                = func() {
+			srv.mu.Lock()
+			defer srv.mu.Unlock()
+			delete(connections, connection)
+		}
+		cleanupT = trackedReadCloser{
+			trackedReads: trackedT,
+			postCloseFn: func() {
+				closedRead = true
+				if closedWrite {
+					deleteFn()
+				}
+			},
+		}
+		cleanupR = trackedWriteCloser{
+			trackedWrites: trackedR,
+			postCloseFn: func() {
+				closedWrite = true
+				if closedRead {
+					deleteFn()
+				}
+			},
+		}
+	)
+	srv.mu.Lock()
+	connections[connection] = struct{}{}
+	srv.mu.Unlock()
+	// HACK: Despite having valid value methods,
+	// we pass an address because the 9P server
+	// uses the `%p` verb in its log's format string.
+	return srv.server.Handle(&cleanupT, &cleanupR)
+}
+
+func makeTrackedIO(rc io.ReadCloser, wc io.WriteCloser) (trackedReads, trackedWrites) {
+	var (
+		trackedR, rOk = rc.(trackedReads)
+		trackedW, wOK = wc.(trackedWrites)
+		needTimestamp = !rOk || !wOK
+		stamp         *time.Time
+	)
+	if needTimestamp {
+		now := time.Now()
+		stamp = &now
+	}
+	if !rOk {
+		var (
+			ptr     atomic.Pointer[time.Time]
+			tracked = trackedReader{
+				last:       &ptr,
+				ReadCloser: rc,
+			}
+		)
+		ptr.Store(stamp)
+		trackedR = tracked
+	}
+	if !wOK {
+		var (
+			ptr     atomic.Pointer[time.Time]
+			tracked = trackedWriter{
+				last:        &ptr,
+				WriteCloser: wc,
+			}
+		)
+		ptr.Store(stamp)
+		trackedW = tracked
+	}
+	return trackedR, trackedW
+}
+
+func (srv *Server) getConnections() connectionMap {
+	if connections := srv.connections; connections != nil {
+		return connections
+	}
+	connections := make(connectionMap)
+	srv.connections = connections
+	return connections
 }
 
 // Serve handles requests from the listener.
 //
 // The passed listener _must_ be created in packet mode.
 func (srv *Server) Serve(listener manet.Listener) (err error) {
-	listener = &onceCloseListener{Listener: listener}
+	listener = onceCloseListener{
+		Listener:   listener,
+		onceCloser: new(onceCloser),
+	}
 	trackToken, err := srv.trackListener(listener)
 	if err != nil {
 		return err
@@ -136,27 +267,36 @@ func (srv *Server) Serve(listener manet.Listener) (err error) {
 			if srv.shuttingDown() {
 				return ErrServerClosed
 			}
-			if fsListener, ok := listener.(fsListener); ok {
-				// Listener was closed gracefully
-				// by some external means.
-				if fsListener.Unlinked() {
-					return ErrServerClosed
-				}
-			}
 			return err
 		}
-		closeConnOnce := &onceCloseConn{
-			Conn: connection,
-		}
-		go func() {
+		go func(t io.ReadCloser, r io.WriteCloser) {
 			// If a connection fails, we'll just alert the operator.
 			// No need to accumulate these, nor take the whole server down.
-			if err := handle(closeConnOnce, closeConnOnce); err != nil &&
+			if err := handle(t, r); err != nil &&
 				err != io.EOF {
+				if srv.shuttingDown() &&
+					errors.Is(err, net.ErrClosed) {
+					return // Shutdown expected, drop error.
+				}
 				srv.log.Printf("connection handler encountered an error: %s\n", err)
 			}
-		}()
+		}(splitConn(connection))
 	}
+}
+
+func splitConn(connection manet.Conn) (io.ReadCloser, io.WriteCloser) {
+	if tracked, ok := connection.(TrackedIO); ok {
+		closeConnOnce := onceCloseTrackedIO{
+			TrackedIO:  tracked,
+			onceCloser: new(onceCloser),
+		}
+		return closeConnOnce, closeConnOnce
+	}
+	closeConnOnce := onceCloseIO{
+		ReadWriteCloser: connection,
+		onceCloser:      new(onceCloser),
+	}
+	return closeConnOnce, closeConnOnce
 }
 
 func (srv *Server) shuttingDown() bool {
@@ -164,8 +304,8 @@ func (srv *Server) shuttingDown() bool {
 }
 
 func (srv *Server) trackListener(listener manet.Listener) (*manet.Listener, error) {
-	srv.Mutex.Lock()
-	defer srv.Mutex.Unlock()
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
 	if srv.shuttingDown() {
 		return nil, ErrServerClosed
 	}
@@ -183,51 +323,25 @@ func (srv *Server) trackListener(listener manet.Listener) (*manet.Listener, erro
 }
 
 func (srv *Server) dropListener(listener *manet.Listener) {
-	srv.Lock()
-	defer srv.Unlock()
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
 	delete(srv.listeners, listener)
 	srv.listenersWg.Done()
 }
 
-func (srv *Server) trackIO(rc io.ReadCloser, wc io.WriteCloser) *trackedIO {
-	srv.Mutex.Lock()
-	defer srv.Mutex.Unlock()
-	var (
-		now     = time.Now()
-		tracked = &trackedIO{
-			last: last{
-				read: now, write: now,
-			},
-			ReadCloser:  rc,
-			WriteCloser: wc,
-			dropSelf:    srv.dropIO,
-		}
-		connections = srv.connections
-	)
-	if connections == nil {
-		connections = make(connectionMap, 1)
-		srv.connections = connections
-	}
-	connections[tracked] = struct{}{}
-	return tracked
-}
-
-func (srv *Server) dropIO(tio *trackedIO) {
-	srv.Mutex.Lock()
-	defer srv.Mutex.Unlock()
-	delete(srv.connections, tio)
-}
-
+// Close requests the server to stop serving immediately.
+// Listeners and connections associated with the server
+// become closed by this call.
 func (srv *Server) Close() error {
 	srv.shutdown.Store(true)
-	srv.Mutex.Lock()
-	defer srv.Mutex.Unlock()
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
 	err := srv.closeListenersLocked()
 	// NOTE: refer to [net/http.Server]
 	// implementation for lock sequence explanation.
-	srv.Mutex.Unlock()
+	srv.mu.Unlock()
 	srv.listenersWg.Wait()
-	srv.Mutex.Lock()
+	srv.mu.Lock()
 	return fserrors.Join(err, srv.closeAllConns())
 }
 
@@ -241,13 +355,18 @@ func (srv *Server) closeListenersLocked() error {
 	return err
 }
 
+// Shutdown requests the server to stop accepting new request
+// and eventually close.
+// Listeners associated with the server become closed immediately,
+// and connections become closed when they are considered idle.
+// If the context is done, connections become closed immediately.
 func (srv *Server) Shutdown(ctx context.Context) error {
 	srv.shutdown.Store(true)
-	srv.Mutex.Lock()
+	srv.mu.Lock()
 	err := srv.closeListenersLocked()
 	// NOTE: refer to [net/http.Server]
 	// implementation for lock sequence explanation.
-	srv.Mutex.Unlock()
+	srv.mu.Unlock()
 	srv.listenersWg.Wait()
 	var (
 		nextPollInterval = makeJitterFunc(time.Millisecond)
@@ -264,6 +383,8 @@ func (srv *Server) Shutdown(ctx context.Context) error {
 		}
 		select {
 		case <-ctx.Done():
+			srv.mu.Lock()
+			defer srv.mu.Unlock()
 			return fserrors.Join(err,
 				srv.closeAllConns(),
 				ctx.Err(),
@@ -291,11 +412,13 @@ func makeJitterFunc(initial time.Duration) func() time.Duration {
 }
 
 func (srv *Server) closeIdleConns() (allIdle bool, err error) {
-	const threshold = 30 * time.Second
+	threshold := srv.idleDuration
 	allIdle = true
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
 	for connection := range srv.connections {
 		var (
-			lastActive = connection.last.active()
+			lastActive = lastActive(connection)
 			isIdle     = time.Since(lastActive) >= threshold
 		)
 		if !isIdle {
@@ -305,39 +428,119 @@ func (srv *Server) closeIdleConns() (allIdle bool, err error) {
 		if cErr := connection.Close(); cErr != nil {
 			err = fserrors.Join(err, cErr)
 		}
+		delete(srv.connections, connection)
 	}
 	return allIdle, err
 }
 
 func (srv *Server) closeAllConns() (err error) {
 	for connection := range srv.connections {
-		if cErr := connection.Close(); cErr != nil {
+		if cErr := (*connection).Close(); cErr != nil {
 			err = fserrors.Join(err, cErr)
 		}
 	}
 	return err
 }
 
-func (tio *trackedIO) Read(b []byte) (int, error) {
-	tio.read = time.Now()
-	return tio.ReadCloser.Read(b)
-}
-
-func (tio *trackedIO) Write(b []byte) (int, error) {
-	tio.write = time.Now()
-	return tio.WriteCloser.Write(b)
-}
-
-func (tio *trackedIO) Close() error {
-	defer tio.dropSelf(tio)
-	return fserrors.Join(tio.ReadCloser.Close(),
-		tio.WriteCloser.Close())
-}
-
-func (l *last) active() time.Time {
+// NewTrackedConn wraps conn, providing operation metrics.
+func NewTrackedConn(conn manet.Conn) TrackedConn {
 	var (
-		read  = l.read
-		write = l.write
+		now         = time.Now()
+		nowAddr     = &now
+		read, wrote atomic.Pointer[time.Time]
+		tracked     = TrackedConn{
+			read:      &read,
+			wrote:     &wrote,
+			manetConn: conn,
+		}
+	)
+	read.Store(nowAddr)
+	wrote.Store(nowAddr)
+	return tracked
+}
+
+// Read performs a read operation and updates the
+// operation timestamp if successful.
+func (tc TrackedConn) Read(b []byte) (int, error) {
+	return trackRead(tc.manetConn, tc.read, b)
+}
+
+// LastRead returns the timestamp of the last successful read.
+func (tc TrackedConn) LastRead() time.Time {
+	return *tc.read.Load()
+}
+
+// Write performs a write operation and updates the
+// operation timestamp if successful.
+func (tc TrackedConn) Write(b []byte) (int, error) {
+	return trackWrite(tc.manetConn, tc.wrote, b)
+}
+
+// LastWrite returns the timestamp of the last successful write.
+func (tc TrackedConn) LastWrite() time.Time {
+	return *tc.wrote.Load()
+}
+
+// Close closes the connection.
+func (tc TrackedConn) Close() error {
+	return tc.manetConn.Close()
+}
+
+func (tr trackedReader) Read(b []byte) (int, error) {
+	return trackRead(tr.ReadCloser, tr.last, b)
+}
+
+func (tr trackedReader) LastRead() time.Time {
+	return *tr.last.Load()
+}
+
+func (tw trackedWriter) Write(b []byte) (int, error) {
+	return trackWrite(tw.WriteCloser, tw.last, b)
+}
+
+func (tw trackedWriter) LastWrite() time.Time {
+	return *tw.last.Load()
+}
+
+func (ol onceCloseListener) Close() error {
+	ol.Once.Do(func() { ol.error = ol.Listener.Close() })
+	return ol.error
+}
+
+func (oc onceCloseIO) Close() error {
+	oc.Once.Do(func() { oc.error = oc.ReadWriteCloser.Close() })
+	return oc.error
+}
+
+func (oc onceCloseTrackedIO) Close() error {
+	oc.Once.Do(func() { oc.error = oc.TrackedIO.Close() })
+	return oc.error
+}
+
+func trackRead(r io.Reader, stamp *atomic.Pointer[time.Time], b []byte) (int, error) {
+	read, err := r.Read(b)
+	if err != nil {
+		return read, err
+	}
+	now := time.Now()
+	stamp.Store(&now)
+	return read, nil
+}
+
+func trackWrite(w io.Writer, stamp *atomic.Pointer[time.Time], b []byte) (int, error) {
+	wrote, err := w.Write(b)
+	if err != nil {
+		return wrote, err
+	}
+	now := time.Now()
+	stamp.Store(&now)
+	return wrote, nil
+}
+
+func lastActive(tio TrackedIO) time.Time {
+	var (
+		read  = tio.LastRead()
+		write = tio.LastWrite()
 	)
 	if read.After(write) {
 		return read
@@ -345,16 +548,21 @@ func (l *last) active() time.Time {
 	return write
 }
 
-func (ol *onceCloseListener) Close() error {
-	ol.Once.Do(func() {
-		ol.error = ol.Listener.Close()
-	})
-	return ol.error
+func (ct *trackedIOpair) Close() error {
+	return fserrors.Join(
+		ct.trackedReads.Close(),
+		ct.trackedWrites.Close(),
+	)
 }
 
-func (oc *onceCloseConn) Close() error {
-	oc.Once.Do(func() {
-		oc.error = oc.Conn.Close()
-	})
-	return oc.error
+func (trc trackedReadCloser) Close() error {
+	err := trc.trackedReads.Close()
+	trc.postCloseFn()
+	return err
+}
+
+func (twc trackedWriteCloser) Close() error {
+	err := twc.trackedWrites.Close()
+	twc.postCloseFn()
+	return err
 }
