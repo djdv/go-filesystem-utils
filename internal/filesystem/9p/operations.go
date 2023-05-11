@@ -12,6 +12,7 @@ import (
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/hugelgupf/p9/p9"
 	"github.com/hugelgupf/p9/perrors"
+	"github.com/multiformats/go-multiaddr"
 )
 
 type (
@@ -24,6 +25,15 @@ type (
 		ch chan T
 		sync.Mutex
 	}
+	result[T any] struct {
+		error
+		value T
+	}
+	direntResult   = result[p9.Dirent]
+	fileResult     = result[p9.File]
+	maddrResult    = result[multiaddr.Multiaddr]
+	connInfoResult = result[ConnInfo]
+	stringResult   = result[string]
 
 	// dataField must be of length 1 with just a key name,
 	// or of length 2 with a key and value.
@@ -63,6 +73,22 @@ func (of openFlags) canRead() bool {
 func (of openFlags) canWrite() bool {
 	return of.opened() &&
 		(of.Mode() == p9.WriteOnly || of.Mode() == p9.ReadWrite)
+}
+
+func sendSingle[T any](value T) <-chan T {
+	buffer := make(chan T, 1)
+	buffer <- value
+	close(buffer)
+	return buffer
+}
+
+func sendResult[T any, R result[T]](ctx context.Context, results chan<- R, res R) bool {
+	select {
+	case results <- res:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func makeChannelEmitter[T any](ctx context.Context, buffer int) *chanEmitter[T] {
@@ -226,6 +252,66 @@ func ReadDir(dir p9.File) (_ p9.Dirents, err error) {
 	return ents, nil
 }
 
+func getDirents(ctx context.Context, dir p9.File) <-chan direntResult {
+	return mapDirPipeline(ctx, dir, getDirentsPipeline)
+}
+
+func getDirentsPipeline(ctx context.Context, dir p9.File, wg *sync.WaitGroup, results chan<- direntResult) {
+	defer wg.Done()
+	if _, _, err := dir.Open(p9.ReadOnly); err != nil {
+		sendResult(ctx, results, direntResult{error: err})
+		return
+	}
+	var offset uint64
+	for {
+		entires, err := dir.Readdir(offset, math.MaxUint32)
+		if err != nil {
+			sendResult(ctx, results, direntResult{error: err})
+			return
+		}
+		entryCount := len(entires)
+		if entryCount == 0 {
+			return
+		}
+		for _, entry := range entires {
+			if !sendResult(ctx, results, direntResult{value: entry}) {
+				return
+			}
+		}
+		offset = entires[entryCount-1].Offset
+	}
+}
+
+// getDirFiles retrieves all files within the directory (1 layer deep).
+// It is the callers responsibility to close the returned files when done.
+func getDirFiles(ctx context.Context, dir p9.File) <-chan fileResult {
+	return mapDirPipeline(ctx, dir, getDirFilesPipeline)
+}
+
+func getDirFilesPipeline(ctx context.Context, dir p9.File, wg *sync.WaitGroup, results chan<- fileResult) {
+	defer wg.Done()
+	processEntry := func(result direntResult) {
+		defer wg.Done()
+		if err := result.error; err != nil {
+			sendResult(ctx, results, fileResult{error: err})
+			return
+		}
+		var (
+			entry     = result.value
+			file, err = walkEnt(dir, entry)
+		)
+		if !sendResult(ctx, results, fileResult{value: file, error: err}) {
+			if file != nil {
+				file.Close() // Ignore the error (no receivers).
+			}
+		}
+	}
+	for result := range getDirents(ctx, dir) {
+		wg.Add(1)
+		go processEntry(result)
+	}
+}
+
 func walkEnt(parent p9.File, ent p9.Dirent) (p9.File, error) {
 	wnames := []string{ent.Name}
 	_, child, err := parent.Walk(wnames)
@@ -286,82 +372,101 @@ func rename(file, oldDir, newDir p9.File, oldName, newName string) error {
 	return err
 }
 
-// TODO better name?
-// Flatten returns all files within a directory (recursively).
-// It is the callers responsibility to
-// close the returned files when done.
-func Flatten(dir p9.File) (_ []p9.File, err error) {
-	ents, err := ReadDir(dir)
-	if err != nil {
-		return nil, err
+// flattenDir returns all files within a directory (recursively).
+// It is the callers responsibility to close the returned files when done.
+func flattenDir(ctx context.Context, dir p9.File) <-chan fileResult {
+	return mapDirPipeline(ctx, dir, flattenPipeline)
+}
+
+func flattenPipeline(ctx context.Context, dir p9.File,
+	wg *sync.WaitGroup, results chan<- fileResult,
+) {
+	defer wg.Done()
+	processEntry := func(result direntResult) {
+		defer wg.Done()
+		if err := result.error; err != nil {
+			sendResult(ctx, results, fileResult{error: err})
+			return
+		}
+		var (
+			entry     = result.value
+			file, err = walkEnt(dir, entry)
+		)
+		if entry.Type == p9.TypeDir {
+			const recurAndClose = 2
+			wg.Add(recurAndClose)
+			go func() {
+				defer wg.Done()
+				flattenPipeline(ctx, file, wg, results)
+				if err := file.Close(); err != nil {
+					sendResult(ctx, results, fileResult{error: err})
+				}
+			}()
+			return
+		}
+		if !sendResult(ctx, results, fileResult{value: file, error: err}) {
+			if file != nil {
+				file.Close() // Ignore the error (no receivers).
+			}
+		}
 	}
-	var (
-		files           = make([]p9.File, 0, len(ents))
-		closeAllOnError = func() {
-			if err == nil {
+	for entryResult := range getDirents(ctx, dir) {
+		wg.Add(1)
+		go processEntry(entryResult)
+	}
+}
+
+func findFiles(ctx context.Context, root p9.File, name string) <-chan fileResult {
+	return mapDirPipeline(ctx, root, func(ctx context.Context, dir p9.File,
+		wg *sync.WaitGroup, results chan<- fileResult,
+	) {
+		findFilesPipeline(ctx, dir, name, wg, results)
+	})
+}
+
+// findFilesPipeline recursively searches the `root`
+// for any files named `name`.
+func findFilesPipeline(ctx context.Context, root p9.File, name string, wg *sync.WaitGroup, results chan<- fileResult) {
+	defer wg.Done()
+	processEntry := func(result direntResult) {
+		defer wg.Done()
+		if err := result.error; err != nil {
+			sendResult(ctx, results, fileResult{error: err})
+			return
+		}
+		entry := result.value
+		if entry.Name == name {
+			file, err := walkEnt(root, entry)
+			if !sendResult(ctx, results, fileResult{value: file, error: err}) {
+				if file != nil {
+					file.Close() // Ignore the error (no receivers).
+				}
 				return
 			}
-			for _, file := range files {
-				if cErr := file.Close(); cErr != nil {
-					err = fserrors.Join(err, cErr)
-				}
-			}
 		}
-	)
-	defer closeAllOnError()
-	for _, ent := range ents {
-		file, err := walkEnt(dir, ent)
+		if entry.Type != p9.TypeDir {
+			return
+		}
+		dir, err := walkEnt(root, entry)
 		if err != nil {
-			return nil, err
+			sendResult(ctx, results, fileResult{error: err})
+			return
 		}
-		if ent.Type == p9.TypeDir {
-			subFiles, err := Flatten(file)
-			if err != nil {
-				return nil, err
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var recurWg sync.WaitGroup
+			recurWg.Add(1)
+			findFilesPipeline(ctx, dir, name, &recurWg, results)
+			recurWg.Wait()
+			if err := dir.Close(); err != nil {
+				sendResult(ctx, results, fileResult{error: err})
 			}
-			if err := file.Close(); err != nil {
-				return nil, err
-			}
-			files = append(files, subFiles...)
-			continue
-		}
-		files = append(files, file)
+		}()
 	}
-	return files, nil
-}
-
-func gatherEnts(fsys p9.File, errs chan<- error) (<-chan p9.File, error) {
-	ents, err := ReadDir(fsys)
-	if err != nil {
-		return nil, err
-	}
-	files := make(chan p9.File, len(ents))
-	go func() {
-		defer close(files)
-		for _, ent := range ents {
-			file, err := walkEnt(fsys, ent)
-			if err != nil {
-				errs <- err
-				continue
-			}
-			files <- file
-		}
-	}()
-	return files, nil
-}
-
-func unlinkAllChildren(dir p9.File, errs chan<- error) {
-	entries, err := ReadDir(dir)
-	if err != nil {
-		errs <- err
-		return
-	}
-	const flags = 0
-	for _, entry := range entries {
-		name := entry.Name
-		if err := dir.UnlinkAt(name, flags); err != nil {
-			errs <- err
-		}
+	for entryResult := range getDirents(ctx, root) {
+		wg.Add(1)
+		go processEntry(entryResult)
 	}
 }
 
@@ -387,4 +492,84 @@ func tokenize(p []byte) dataTokens {
 		tokens[i] = fields
 	}
 	return tokens
+}
+
+func unlinkChildSync(link *linkSync) error {
+	link.mu.Lock()
+	defer link.mu.Unlock()
+	_, clone, err := link.parent.Walk(nil)
+	if err != nil {
+		return err
+	}
+	const flags = 0
+	return fserrors.Join(
+		clone.UnlinkAt(link.child, flags),
+		clone.Close(),
+	)
+}
+
+func aggregateResults[T any, R result[T]](cancel context.CancelFunc, results <-chan R) ([]T, error) {
+	// Conversion necessary until
+	// golang/go #48522 is resolved.
+	type rc = result[T]
+	var (
+		values = make([]T, 0, cap(results))
+		errs   []error
+	)
+	for result := range results {
+		if err := rc(result).error; err != nil {
+			cancel()
+			errs = append(errs, err)
+			continue
+		}
+		values = append(values, rc(result).value)
+	}
+	if errs != nil {
+		return nil, fserrors.Join(errs...)
+	}
+	return values, nil
+}
+
+func mapDirPipeline[
+	T any,
+	P func(context.Context, p9.File, *sync.WaitGroup, chan<- result[T]),
+](ctx context.Context,
+	dir p9.File,
+	pipeline P,
+) <-chan result[T] {
+	// TODO: In Go 1.21 this can go into the type parameters list.
+	// Go 1.20.4 does not see it as a matching type (despite
+	// the alias working all the same).
+	type R = result[T]
+	_, clone, err := dir.Walk(nil)
+	if err != nil {
+		return sendSingle(R{error: err})
+	}
+	var (
+		wg      sync.WaitGroup
+		results = make(chan R)
+	)
+	wg.Add(1)
+	go pipeline(ctx, clone, &wg, results)
+	go func() {
+		wg.Wait()
+		if err := clone.Close(); err != nil {
+			sendResult(ctx, results, R{error: err})
+		}
+		close(results)
+	}()
+	return results
+}
+
+func unwind(err error, funcs ...func() error) error {
+	var errs []error
+	for _, fn := range funcs {
+		if fnErr := fn(); fnErr != nil {
+			errs = append(errs, fnErr)
+		}
+	}
+	if errs == nil {
+		return err
+	}
+	return fserrors.Join(append([]error{err}, errs...)...)
 }
