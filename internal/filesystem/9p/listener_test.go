@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"path"
 	"strings"
 	"testing"
 
@@ -15,11 +16,12 @@ import (
 	manet "github.com/multiformats/go-multiaddr/net"
 )
 
+const listenerFileName = "listener"
+
 func TestListener(t *testing.T) {
 	t.Parallel()
 	t.Run("default", listenerDefault)
 	t.Run("options", listenerWithOptions)
-
 }
 
 // best effort, not guaranteed to actually
@@ -57,16 +59,16 @@ func listenerDefault(t *testing.T) {
 	listenerTCPServiceTest(t, listenerDir, listeners, maddr)
 	// Directories should still exist after listener closes
 	// since options were not specified.
-	var (
-		names   = maddrToNames(maddr)
-		trimmed = names[:len(names)-1]
-	)
-	mustWalkTo(t, listenerDir, trimmed)
+	names := maddrToNames(maddr)
+	mustWalkTo(t, listenerDir, names)
 }
 
 func listenerWithOptions(t *testing.T) {
 	t.Parallel()
-	const address = "127.0.0.1"
+	const (
+		address        = "127.0.0.1"
+		listenerBuffer = 1
+	)
 	var (
 		maddr       = newTCPMaddr(t, address)
 		ctx, cancel = context.WithCancel(context.Background())
@@ -74,29 +76,27 @@ func listenerWithOptions(t *testing.T) {
 	defer cancel()
 	_, listenerDir, listeners, lErr := p9fs.NewListener(ctx,
 		p9fs.UnlinkEmptyChildren[p9fs.ListenerOption](true),
-		p9fs.WithBuffer[p9fs.ListenerOption](1),
+		p9fs.WithBuffer[p9fs.ListenerOption](listenerBuffer),
 	)
 	if lErr != nil {
 		t.Fatalf("could not create listener directory: %v", lErr)
 	}
+
 	// This shouldn't hang because we requested a buffer.
 	const permissions = 0o751
-	maddr2 := newTCPMaddr(t, address)
-	if err := p9fs.Listen(listenerDir, maddr2, permissions); err != nil {
+	if err := p9fs.Listen(listenerDir, maddr, permissions); err != nil {
 		t.Fatalf("could not listen on %v: %v", maddr, err)
 	}
 	// We don't need to background this, again because of the buffer.
 	listener := <-listeners // Hold on to this while we test with another listener.
 
-	listenerTCPServiceTest(t, listenerDir, listeners, maddr)
+	maddr2 := newTCPMaddr(t, address)
+	listenerTCPServiceTest(t, listenerDir, listeners, maddr2)
 
-	// Directories should still exist after listener closes
-	// since `listener` is also still active.
-	var (
-		names   = maddrToNames(maddr)
-		trimmed = names[:len(names)-1]
-	)
-	mustWalkTo(t, listenerDir, trimmed)
+	// Directories should still exist after other listeners
+	// close, since `listener` is still active.
+	names := maddrToNames(maddr)
+	mustWalkTo(t, listenerDir, names)
 
 	// This should trigger a cleanup since no
 	// other listeners are using this chain of protocols.
@@ -131,22 +131,18 @@ func listenerTCPServiceTest(t *testing.T, listenerDir p9.File, listeners <-chan 
 		if err := listenerMatches(listener, maddr); err != nil {
 			errs <- err
 		}
-		/*
-			if err := listenerExists(listenerDir, maddr); err != nil {
-				errs <- err
-			}
-		*/
+		if err := listenerExists(listenerDir, maddr); err != nil {
+			errs <- err
+		}
 		if err := <-listenerHostEchoTCP(listener, payload); err != nil {
 			errs <- err
 		}
 		if err := listener.Close(); err != nil {
 			errs <- err
 		}
-		/*
-			if err := listenerNotExist(listenerDir, maddr); err != nil {
-				errs <- err
-			}
-		*/
+		if err := listenerNotExist(listenerDir, maddr); err != nil {
+			errs <- err
+		}
 	}()
 	const permissions = 0o751
 	if err := p9fs.Listen(listenerDir, maddr, permissions); err != nil {
@@ -183,6 +179,9 @@ func listenerHostEchoTCP(listener manet.Listener, expected []byte) <-chan error 
 			rErr = fmt.Errorf("could not read from connection: %v", err)
 			return
 		}
+		if err := conn.Close(); err != nil {
+			errs <- err
+		}
 		if want := len(expected); read != want {
 			rErr = fmt.Errorf("mismatched number of bytes read"+
 				"\ngot: %d"+
@@ -212,6 +211,9 @@ func listenerClientEchoTCP(t *testing.T, maddr multiaddr.Multiaddr, payload []by
 	if err != nil {
 		t.Fatalf("could not write to connection: %v", err)
 	}
+	if err := conn.Close(); err != nil {
+		t.Error(err)
+	}
 	if want := len(payload); wrote != want {
 		t.Fatalf("mismatched number of bytes written"+
 			"\ngot: %d"+
@@ -237,55 +239,37 @@ func listenerMatches(listener manet.Listener, maddr multiaddr.Multiaddr) error {
 }
 
 func listenerExists(listenerDir p9.File, maddr multiaddr.Multiaddr) error {
-	var (
-		names             = maddrToNames(maddr)
-		listenerFile, err = walkTo(listenerDir, names)
-	)
-	cErr := listenerDir.Close()
-	if cErr != nil {
-		cErr = fmt.Errorf("could not close listenerDir: %v", err)
+	listeners, err := p9fs.GetListeners(listenerDir)
+	if err != nil {
+		return err
 	}
-	if err == nil {
-		if lErr := listenerFile.Close(); lErr != nil {
-			err = fmt.Errorf("could not close listenerFile: %v", lErr)
+	for _, listener := range listeners {
+		if listener.Equal(maddr) {
+			return nil
 		}
 	}
-	return errors.Join(cErr, err)
+	return fmt.Errorf("listener file for \"%s\" should exist but was not found", maddr)
 }
 
 func mustWalkTo(t *testing.T, file p9.File, names []string) {
+	t.Helper()
 	file, err := walkTo(file, names)
 	if err != nil {
-		t.Fatalf("could not walk to directory: %v", err)
+		t.Fatalf("could not walk to directory (%s): %v", path.Join(names...), err)
 	}
 	if err := file.Close(); err != nil {
-		t.Fatalf("could not close directory: %v", err)
+		t.Fatalf("could not close directory (%s): %v", path.Join(names...), err)
 	}
 }
 
 func listenerNotExist(listenerDir p9.File, maddr multiaddr.Multiaddr) (err error) {
-	var (
-		names                = maddrToNames(maddr)
-		trimmed              = names[:len(names)-1]
-		listenerParent, wErr = walkTo(listenerDir, trimmed)
-	)
-	if wErr != nil {
-		return fmt.Errorf("could not walk to parent directory: %v", wErr)
+	listeners, err := p9fs.GetListeners(listenerDir)
+	if err != nil {
+		return err
 	}
-	defer func() {
-		if cErr := listenerParent.Close(); cErr != nil {
-			cErr = fmt.Errorf("could not close file: %v", cErr)
-			err = errors.Join(err, cErr)
-		}
-	}()
-	ents, rErr := p9fs.ReadDir(listenerParent)
-	if rErr != nil {
-		return fmt.Errorf("could not read directory: %v", rErr)
-	}
-	fileName := names[len(names)-1]
-	for _, ent := range ents {
-		if ent.Name == fileName {
-			return fmt.Errorf("file %s should not exist after listener is closed", fileName)
+	for _, listener := range listeners {
+		if listener.Equal(maddr) {
+			return fmt.Errorf("listener file for \"%s\" should not exist after listener is closed", maddr)
 		}
 	}
 	return nil

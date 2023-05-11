@@ -1,7 +1,9 @@
 package p9
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,11 +12,14 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
+	p9net "github.com/djdv/go-filesystem-utils/internal/net/9p"
 	"github.com/hugelgupf/p9/fsimpl/templatefs"
 	"github.com/hugelgupf/p9/p9"
 	"github.com/hugelgupf/p9/perrors"
@@ -43,34 +48,66 @@ type (
 		directory
 		*linkSync
 		*listenerShared
-		protocol      *multiaddr.Protocol
-		renameAllowed *atomic.Bool
+		protocol *multiaddr.Protocol
 	}
 	valueDir struct {
 		directory
 		*linkSync
 		*listenerShared
-		component     *multiaddr.Component
-		renameAllowed *atomic.Bool
+		component  *multiaddr.Component
+		connDirMu  *sync.Mutex
+		connDirPtr **connDir
+		connIndex  *atomic.Uintptr
 	}
 	listenerFile struct {
 		templatefs.NoopFile
-		unlinked *atomic.Bool
 		metadata
 		Listener manet.Listener
 		*linkSync
 		io.ReaderAt
-	}
-	listenerOnceCloser struct {
-		manet.Listener
-		error
-		sync.Once
+		openFlags
 	}
 	listenerCloser struct {
 		manet.Listener
-		afterCloseFn func() error
-		unlinked     *atomic.Bool
+		closeFn func() error
 	}
+	connTracker struct {
+		parent *valueDir
+		manet.Listener
+	}
+	connDir struct {
+		directory
+		path ninePath
+	}
+	connFile struct {
+		templatefs.NoopFile
+		metadata
+		trackedConn
+		io.ReaderAt
+		*linkSync
+		connID uintptr
+		openFlags
+	}
+	trackedConn interface {
+		manet.Conn
+		p9net.TrackedIO
+	}
+	connCloser struct {
+		trackedConn
+		closeFn func() error
+	}
+	ConnInfo struct {
+		LastRead  time.Time           `json:"lastRead"`
+		LastWrite time.Time           `json:"lastWrite"`
+		Local     multiaddr.Multiaddr `json:"local"`
+		Remote    multiaddr.Multiaddr `json:"remote"`
+		ID        uintptr             `json:"#"`
+	}
+)
+
+const (
+	listenerFileName    = "listener"
+	connectionsFileName = "connections"
 )
 
 func NewListener(ctx context.Context, options ...ListenerOption) (p9.QID, *Listener, <-chan manet.Listener, error) {
@@ -112,21 +149,131 @@ func NewListener(ctx context.Context, options ...ListenerOption) (p9.QID, *Liste
 // The passed permissions are used for the final API file.
 func Listen(listener p9.File, maddr multiaddr.Multiaddr, permissions p9.FileMode) error {
 	var (
-		_, names   = splitMaddr(maddr)
-		components = names[:len(names)-1]
-		socket     = names[len(names)-1]
-		uid        = p9.NoUID
-		gid        = p9.NoGID
+		_, names = splitMaddr(maddr)
+		uid      = p9.NoUID
+		gid      = p9.NoGID
 	)
-	protocolDir, err := MkdirAll(listener, components, permissions, uid, gid)
+	valueDir, err := MkdirAll(listener, names, permissions, uid, gid)
 	if err != nil {
 		return err
 	}
-	_, err = protocolDir.Mknod(socket, permissions, 0, 0, p9.NoUID, p9.NoGID)
-	if cErr := protocolDir.Close(); cErr != nil {
+	permissions ^= ExecuteOther | ExecuteGroup | ExecuteUser
+	_, err = valueDir.Mknod(listenerFileName, permissions, 0, 0, p9.NoUID, p9.NoGID)
+	if cErr := valueDir.Close(); cErr != nil {
 		err = fserrors.Join(err, cErr)
 	}
 	return err
+}
+
+// GetListeners returns a slice of maddrs that correspond to
+// active listeners contained within the `listener` file.
+func GetListeners(listener p9.File) ([]multiaddr.Multiaddr, error) {
+	var (
+		ctx, cancel = context.WithCancel(context.Background())
+		results     = getListeners(ctx, listener)
+	)
+	defer cancel()
+	return aggregateResults(cancel, results)
+}
+
+func getListeners(ctx context.Context, listener p9.File) <-chan maddrResult {
+	return mapDirPipeline(ctx, listener, listenerPipeline)
+}
+
+func listenerPipeline(ctx context.Context,
+	listener p9.File,
+	wg *sync.WaitGroup, results chan<- maddrResult,
+) {
+	defer wg.Done()
+	processFile := func(result fileResult) {
+		defer wg.Done()
+		if err := result.error; err != nil {
+			sendResult(ctx, results, maddrResult{error: err})
+			return
+		}
+		var (
+			listenerFile = result.value
+			maddr, err   = parseListenerFile(listenerFile)
+		)
+		if cErr := listenerFile.Close(); cErr != nil {
+			err = fserrors.Join(err, cErr)
+		}
+		sendResult(ctx, results, maddrResult{value: maddr, error: err})
+	}
+	for result := range findFiles(ctx, listener, listenerFileName) {
+		wg.Add(1)
+		go processFile(result)
+	}
+}
+
+func parseListenerFile(file p9.File) (multiaddr.Multiaddr, error) {
+	maddrBytes, err := ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+	return multiaddr.NewMultiaddr(string(maddrBytes))
+}
+
+// GetConnections returns a slice of info that corresponds to
+// active connections contained within the `listener` file.
+func GetConnections(listener p9.File) ([]ConnInfo, error) {
+	var (
+		ctx, cancel = context.WithCancel(context.Background())
+		results     = getConnections(ctx, listener)
+	)
+	defer cancel()
+	return aggregateResults(cancel, results)
+}
+
+func getConnections(ctx context.Context, listener p9.File) <-chan connInfoResult {
+	return mapDirPipeline(ctx, listener, connectionPipeline)
+}
+
+func connectionPipeline(ctx context.Context,
+	listener p9.File,
+	wg *sync.WaitGroup, results chan<- connInfoResult,
+) {
+	defer wg.Done()
+	processFile := func(result fileResult) {
+		defer wg.Done()
+		if err := result.error; err != nil {
+			sendResult(ctx, results, connInfoResult{error: err})
+			return
+		}
+		connDir := result.value
+		defer func() {
+			if err := connDir.Close(); err != nil {
+				sendResult(ctx, results, connInfoResult{error: err})
+			}
+		}()
+		for fileRes := range flattenDir(ctx, connDir) {
+			if err := fileRes.error; err != nil {
+				sendResult(ctx, results, connInfoResult{error: err})
+				continue
+			}
+			var (
+				connFile  = fileRes.value
+				info, err = parseConnFile(connFile)
+			)
+			if cErr := connFile.Close(); cErr != nil {
+				err = fserrors.Join(err, cErr)
+			}
+			sendResult(ctx, results, connInfoResult{value: info, error: err})
+		}
+	}
+	for result := range findFiles(ctx, listener, connectionsFileName) {
+		wg.Add(1)
+		go processFile(result)
+	}
+}
+
+func parseConnFile(file p9.File) (ConnInfo, error) {
+	connData, err := ReadAll(file)
+	if err != nil {
+		return ConnInfo{}, err
+	}
+	var info ConnInfo
+	return info, json.Unmarshal(connData, &info)
 }
 
 func (ld *Listener) Walk(names []string) ([]p9.QID, p9.File, error) {
@@ -141,8 +288,13 @@ func (ld *Listener) Walk(names []string) ([]p9.QID, p9.File, error) {
 }
 
 func (ld *Listener) Link(file p9.File, name string) error {
-	if _, err := getProtocol(name); err != nil {
-		return fmt.Errorf("%w - %s", perrors.EIO, err)
+	var (
+		_, pOk = file.(*protocolDir)
+		_, vOk = file.(*valueDir)
+		ok     = pOk || vOk
+	)
+	if !ok {
+		return fmt.Errorf("%w - unexpected file type", perrors.EACCES)
 	}
 	return ld.directory.Link(file, name)
 }
@@ -170,37 +322,8 @@ func (ld *Listener) Mkdir(name string, permissions p9.FileMode, uid p9.UID, gid 
 		linkSync:       link,
 		directory:      directory,
 		protocol:       protocol,
-		renameAllowed:  new(atomic.Bool),
 	}
 	return qid, ld.directory.Link(protoDir, name)
-}
-
-func (ls *listenerShared) listen(maddr multiaddr.Multiaddr, permissions p9.FileMode) (manet.Listener, error) {
-	udsPath, err := maybeGetUDSPath(maddr)
-	if err != nil {
-		return nil, err
-	}
-	var cleanup func() error
-	if len(udsPath) > 0 {
-		hostPermissions := permissions.Permissions().OSMode()
-		if cleanup, err = maybeMakeParentDir(udsPath, hostPermissions); err != nil {
-			return nil, err
-		}
-	}
-	listener, err := manet.Listen(maddr)
-	if err != nil {
-		if cleanup != nil {
-			return nil, fserrors.Join(err, cleanup())
-		}
-		return nil, err
-	}
-	if cleanup != nil {
-		listener = &listenerCloser{
-			Listener:     listener,
-			afterCloseFn: cleanup,
-		}
-	}
-	return &listenerOnceCloser{Listener: listener}, nil
 }
 
 func (ls *listenerShared) mkdir(directory p9.File, name string,
@@ -222,99 +345,6 @@ func (ls *listenerShared) mkdir(directory p9.File, name string,
 	)
 }
 
-func (ls *listenerShared) mkListenerFile(parent p9.File, name string,
-	permissions p9.FileMode, uid p9.UID, gid p9.GID,
-	listener manet.Listener,
-) (p9.QID, *listenerFile, error) {
-	var (
-		path          = ls.path
-		metadata, err = makeMetadata(p9.ModeRegular|permissions.Permissions(),
-			WithUID[metadataOption](uid),
-			WithGID[metadataOption](gid),
-			WithPath[metadataOption](path),
-		)
-	)
-	if err != nil {
-		return p9.QID{}, nil, err
-	}
-	link, err := newLinkSync(
-		WithParent[linkOption](parent, name),
-		WithoutRename[linkOption](true),
-	)
-	if err != nil {
-		return p9.QID{}, nil, err
-	}
-	metadata.Size = uint64(len(listener.Multiaddr().String()))
-	listenerFile := &listenerFile{
-		metadata: metadata,
-		unlinked: new(atomic.Bool),
-		linkSync: link,
-		Listener: listener,
-	}
-	metadata.incrementPath()
-	return *metadata.QID, listenerFile, nil
-}
-
-func (ls *listenerShared) rename(directory p9.File, oldName, newName string) error {
-	_, oldFile, err := directory.Walk([]string{oldName})
-	if err != nil {
-		return err
-	}
-	_, _, attr, err := oldFile.GetAttr(p9.AttrMask{Mode: true})
-	if err != nil {
-		return err
-	}
-	if _, err := directory.Mknod(newName, attr.Mode, 0, 0, p9.NoUID, p9.NoGID); err != nil {
-		return err
-	}
-	const flags = 0
-	if err := ls.unlinkAt(directory, oldName, flags); err != nil {
-		return err
-	}
-	return oldFile.Close()
-}
-
-func (ls *listenerShared) mknod(parent p9.File, maddr multiaddr.Multiaddr,
-	name string, mode p9.FileMode, uid p9.UID, gid p9.GID,
-) (p9.QID, error) {
-	uid, gid, err := mkPreamble(parent, name, uid, gid)
-	if err != nil {
-		return p9.QID{}, err
-	}
-	listener, err := ls.listen(maddr, mode)
-	if err != nil {
-		return p9.QID{}, err
-	}
-	qid, file, err := ls.mkListenerFile(parent, name, mode, uid, gid, listener)
-	if err != nil {
-		return p9.QID{}, err
-	}
-	if err := parent.Link(file, name); err != nil {
-		return p9.QID{}, fserrors.Join(err, listener.Close())
-	}
-	fileListener := file.unlinkOnListenerClose()
-	if err := ls.emitter.emit(fileListener); err != nil {
-		return p9.QID{}, fserrors.Join(err, fileListener.Close())
-	}
-	return qid, nil
-}
-
-// unlinkAt will always unlink name,
-// but if its file contains a listener, it will also close the listener.
-func (ls *listenerShared) unlinkAt(parent directory, name string, flags uint32) error {
-	_, file, wErr := parent.Walk([]string{name})
-	if wErr != nil {
-		return wErr
-	}
-	err := parent.UnlinkAt(name, flags)
-	if lFile, ok := file.(*listenerFile); ok {
-		lFile.unlinked.Store(true)
-		listener := lFile.Listener
-		err = fserrors.Join(err, listener.Close())
-	}
-	return fserrors.Join(err, file.Close())
-}
-
 func (pd *protocolDir) Walk(names []string) ([]p9.QID, p9.File, error) {
 	qids, file, err := pd.directory.Walk(names)
 	if len(names) == 0 {
@@ -323,21 +353,9 @@ func (pd *protocolDir) Walk(names []string) ([]p9.QID, p9.File, error) {
 			listenerShared: pd.listenerShared,
 			linkSync:       pd.linkSync,
 			protocol:       pd.protocol,
-			renameAllowed:  pd.renameAllowed,
 		}
 	}
 	return qids, file, err
-}
-
-func (pd *protocolDir) RenameAt(oldName string, newDir p9.File, newName string) error {
-	if !pd.renameAllowed.Load() {
-		return fmt.Errorf("%w - only directories containing listeners may rename", perrors.EACCES)
-	}
-	clone, ok := newDir.(*protocolDir)
-	if !ok || clone.protocol != pd.protocol {
-		return fmt.Errorf("%w - only direct descendants may be moved", perrors.EACCES)
-	}
-	return pd.listenerShared.rename(pd, oldName, newName)
 }
 
 func (pd *protocolDir) Renamed(newDir p9.File, newName string) {
@@ -345,11 +363,8 @@ func (pd *protocolDir) Renamed(newDir p9.File, newName string) {
 }
 
 func (pd *protocolDir) Link(file p9.File, name string) error {
-	if !pd.protocol.Path {
-		protocol := pd.protocol.Name
-		if _, err := multiaddr.NewComponent(protocol, name); err != nil {
-			return err
-		}
+	if _, ok := file.(*valueDir); !ok {
+		return fmt.Errorf("%w - unexpected file type", perrors.EACCES)
 	}
 	return pd.directory.Link(file, name)
 }
@@ -380,54 +395,11 @@ func (pd *protocolDir) Mkdir(name string, permissions p9.FileMode, uid p9.UID, g
 		linkSync:       link,
 		directory:      directory,
 		component:      component,
-		renameAllowed:  new(atomic.Bool),
+		connDirMu:      new(sync.Mutex),
+		connDirPtr:     new(*connDir),
+		connIndex:      new(atomic.Uintptr),
 	}
 	return qid, pd.directory.Link(newDir, name)
-}
-
-func (pd *protocolDir) Create(name string, flags p9.OpenFlags,
-	permissions p9.FileMode, uid p9.UID, gid p9.GID,
-) (p9.File, p9.QID, uint32, error) {
-	return createViaMknod(pd, name, flags, permissions, uid, gid)
-}
-
-func (pd *protocolDir) Mknod(name string, mode p9.FileMode,
-	major, minor uint32, uid p9.UID, gid p9.GID,
-) (p9.QID, error) {
-	maddr, err := pd.assemble(name)
-	if err != nil {
-		return p9.QID{}, err
-	}
-	qid, err := pd.mknod(pd, maddr, name, mode, uid, gid)
-	if err == nil {
-		pd.renameAllowed.Store(true)
-	}
-	return qid, err
-}
-
-func (pd *protocolDir) UnlinkAt(name string, flags uint32) error {
-	return pd.unlinkAt(pd.directory, name, flags)
-}
-
-func (pd *protocolDir) assemble(name string) (multiaddr.Multiaddr, error) {
-	tail, err := multiaddr.NewComponent(pd.protocol.Name, name)
-	if err != nil {
-		return nil, err
-	}
-	var components []multiaddr.Multiaddr
-	for current := pd.linkSync.parent; current != nil; {
-		switch v := current.(type) {
-		case *protocolDir:
-			current = v.linkSync.parent
-		case *valueDir:
-			components = append(components, v.component)
-			current = v.linkSync.parent
-		default:
-			current = nil
-		}
-	}
-	reverse(components)
-	return multiaddr.Join(append(components, tail)...), nil
 }
 
 func (vd *valueDir) Walk(names []string) ([]p9.QID, p9.File, error) {
@@ -438,21 +410,12 @@ func (vd *valueDir) Walk(names []string) ([]p9.QID, p9.File, error) {
 			listenerShared: vd.listenerShared,
 			linkSync:       vd.linkSync,
 			component:      vd.component,
-			renameAllowed:  vd.renameAllowed,
+			connDirMu:      vd.connDirMu,
+			connDirPtr:     vd.connDirPtr,
+			connIndex:      vd.connIndex,
 		}
 	}
 	return qids, file, err
-}
-
-func (vd *valueDir) RenameAt(oldName string, newDir p9.File, newName string) error {
-	if !vd.renameAllowed.Load() {
-		return fmt.Errorf("%w - only directories containing listeners may rename", perrors.EACCES)
-	}
-	clone, ok := newDir.(*valueDir)
-	if !ok || clone.component != vd.component {
-		return fmt.Errorf("%w - only direct descendants may be moved", perrors.EACCES)
-	}
-	return vd.listenerShared.rename(vd, oldName, newName)
 }
 
 func (vd *valueDir) Renamed(newDir p9.File, newName string) {
@@ -460,10 +423,15 @@ func (vd *valueDir) Renamed(newDir p9.File, newName string) {
 }
 
 func (vd *valueDir) Link(file p9.File, name string) error {
-	if isPathType := vd.component == nil; !isPathType {
-		if _, err := getProtocol(name); err != nil {
-			return fmt.Errorf("%w - %s", perrors.EIO, err)
-		}
+	var (
+		_, pOk = file.(*protocolDir)
+		_, vOk = file.(*valueDir)
+		_, cOk = file.(*connDir)
+		_, fOk = file.(*listenerFile)
+		ok     = pOk || vOk || cOk || fOk
+	)
+	if !ok {
+		return fmt.Errorf("%w - unexpected file type", perrors.EACCES)
 	}
 	return vd.directory.Link(file, name)
 }
@@ -481,16 +449,17 @@ func (vd *valueDir) Mkdir(name string, permissions p9.FileMode, uid p9.UID, gid 
 			return p9.QID{}, err
 		}
 		valueDir := &valueDir{
+			directory:      directory,
 			listenerShared: vd.listenerShared,
 			linkSync:       link,
-			directory:      directory,
-			renameAllowed:  new(atomic.Bool),
+			connDirMu:      vd.connDirMu,
+			connDirPtr:     vd.connDirPtr,
+			connIndex:      vd.connIndex,
 		}
 		return qid, vd.directory.Link(valueDir, name)
 	}
 	protocol, err := getProtocol(name)
 	if err != nil {
-		// TODO: error value
 		return p9.QID{}, fmt.Errorf("%w - %s", perrors.EIO, err)
 	}
 	qid, directory, err := vd.mkdir(vd.directory,
@@ -504,7 +473,6 @@ func (vd *valueDir) Mkdir(name string, permissions p9.FileMode, uid p9.UID, gid 
 		linkSync:       link,
 		directory:      directory,
 		protocol:       protocol,
-		renameAllowed:  new(atomic.Bool),
 	}
 	return qid, vd.directory.Link(protoDir, name)
 }
@@ -518,25 +486,191 @@ func (vd *valueDir) Create(name string, flags p9.OpenFlags,
 func (vd *valueDir) Mknod(name string, mode p9.FileMode,
 	major, minor uint32, uid p9.UID, gid p9.GID,
 ) (p9.QID, error) {
-	maddr, err := vd.assemble(name)
+	if name != listenerFileName {
+		// TODO: add error message
+		return p9.QID{}, perrors.EACCES
+	}
+	maddr, err := vd.assemble()
 	if err != nil {
 		return p9.QID{}, err
 	}
-	qid, err := vd.mknod(vd, maddr, name, mode, uid, gid)
-	if err == nil {
-		vd.renameAllowed.Store(true)
+	if uid, gid, err = mkPreamble(vd, listenerFileName, uid, gid); err != nil {
+		return p9.QID{}, err
 	}
-	return qid, err
+	listener, err := vd.listen(maddr, mode)
+	if err != nil {
+		return p9.QID{}, err
+	}
+	var (
+		closeOnce,
+		unlinkOnce sync.Once
+		unlinked     atomic.Bool
+		netErr       error
+		fileListener = &listenerCloser{
+			Listener: listener,
+			closeFn: func() error {
+				closeOnce.Do(func() {
+					unlinked.Store(true)
+					netErr = listener.Close()
+				})
+				return netErr
+			},
+		}
+	)
+	qid, file, err := vd.newListenerFile(mode, uid, gid, fileListener)
+	if err != nil {
+		return p9.QID{}, fserrors.Join(err, listener.Close())
+	}
+	if err := vd.Link(file, name); err != nil {
+		return p9.QID{}, fserrors.Join(err, listener.Close())
+	}
+	var (
+		link             = file.linkSync
+		unlinkerListener = &listenerCloser{
+			Listener: listener,
+			closeFn: func() error {
+				unlinkOnce.Do(func() {
+					if !unlinked.Load() {
+						unlinkChildSync(link)
+					}
+				})
+				return fileListener.closeFn()
+			},
+		}
+	)
+	if err := vd.emitter.emit(unlinkerListener); err != nil {
+		return p9.QID{}, fserrors.Join(err, unlinkerListener.Close())
+	}
+	return qid, nil
+}
+
+func (vd *valueDir) listen(maddr multiaddr.Multiaddr, permissions p9.FileMode) (manet.Listener, error) {
+	udsPath, err := maybeGetUDSPath(maddr)
+	if err != nil {
+		return nil, err
+	}
+	var cleanup func() error
+	if len(udsPath) > 0 {
+		hostPermissions := permissions.Permissions().OSMode()
+		if cleanup, err = maybeMakeParentDir(udsPath, hostPermissions); err != nil {
+			return nil, err
+		}
+	}
+	listener, err := manet.Listen(maddr)
+	if err != nil {
+		if cleanup != nil {
+			return nil, fserrors.Join(err, cleanup())
+		}
+		return nil, err
+	}
+	var (
+		closeFn = func() error {
+			err := listener.Close()
+			if cleanup != nil {
+				if cErr := cleanup(); cErr != nil {
+					err = fserrors.Join(err, cErr)
+				}
+			}
+			return err
+		}
+		trackingListener = &connTracker{
+			parent: vd,
+			Listener: &listenerCloser{
+				Listener: listener,
+				closeFn:  closeFn,
+			},
+		}
+	)
+	return trackingListener, nil
+}
+
+func (vd *valueDir) newListenerFile(
+	permissions p9.FileMode, uid p9.UID, gid p9.GID,
+	listener manet.Listener,
+) (p9.QID, *listenerFile, error) {
+	var (
+		path          = vd.path
+		metadata, err = makeMetadata(p9.ModeRegular|permissions.Permissions(),
+			WithUID[metadataOption](uid),
+			WithGID[metadataOption](gid),
+			WithPath[metadataOption](path),
+		)
+	)
+	if err != nil {
+		return p9.QID{}, nil, err
+	}
+	link, err := newLinkSync(
+		WithParent[linkOption](vd, listenerFileName),
+		WithoutRename[linkOption](true),
+	)
+	if err != nil {
+		return p9.QID{}, nil, err
+	}
+	metadata.Size = uint64(len(listener.Multiaddr().String()))
+	listenerFile := &listenerFile{
+		metadata: metadata,
+		linkSync: link,
+		Listener: listener,
+	}
+	metadata.incrementPath()
+	return *metadata.QID, listenerFile, nil
 }
 
 func (vd *valueDir) UnlinkAt(name string, flags uint32) error {
-	return vd.unlinkAt(vd.directory, name, flags)
+	directory := vd.directory
+	_, file, err := directory.Walk([]string{name})
+	if err != nil {
+		return err
+	}
+	// NOTE: non-fs errors are ignored in this operation.
+	if lFile, ok := file.(*listenerFile); ok {
+		lFile.Listener.Close()
+	}
+	if _, ok := file.(*connDir); ok {
+		// HACK: we can't compare this file
+		// and our vd.*file (because our Walk
+		// gives a unique instance). So we just
+		// assume it's the one we constructed.
+		// If we expect files to move around
+		// a UUID could be placed on the connDir.
+		// Or a deconstructor could be paired with it
+		// (similar to how ephemeral dirs ref count works).
+		vd.connDirMu.Lock()
+		*vd.connDirPtr = nil
+		vd.connDirMu.Unlock()
+	}
+	return fserrors.Join(
+		file.Close(),
+		directory.UnlinkAt(name, flags),
+	)
 }
 
-func (vd *valueDir) assemble(name string) (multiaddr.Multiaddr, error) {
+func (pd *valueDir) assemble() (multiaddr.Multiaddr, error) {
+	tail := pd.component
+	if isPath := tail == nil; isPath {
+		return pd.assemblePath()
+	}
+	var components []multiaddr.Multiaddr
+	for current := pd.linkSync.parent; current != nil; {
+		switch v := current.(type) {
+		case *protocolDir:
+			current = v.linkSync.parent
+		case *valueDir:
+			components = append(components, v.component)
+			current = v.linkSync.parent
+		default:
+			current = nil
+		}
+	}
+	reverse(components)
+	return multiaddr.Join(append(components, tail)...), nil
+}
+
+func (vd *valueDir) assemblePath() (multiaddr.Multiaddr, error) {
 	var (
-		names   = []string{name, vd.linkSync.child}
-		current = vd.linkSync.parent
+		link    = vd.linkSync.link
+		names   = []string{link.child}
+		current = link.parent
 	)
 	for intermediate, ok := current.(*valueDir); ok; intermediate, ok = current.(*valueDir) {
 		current = intermediate.linkSync.parent
@@ -555,47 +689,114 @@ func (vd *valueDir) assemble(name string) (multiaddr.Multiaddr, error) {
 	return multiaddr.NewMultiaddr(maddrString)
 }
 
-func (lf *listenerFile) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
-	return lf.metadata.SetAttr(valid, attr)
-}
-
-func (lf *listenerFile) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
-	return lf.metadata.GetAttr(req)
-}
-
-func (lf *listenerFile) opened() bool {
-	return lf.ReaderAt != nil
-}
-
-func (lf *listenerFile) unlinkOnListenerClose() manet.Listener {
-	var (
-		link     = lf.linkSync
-		unlinked = lf.unlinked
-	)
-	return &listenerCloser{
-		Listener: lf.Listener,
-		unlinked: unlinked,
-		afterCloseFn: func() error {
-			link.mu.Lock()
-			defer link.mu.Unlock()
-			if unlinked.Load() {
-				return nil
-			}
-			const flags = 0
-			_, clone, err := link.parent.Walk(nil)
-			if err != nil {
-				return err
-			}
-			if err := fserrors.Join(
-				clone.UnlinkAt(link.child, flags),
-				clone.Close(),
-			); err != nil {
-				return err
-			}
-			unlinked.Store(true)
-			return nil
-		},
+func (vd *valueDir) getConnDir() (*connDir, error) {
+	vd.connDirMu.Lock()
+	defer vd.connDirMu.Unlock()
+	if cd := *vd.connDirPtr; cd != nil {
+		_, f, err := cd.Walk(nil)
+		if err != nil {
+			return nil, err
+		}
+		return f.(*connDir), nil
 	}
+	uid, gid, err := mkPreamble(vd, connectionsFileName, p9.NoUID, p9.NoGID)
+	if err != nil {
+		return nil, err
+	}
+	const permissions = ExecuteOther |
+		ExecuteGroup | WriteGroup | ReadGroup |
+		ExecuteUser | WriteUser | ReadUser
+	cleanup := vd.cleanupEmpties
+	_, dir, err := NewDirectory(
+		WithPath[DirectoryOption](vd.path),
+		WithPermissions[DirectoryOption](permissions),
+		WithUID[DirectoryOption](uid),
+		WithGID[DirectoryOption](gid),
+		WithParent[DirectoryOption](vd, connectionsFileName),
+		UnlinkWhenEmpty[DirectoryOption](cleanup),
+		UnlinkEmptyChildren[DirectoryOption](cleanup),
+	)
+	if err != nil {
+		return nil, err
+	}
+	cd := &connDir{
+		directory: dir,
+		path:      vd.path,
+	}
+	_, f, err := cd.Walk(nil)
+	if err != nil {
+		return nil, err
+	}
+	vd.connDirPtr = &cd
+	vd.Link(cd, connectionsFileName)
+	return f.(*connDir), nil
+}
+
+func (cd *connDir) Walk(names []string) ([]p9.QID, p9.File, error) {
+	qids, file, err := cd.directory.Walk(names)
+	if len(names) == 0 {
+		file = &connDir{
+			directory: file,
+			path:      cd.path,
+		}
+	}
+	return qids, file, err
+}
+
+func (cd *connDir) Link(file p9.File, name string) error {
+	if _, ok := file.(*connFile); !ok {
+		return fmt.Errorf("%w - unexpected file type", perrors.EACCES)
+	}
+	return cd.directory.Link(file, name)
+}
+
+func (cd *connDir) UnlinkAt(name string, flags uint32) error {
+	directory := cd.directory
+	_, file, err := directory.Walk([]string{name})
+	if err != nil {
+		return err
+	}
+	if cFile, ok := file.(*connFile); ok {
+		cFile.trackedConn.Close()
+	}
+	return fserrors.Join(
+		file.Close(),
+		directory.UnlinkAt(name, flags),
+	)
+}
+
+func (cd *connDir) newConnFile(name string, id uintptr, permissions p9.FileMode, uid p9.UID, gid p9.GID,
+	conn trackedConn,
+) (p9.QID, *connFile, error) {
+	uid, gid, err := maybeInheritIDs(cd, uid, gid)
+	if err != nil {
+		return p9.QID{}, nil, err
+	}
+	path := cd.path
+	metadata, err := makeMetadata(p9.ModeRegular|permissions,
+		WithUID[metadataOption](uid),
+		WithGID[metadataOption](gid),
+		WithPath[metadataOption](path),
+	)
+	if err != nil {
+		return p9.QID{}, nil, err
+	}
+
+	link, err := newLinkSync(
+		WithParent[linkOption](cd, name),
+		WithoutRename[linkOption](true),
+	)
+	if err != nil {
+		return p9.QID{}, nil, err
+	}
+	connFile := &connFile{
+		connID:      id,
+		trackedConn: conn,
+		metadata:    metadata,
+		linkSync:    link,
+	}
+	metadata.incrementPath()
+	return *metadata.QID, connFile, nil
 }
 
 func (lf *listenerFile) Walk(names []string) ([]p9.QID, p9.File, error) {
@@ -608,50 +809,46 @@ func (lf *listenerFile) Walk(names []string) ([]p9.QID, p9.File, error) {
 	return nil, &listenerFile{
 		Listener: lf.Listener,
 		metadata: lf.metadata,
-		unlinked: lf.unlinked,
 		linkSync: lf.linkSync,
 	}, nil
 }
 
-func (lf *listenerFile) Rename(newDir p9.File, newName string) error {
-	return lf.linkSync.rename(lf, newDir, newName)
+func (lf *listenerFile) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
+	return lf.metadata.SetAttr(valid, attr)
 }
 
-func (lf *listenerFile) Renamed(newDir p9.File, newName string) {
-	lf.linkSync.Renamed(newDir, newName)
+func (lf *listenerFile) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
+	return lf.metadata.GetAttr(req)
 }
 
 func (lf *listenerFile) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
 	if lf.opened() {
 		return p9.QID{}, 0, perrors.EBADF
 	}
-	// TODO: expose binary mode.
-	// Either here via a flag, or in ReadAt via negative offset.
-	// ^control file might be less brittle.
-	lf.ReaderAt = strings.NewReader(lf.Listener.Multiaddr().String())
-	// lf.ReaderAt = bytes.NewReader(lf.Listener.Multiaddr().Bytes())
+	lf.openFlags = lf.withOpenedFlag(mode)
 	return *lf.QID, 0, nil
 }
 
+func (lf *listenerFile) Close() error {
+	lf.openFlags = 0
+	lf.ReaderAt = nil
+	return nil
+}
+
 func (lf *listenerFile) ReadAt(p []byte, offset int64) (int, error) {
-	if !lf.opened() { // TODO: spec compliance check - may need to check flags too.
-		return 0, perrors.EINVAL
+	reader := lf.ReaderAt
+	if reader == nil {
+		if !lf.canRead() {
+			return -1, perrors.EBADF
+		}
+		data := lf.Listener.Multiaddr().String()
+		reader = strings.NewReader(data)
+		lf.ReaderAt = reader
 	}
-	return lf.ReaderAt.ReadAt(p, offset)
+	return reader.ReadAt(p, offset)
 }
 
-func (lc *listenerOnceCloser) Close() error {
-	lc.Once.Do(func() { lc.error = lc.Listener.Close() })
-	return lc.error
-}
-
-func (lc *listenerCloser) Close() error {
-	return fserrors.Join(lc.Listener.Close(), lc.afterCloseFn())
-}
-
-func (lc *listenerCloser) Unlinked() bool {
-	return lc.unlinked.Load()
-}
+func (lc *listenerCloser) Close() error { return lc.closeFn() }
 
 func getProtocol(name string) (*multiaddr.Protocol, error) {
 	protocol := multiaddr.ProtocolWithName(name)
@@ -712,4 +909,163 @@ func splitMaddr(maddr multiaddr.Multiaddr) (components []*multiaddr.Component, n
 		return true
 	})
 	return
+}
+
+func (ct *connTracker) Accept() (manet.Conn, error) {
+	conn, err := ct.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	parent := ct.parent
+	connDir, err := parent.getConnDir()
+	if err != nil {
+		return nil, unwind(err, conn.Close)
+	}
+	var (
+		closeOnce,
+		unlinkOnce sync.Once
+		unlinked atomic.Bool
+		netErr   error
+		tracked  = p9net.NewTrackedConn(conn)
+		fileConn = &connCloser{
+			trackedConn: tracked,
+			closeFn: func() error {
+				closeOnce.Do(func() {
+					unlinked.Store(true)
+					netErr = tracked.Close()
+				})
+				return netErr
+			},
+		}
+		index = parent.connIndex.Add(1)
+		name  = strconv.Itoa(int(index))
+	)
+	const permissions = ReadOther | ReadGroup | ReadUser
+	_, file, err := connDir.newConnFile(
+		name, index,
+		permissions, p9.NoUID, p9.NoGID,
+		fileConn,
+	)
+	if err != nil {
+		return nil, unwind(err, conn.Close, connDir.Close)
+	}
+	if err := connDir.Link(file, name); err != nil {
+		return nil, unwind(err, conn.Close, connDir.Close)
+	}
+	var (
+		link         = file.linkSync
+		connUnlinker = &connCloser{
+			trackedConn: fileConn,
+			closeFn: func() error {
+				unlinkOnce.Do(func() {
+					if !unlinked.Load() {
+						unlinkChildSync(link)
+					}
+				})
+				return fileConn.closeFn()
+			},
+		}
+	)
+	if err := connDir.Close(); err != nil {
+		return nil, unwind(err, conn.Close, fileConn.Close)
+	}
+	return connUnlinker, nil
+}
+
+func (cf *connFile) marshal() ([]byte, error) {
+	tracked := cf.trackedConn
+	return json.Marshal(ConnInfo{
+		ID:        cf.connID,
+		Local:     tracked.LocalMultiaddr(),
+		Remote:    tracked.RemoteMultiaddr(),
+		LastRead:  tracked.LastRead(),
+		LastWrite: tracked.LastWrite(),
+	})
+}
+
+func (cf *connFile) Walk(names []string) ([]p9.QID, p9.File, error) {
+	if len(names) > 0 {
+		return nil, nil, perrors.ENOTDIR
+	}
+	if cf.opened() {
+		return nil, nil, fidOpenedErr
+	}
+	return nil, &connFile{
+		connID:      cf.connID,
+		trackedConn: cf.trackedConn,
+		metadata:    cf.metadata,
+		linkSync:    cf.linkSync,
+	}, nil
+}
+
+func (cf *connFile) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
+	return cf.metadata.SetAttr(valid, attr)
+}
+
+func (cf *connFile) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
+	if req.Size {
+		data, err := cf.marshal()
+		if err != nil {
+			return p9.QID{}, p9.AttrMask{}, p9.Attr{}, err
+		}
+		cf.metadata.Size = uint64(len(data))
+	}
+	return cf.metadata.GetAttr(req)
+}
+
+func (cf *connFile) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
+	if cf.opened() {
+		return p9.QID{}, 0, perrors.EBADF
+	}
+	cf.openFlags = cf.withOpenedFlag(mode)
+	return *cf.QID, 0, nil
+}
+
+func (cf *connFile) Close() error {
+	cf.openFlags = 0
+	cf.ReaderAt = nil
+	return nil
+}
+
+func (cf *connFile) ReadAt(p []byte, offset int64) (int, error) {
+	reader := cf.ReaderAt
+	if reader == nil {
+		if !cf.canRead() {
+			return -1, perrors.EBADF
+		}
+		data, err := cf.marshal()
+		if err != nil {
+			return -1, err
+		}
+		reader = bytes.NewReader(data)
+		cf.ReaderAt = reader
+	}
+	return reader.ReadAt(p, offset)
+}
+
+func (cc *connCloser) Close() error { return cc.closeFn() }
+
+func (ci *ConnInfo) UnmarshalJSON(data []byte) error {
+	var maddrBuff struct {
+		Local  string `json:"local"`
+		Remote string `json:"remote"`
+	}
+	if err := json.Unmarshal(data, &maddrBuff); err != nil {
+		return err
+	}
+	var err error
+	if ci.Local, err = multiaddr.NewMultiaddr(maddrBuff.Local); err != nil {
+		return err
+	}
+	if ci.Remote, err = multiaddr.NewMultiaddr(maddrBuff.Remote); err != nil {
+		return err
+	}
+	return json.Unmarshal(data, &struct {
+		ID        *uintptr   `json:"#"`
+		LastRead  *time.Time `json:"lastRead"`
+		LastWrite *time.Time `json:"lastWrite"`
+	}{
+		ID:       &ci.ID,
+		LastRead: &ci.LastRead, LastWrite: &ci.LastWrite,
+	})
 }
