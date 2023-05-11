@@ -11,7 +11,7 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
-	coreiface "github.com/ipfs/interface-go-ipfs-core"
+	coreiface "github.com/ipfs/boxo/coreiface"
 )
 
 type (

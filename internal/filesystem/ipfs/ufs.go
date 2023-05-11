@@ -8,9 +8,9 @@ import (
 
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
-	files "github.com/ipfs/go-ipfs-files"
+	files "github.com/ipfs/boxo/files"
+	unixfsfile "github.com/ipfs/boxo/ipld/unixfs/file"
 	ipld "github.com/ipfs/go-ipld-format"
-	unixfsfile "github.com/ipfs/go-unixfs/file"
 )
 
 type (

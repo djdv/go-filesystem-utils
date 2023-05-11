@@ -9,7 +9,7 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
-	coreiface "github.com/ipfs/interface-go-ipfs-core"
+	coreiface "github.com/ipfs/boxo/coreiface"
 	"github.com/multiformats/go-multiaddr"
 )
 

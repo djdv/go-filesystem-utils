@@ -12,14 +12,14 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
+	coreiface "github.com/ipfs/boxo/coreiface"
+	dag "github.com/ipfs/boxo/ipld/merkledag"
+	"github.com/ipfs/boxo/ipld/unixfs"
+	unixpb "github.com/ipfs/boxo/ipld/unixfs/pb"
 	"github.com/ipfs/go-cid"
 	ipfscmds "github.com/ipfs/go-ipfs-cmds"
 	cbor "github.com/ipfs/go-ipld-cbor"
 	ipld "github.com/ipfs/go-ipld-format"
-	dag "github.com/ipfs/go-merkledag"
-	"github.com/ipfs/go-unixfs"
-	unixpb "github.com/ipfs/go-unixfs/pb"
-	coreiface "github.com/ipfs/interface-go-ipfs-core"
 	"github.com/multiformats/go-multibase"
 )
 

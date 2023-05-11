@@ -13,10 +13,10 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	lru "github.com/hashicorp/golang-lru/v2"
+	coreiface "github.com/ipfs/boxo/coreiface"
+	corepath "github.com/ipfs/boxo/coreiface/path"
 	"github.com/ipfs/go-cid"
 	ipld "github.com/ipfs/go-ipld-format"
-	coreiface "github.com/ipfs/interface-go-ipfs-core"
-	corepath "github.com/ipfs/interface-go-ipfs-core/path"
 )
 
 type (
