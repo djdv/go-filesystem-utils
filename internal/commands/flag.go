@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -77,6 +76,29 @@ type (
 )
 
 const (
+	permMaximum    = 0o7777
+	permReadAll    = 0o444
+	permWriteAll   = 0o222
+	permExecuteAll = 0o111
+	permUserBits   = os.ModeSticky | os.ModeSetuid | 0o700
+	permGroupBits  = os.ModeSetgid | 0o070
+	permOtherBits  = 0o007
+	permSetid      = fs.ModeSetuid | fs.ModeSetgid
+	permAllBits    = permUserBits | permGroupBits | permOtherBits
+	permOpAdd      = '+'
+	permOpSub      = '-'
+	permOpSet      = '='
+	permWhoUser    = 'u'
+	permWhoGroup   = 'g'
+	permWhoOther   = 'o'
+	permWhoAll     = 'a'
+	permSymRead    = 'r'
+	permSymWrite   = 'w'
+	permSymExecute = 'x'
+	permSymSearch  = 'X'
+	permSymSetID   = 's'
+	permSymText    = 't'
+
 	ipfsAPIFileName      = "api"
 	ipfsConfigEnv        = giconfig.EnvDir
 	ipfsConfigDefaultDir = giconfig.DefaultPathRoot
@@ -174,197 +196,230 @@ func parseShutdownLevel(level string) (shutdownDisposition, error) {
 	return generic.ParseEnum(minimumShutdown, maximumShutdown, level)
 }
 
-// parsePOSIXPermissions accepts a SUSv4;BSi7 `chmod` mode operand.
-func parsePOSIXPermissions(clauses string) (fs.FileMode, error) {
+// parsePOSIXPermissions accepts a `chmod` "mode" parameter
+// (as defined in SUSv4;BSi7), and returns the result of
+// applying it to the `mode` value.
+func parsePOSIXPermissions(mode fs.FileMode, clauses string) (fs.FileMode, error) {
+	// NOTE: The POSIX specification uses ASCII,
+	// and so does the current version of this parser.
+	// As a result, Unicode digits for octals and
+	// any alternate symbol forms - are not supported.
 	const (
 		base = 8
 		bits = int(unsafe.Sizeof(fs.FileMode(0))) * base
 	)
-	if mode, err := strconv.ParseUint(clauses, base, bits); err == nil {
-		return translateOctalPermissions(mode), nil
+	if value, err := strconv.ParseUint(clauses, base, bits); err == nil {
+		if value > permMaximum {
+			return 0, fmt.Errorf(`%w: "%s" exceeds permission bits boundary (%o)`,
+				strconv.ErrSyntax, clauses, permMaximum)
+		}
+		return parseOctalPermissions(mode, fs.FileMode(value)), nil
 	}
+	return evalPermissionClauses(
+		mode,
+		parseOctalPermissions(0, getUmask()),
+		strings.Split(clauses, ","),
+	)
+}
+
+func parseOctalPermissions(mode, operand fs.FileMode) fs.FileMode {
 	const (
-		whoRe         = "([ugoa]*)"
-		matchWho      = 1
-		clauseRe      = "([-+=]+)"
-		matchClause   = 2
-		matchMin      = matchClause
-		permRe        = "([rwxugo]*)"
-		matchPerm     = 3
-		historicRe    = "((?:[-+=]?[rwxugo]{1})*)"
-		matchHistoric = 4
-		fullRe        = "^" + whoRe + clauseRe + permRe + historicRe + "$"
-		matchMax      = matchHistoric + 1
+		posixSuid = 0o4000
+		posixSgid = 0o2000
+		posixText = 0o1000
 	)
 	var (
-		operations   = strings.Split(clauses, ",")
-		permissionRe = regexp.MustCompile(fullRe)
-		mode         fs.FileMode
+		explicitHighBits bool
+		permissions      = operand.Perm()
 	)
-	for _, operation := range operations {
-		matches := permissionRe.FindStringSubmatch(operation)
-		if len(matches) < matchMin {
-			return 0, fmt.Errorf(`%w: "%s" is neither an octal or symbolic permission`,
-				strconv.ErrSyntax, operation)
+	for _, pair := range [...]struct {
+		posix, golang fs.FileMode
+	}{
+		{
+			posix:  posixSuid,
+			golang: fs.ModeSetuid,
+		},
+		{
+			posix:  posixSgid,
+			golang: fs.ModeSetgid,
+		},
+		{
+			posix:  posixText,
+			golang: fs.ModeSticky,
+		},
+	} {
+		if operand&pair.posix != 0 {
+			permissions |= pair.golang
+			explicitHighBits = true
 		}
-		if who := matches[matchWho]; who == "" || who == "a" {
-			matches[matchWho] = "ugo"
+	}
+	// SUSv4;BSi7 Extended description;
+	// sentence directly preceding octal table.
+	if mode.IsDir() && !explicitHighBits {
+		permissions |= mode & (permSetid | fs.ModeSticky)
+	}
+	return mode.Type() | permissions
+}
+
+func evalPermissionClauses(mode, umask fs.FileMode, clauses []string) (fs.FileMode, error) {
+	for _, clause := range clauses {
+		if clause == "" {
+			return 0, generic.ConstError("empty clause")
 		}
-		var permBits fs.FileMode
-		if len(matches) >= matchPerm {
-			permBits = parseSymbolicPermission(&mode, matches[matchWho], matches[matchPerm])
-		}
-		if err := evaluatePermissionsExpression(&mode,
-			matches[matchWho], matches[matchClause], permBits,
-		); err != nil {
-			return 0, err
-		}
-		if len(matches) >= matchHistoric {
-			if err := handleHistoricPermissions(&mode, matches[matchWho], matches[matchHistoric]); err != nil {
+		remainder, impliedAll, whoMask := parseWho(clause)
+		for len(remainder) != 0 {
+			var (
+				op          rune
+				permissions fs.FileMode
+				err         error
+			)
+			remainder, op, permissions, err = evalOp(remainder, mode)
+			if err != nil {
 				return 0, err
 			}
+			mode = applyOp(
+				impliedAll, whoMask,
+				mode, permissions,
+				umask, op,
+			)
 		}
 	}
 	return mode, nil
 }
 
-func parseSymbolicPermission(mode *fs.FileMode, who, perm string) (bits fs.FileMode) {
-	const (
-		execute = 1 << iota
-		write
-		read
-
-		otherShift             = 0
-		groupShift             = 3
-		userShift              = 6
-		octalBits              = 3
-		otherMask  fs.FileMode = (1 << octalBits) - 1
-		groupMask  fs.FileMode = ((1 << octalBits) - 1) << groupShift
-		userMask   fs.FileMode = ((1 << octalBits) - 1) << userShift
+func parseWho(clause string) (string, bool, fs.FileMode) {
+	var (
+		index int
+		mask  fs.FileMode
 	)
-	for _, r := range perm {
-		switch r {
-		case 'r':
-			bits |= read
-		case 'w':
-			bits |= write
-		case 'x':
-			bits |= execute
-		case 's':
-			for _, r := range who {
-				if r == 'u' {
-					bits |= fs.ModeSetuid
-				}
-				if r == 'g' {
-					bits |= fs.ModeSetgid
-				}
-			}
-		case 't':
-			bits |= fs.ModeSticky
-		case 'X':
-			if mode.IsDir() ||
-				*mode&execute == 1 ||
-				*mode&execute<<groupShift == 1 ||
-				*mode&execute<<userShift == 1 {
-				bits |= execute
-			}
-		case 'u':
-			bits = *mode & userMask >> userShift
-		case 'g':
-			bits = *mode & groupMask >> groupShift
-		case 'o':
-			bits = *mode & otherMask
-		}
-	}
-	return
-}
-
-func evaluatePermissionsExpression(mode *fs.FileMode, who string, ops string, perm fs.FileMode) error {
-	for _, op := range ops {
-		if err := evaluateOp(mode, who, op, perm); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func evaluateOp(mode *fs.FileMode, who string, op rune, perm fs.FileMode) error {
-	const (
-		otherShift             = 0
-		groupShift             = 3
-		userShift              = 6
-		octalBits              = 3
-		otherMask  fs.FileMode = (1 << octalBits) - 1
-		groupMask  fs.FileMode = ((1 << octalBits) - 1) << groupShift
-		userMask   fs.FileMode = ((1 << octalBits) - 1) << userShift
-	)
-	var operation func(shift uint, mask fs.FileMode)
-	switch op {
-	case '-':
-		operation = func(shift uint, _ fs.FileMode) {
-			*mode &^= perm << shift
-		}
-	case '+':
-		operation = func(shift uint, _ fs.FileMode) {
-			*mode |= perm << shift
-		}
-	case '=':
-		operation = func(shift uint, mask fs.FileMode) {
-			*mode = (*mode &^ mask) | perm<<shift
-		}
-	default:
-		return fmt.Errorf(`"%c" is not a valid operator`, op)
-	}
-	for _, w := range who {
-		switch w {
-		case 'o':
-			operation(otherShift, otherMask)
-		case 'g':
-			operation(groupShift, groupMask)
-		case 'u':
-			operation(userShift, userMask)
+out:
+	for _, who := range clause {
+		switch who {
+		case permWhoUser:
+			mask |= permUserBits
+		case permWhoGroup:
+			mask |= permGroupBits
+		case permWhoOther:
+			mask |= permOtherBits
+		case permWhoAll:
+			mask = permAllBits
 		default:
-			return fmt.Errorf(`"%c" is not a valid \"who\" value`, w)
+			break out
 		}
+		index++
 	}
-	return nil
+	// Distinguish between explicit and implied "all".
+	// SUSv4;BSi7 - Operation '=', sentence 3-4.
+	var impliedAll bool
+	if mask == 0 {
+		impliedAll = true
+		mask = permAllBits
+	}
+	return clause[index:], impliedAll, mask
 }
 
-// POSIX calls these "historical-practice forms".
-func handleHistoricPermissions(mode *fs.FileMode, who, hist string) error {
-	var op rune
-	for _, opRune := range hist {
-		if opRune == '-' || opRune == '+' || opRune == '=' {
-			op = opRune
-			continue
-		}
-		if err := evaluateOp(mode, who, op,
-			parseSymbolicPermission(mode, who, string(opRune))); err != nil {
-			return err
-		}
-		op = 0
+func evalOp(operation string, mode fs.FileMode) (string, rune, fs.FileMode, error) {
+	op, operand, err := parseOp(operation)
+	if err != nil {
+		return "", 0, 0, err
 	}
-	return nil
+	remainder, permissions, err := parsePermissions(mode, operand)
+	return remainder, op, permissions, err
 }
 
-func translateOctalPermissions(mode uint64) fs.FileMode {
-	const (
-		S_ISUID = 0o4000
-		S_ISGID = 0o2000
-		S_ISVTX = 0o1000
+func parseOp(clauseOp string) (rune, string, error) {
+	switch op := []rune(clauseOp)[0]; op {
+	case permOpAdd, permOpSub, permOpSet:
+		const opOffset = 1 // WARN: ASCII-ism.
+		return op, clauseOp[opOffset:], nil
+	default:
+		return 0, "", fmt.Errorf("missing op symbol, got: %c", op)
+	}
+}
+
+func parsePermissions(mode fs.FileMode, clauseOperand string) (string, fs.FileMode, error) {
+	remainder, copied, permissions := parsePermcopy(mode, clauseOperand)
+	if copied {
+		return remainder, permissions, nil
+	}
+	var (
+		index int
+		bits  os.FileMode
 	)
-	fsMode := fs.FileMode(mode) & fs.ModePerm
-	for _, bit := range [...]struct {
-		golang fs.FileMode
-		posix  uint64
-	}{
-		{golang: fs.ModeSetuid, posix: S_ISUID},
-		{golang: fs.ModeSetgid, posix: S_ISGID},
-		{golang: fs.ModeSticky, posix: S_ISVTX},
-	} {
-		if mode&bit.posix != 0 {
-			fsMode |= bit.golang
+	for _, perm := range clauseOperand {
+		switch perm {
+		case permSymRead:
+			bits |= permReadAll
+		case permSymWrite:
+			bits |= permWriteAll
+		case permSymExecute:
+			bits |= permExecuteAll
+		case permSymSearch:
+			// SUSv4;BSi7 Extended description paragraph 5.
+			if mode.IsDir() ||
+				(mode&permExecuteAll != 0) {
+				bits |= permExecuteAll
+			}
+		case permSymSetID:
+			bits |= permSetid
+		case permSymText:
+			bits |= fs.ModeSticky
+		case permOpAdd, permOpSub, permOpSet:
+			return clauseOperand[index:], bits, nil
+		default:
+			return "", 0, fmt.Errorf("unexpected perm symbol: %c", perm)
 		}
+		index++
 	}
-	return fsMode
+	return clauseOperand[index:], bits, nil
+}
+
+func parsePermcopy(mode fs.FileMode, clauseFragment string) (string, bool, fs.FileMode) {
+	if len(clauseFragment) == 0 {
+		return "", false, 0
+	}
+	const (
+		groupShift = 3
+		userShift  = 6
+	)
+	var permissions fs.FileMode
+	switch who := []rune(clauseFragment)[0]; who {
+	case permWhoUser:
+		permissions = (mode & permUserBits) >> userShift
+	case permWhoGroup:
+		permissions = (mode & permGroupBits) >> groupShift
+	case permWhoOther:
+		permissions = (mode & permOtherBits)
+	default:
+		return "", false, 0
+	}
+	// Replicate the permission bits to all fields.
+	// (Caller is expected to mask against "who".)
+	permissions |= (permissions << groupShift) |
+		(permissions << userShift)
+	return clauseFragment[1:], true, permissions
+}
+
+func applyOp(impliedAll bool,
+	who, mode, mask, umask fs.FileMode, op rune,
+) fs.FileMode {
+	mask &= who
+	if impliedAll {
+		mask &^= umask
+	}
+	switch op {
+	case '+':
+		mode |= mask
+	case '-':
+		mode &^= mask
+	case '=':
+		// SUSv4;BSi7 says set-*-ID bit handling for non-regular files
+		// is implementation-defined.
+		// Most unices seem to preserve set-*-ID bits for directories.
+		if mode.IsDir() {
+			mask |= (mode & permSetid)
+		}
+		mode = (mode &^ who) | mask
+	}
+	return mode
 }
