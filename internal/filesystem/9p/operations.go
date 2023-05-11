@@ -215,39 +215,17 @@ func mkPreamble(parent p9.File, name string,
 	return maybeInheritIDs(parent, uid, gid)
 }
 
-func ReadDir(dir p9.File) (_ p9.Dirents, err error) {
-	_, dirClone, err := dir.Walk(nil)
-	if err != nil {
-		return nil, err
-	}
-	closeClone := func() {
-		if cErr := dirClone.Close(); cErr != nil {
-			if err == nil {
-				err = cErr
-			} else {
-				err = fserrors.Join(err, cErr)
-			}
-		}
-	}
-	defer closeClone()
-	if _, _, err = dirClone.Open(p9.ReadOnly); err != nil {
-		return nil, err
-	}
+func ReadDir(dir p9.File) (p9.Dirents, error) {
 	var (
-		offset uint64
-		ents   p9.Dirents
+		ents        p9.Dirents
+		ctx, cancel = context.WithCancel(context.Background())
 	)
-	for {
-		entBuf, err := dirClone.Readdir(offset, math.MaxUint32)
-		if err != nil {
+	defer cancel()
+	for result := range getDirents(ctx, dir) {
+		if err := result.error; err != nil {
 			return nil, err
 		}
-		bufferedEnts := len(entBuf)
-		if bufferedEnts == 0 {
-			break
-		}
-		offset = entBuf[bufferedEnts-1].Offset
-		ents = append(ents, entBuf...)
+		ents = append(ents, result.value)
 	}
 	return ents, nil
 }
