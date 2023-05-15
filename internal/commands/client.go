@@ -46,7 +46,7 @@ func (set *clientSettings) getClient(autoLaunchDaemon bool) (*Client, error) {
 	}
 	if autoLaunchDaemon {
 		if _, wasUnset := serviceMaddr.(defaultClientMaddr); wasUnset {
-			return ConnectOrLaunchLocal(clientOpts...)
+			return connectOrLaunchLocal(clientOpts...)
 		}
 	}
 	return Connect(serviceMaddr, clientOpts...)
@@ -84,24 +84,7 @@ func (set *clientSettings) BindFlags(flagSet *flag.FlagSet) {
 
 const ErrServiceNotFound = generic.ConstError("could not find service instance")
 
-// TODO: deprecated; remove
-func getClient(set *clientSettings, autoLaunchDaemon bool) (*Client, error) {
-	var (
-		serviceMaddr = set.serviceMaddr
-		clientOpts   []p9.ClientOpt
-	)
-	if set.verbose {
-		// TODO: less fancy prefix and/or out+prefix from CLI flags
-		clientLog := log.New(os.Stdout, "⬇️ client - ", log.Lshortfile)
-		clientOpts = append(clientOpts, p9.WithClientLogger(clientLog))
-	}
-	if autoLaunchDaemon {
-		return ConnectOrLaunchLocal(clientOpts...)
-	}
-	return Connect(serviceMaddr, clientOpts...)
-}
-
-func ConnectOrLaunchLocal(options ...p9.ClientOpt) (*Client, error) {
+func connectOrLaunchLocal(options ...p9.ClientOpt) (*Client, error) {
 	conn, err := findLocalServer()
 	if err == nil {
 		return newClient(conn, options...)
@@ -109,14 +92,13 @@ func ConnectOrLaunchLocal(options ...p9.ClientOpt) (*Client, error) {
 	if !errors.Is(err, ErrServiceNotFound) {
 		return nil, err
 	}
-	// TODO: const for daemon CLI cmd name
-	return SelfConnect([]string{"daemon"}, options...)
+	return selfConnect([]string{daemonCommandName}, options...)
 }
 
 // TODO: name is misleading,
 // this launches and connects to self.
 // The launching logic should go into its caller.
-func SelfConnect(args []string, options ...p9.ClientOpt) (*Client, error) {
+func selfConnect(args []string, options ...p9.ClientOpt) (*Client, error) {
 	// TODO: should be a ClientOption value?
 	// argument?
 	const defaultDecay = 30 * time.Second
