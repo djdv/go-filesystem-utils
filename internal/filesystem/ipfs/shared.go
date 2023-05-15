@@ -30,10 +30,10 @@ type (
 			IPNSOption | KeyFSOption
 	}
 	nodeInfo struct {
+		modTime time.Time
 		name    string
 		size    int64
 		mode    fs.FileMode
-		modTime time.Time
 	}
 	emptyRoot      struct{ info *nodeInfo }
 	ctxChan[T any] struct {
