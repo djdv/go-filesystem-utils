@@ -41,10 +41,7 @@ type (
 	}
 	ninePath   = *atomic.Uint64
 	fileSystem struct {
-		root interface {
-			p9.File
-			p9.Attacher
-		}
+		root    p9fs.AttacherFile
 		mount   mountSubsystem
 		listen  listenSubsystem
 		control controlSubsystem
