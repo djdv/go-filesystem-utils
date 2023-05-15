@@ -16,7 +16,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
@@ -811,24 +810,20 @@ func watchShutdown(ctx context.Context,
 	return errs
 }
 
-func parseDispositionData(data []byte) (sd shutdownDisposition, err error) {
-	const expectedSize = int(unsafe.Sizeof(sd))
-	if len(data) != expectedSize {
-		err = fmt.Errorf("%w:"+
-			" data is not expected size"+
-			" got: %d, want: %d",
-			errShutdownDisposition, sd, expectedSize,
-		)
-		return
+func parseDispositionData(data []byte) (shutdownDisposition, error) {
+	if len(data) != 1 {
+		str := strings.TrimSpace(string(data))
+		return generic.ParseEnum(minimumShutdown, maximumShutdown, str)
 	}
-	type intent = shutdownDisposition
-	if sd = intent(data[0]); sd > maximumShutdown {
-		err = fmt.Errorf("%w:"+
-			"got: %d, max level is: %d",
-			errShutdownDisposition, sd, maximumShutdown,
+	level := shutdownDisposition(data[0])
+	if level < minimumShutdown || level > maximumShutdown {
+		return 0, fmt.Errorf("%w:"+
+			"got: %d, valid level range is: %d:%d",
+			errShutdownDisposition, level,
+			minimumShutdown, maximumShutdown,
 		)
 	}
-	return
+	return level, nil
 }
 
 func isPipe(file *os.File) bool {
