@@ -81,19 +81,21 @@ type (
 		*T
 		p9fs.FieldParser
 		p9fs.Mounter
+		p9fs.HostIdentifier
 	}
 	mountGuest[T any] interface {
 		*T
 		p9fs.FieldParser
 		p9fs.SystemMaker
+		p9fs.GuestIdentifier
 	}
 	mountPoint[
 		HT, GT any,
 		H mountHost[HT],
 		G mountGuest[GT],
 	] struct {
-		Host  HT
-		Guest GT
+		Host  HT `json:"host"`
+		Guest GT `json:"guest"`
 	}
 )
 
@@ -150,6 +152,14 @@ func (mp *mountPoint[HT, GT, H, G]) MakeFS() (fs.FS, error) {
 
 func (mp *mountPoint[HT, GT, H, G]) Mount(fsys fs.FS) (io.Closer, error) {
 	return H(&mp.Host).Mount(fsys)
+}
+
+func (mp *mountPoint[HT, GT, H, G]) HostID() filesystem.Host {
+	return H(&mp.Host).HostID()
+}
+
+func (mp *mountPoint[HT, GT, H, G]) GuestID() filesystem.ID {
+	return G(&mp.Guest).GuestID()
 }
 
 func (set *daemonSettings) BindFlags(flagSet *flag.FlagSet) {
