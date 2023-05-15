@@ -17,8 +17,8 @@ import (
 type (
 	handleSlice []*fileHandle
 	fileTable   struct {
-		sync.RWMutex
 		files handleSlice
+		sync.RWMutex
 	}
 )
 
