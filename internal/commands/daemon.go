@@ -53,6 +53,7 @@ type (
 	listenSubsystem struct {
 		*p9fs.Listener
 		listeners <-chan manet.Listener
+		cancel    context.CancelFunc
 		name      string
 	}
 	controlSubsystem struct {
@@ -62,20 +63,17 @@ type (
 	}
 	shutdown struct {
 		*p9fs.ChannelFile
-		ch   <-chan []byte
-		name string
+		ch     <-chan []byte
+		cancel context.CancelFunc
+		name   string
 	}
 	daemonSystem struct {
-		log ulog.Logger
-		fileSystem
+		log   ulog.Logger
+		files fileSystem
 	}
 	handleFunc = func(io.ReadCloser, io.WriteCloser) error
 	serveFunc  = func(manet.Listener) error
 	checkFunc  = func() (bool, shutdownDisposition, error)
-
-	stopperChan  = chan shutdownDisposition
-	stopperRead  = <-chan shutdownDisposition
-	stopperWrite = chan<- shutdownDisposition
 
 	mountHost[T any] interface {
 		*T
@@ -239,57 +237,220 @@ func Daemon() command.Command {
 
 func daemonExecute(ctx context.Context, set *daemonSettings) error {
 	dCtx, cancel := context.WithCancel(ctx)
-	system, err := newSystem(dCtx, set)
 	defer cancel()
+	system, err := newSystem(dCtx, set)
 	if err != nil {
 		return err
 	}
+	const errBuffer = 0
 	var (
-		fsys              = system.fileSystem
-		log               = system.log
-		listenSys         = fsys.listen
-		server, serveErrs = makeAndStartServer(fsys, log)
-		stopper, stopErrs = makeStopper(dCtx, cancel, fsys.mount, server, log)
-		shutdownCh        = system.control.shutdown.ch
-		shutdownErrs      = watchShutdown(dCtx, shutdownCh, stopper, log)
-		serverMaddr       = set.serverMaddr
-		listenerFS        = listenSys.Listener
-		errs              = []<-chan error{
-			serveErrs, stopErrs, shutdownErrs,
-		}
-		aggregateErrs = func() (err error) {
-			for _, e := range aggregate(errs...) {
-				err = fserrors.Join(err, e)
-			}
-			if cErr := ctx.Err(); cErr != nil {
-				cErr = fmt.Errorf("daemon: %w", cErr)
-				err = fserrors.Join(cErr, err)
-			}
-			return err
-		}
+		fsys   = system.files
+		log    = system.log
+		server = makeServer(fsys.root, log)
+		stopSend,
+		stopReceive = makeStoppers(ctx)
+		lsnStop,
+		srvStop,
+		mntStop = splitStopper(stopReceive)
+		listenSys = fsys.listen
+		listeners = listenSys.listeners
+		errs      = newWaitGroupChan[error](errBuffer)
 	)
-	relayOSSignal(dCtx, os.Interrupt, stopper)
-	watchCtx(ctx, stopper)
-
-	permissions9 := p9.ModeFromOS(set.permissions)
-	if err := p9fs.Listen(listenerFS, serverMaddr, permissions9); err != nil {
-		stopper <- immediateShutdown
-		const maddrFmt = "net: could not listen on: %s - %w"
-		err = fmt.Errorf(maddrFmt, serverMaddr, err)
-		return fserrors.Join(err, aggregateErrs())
-	}
+	handleListeners(server.Serve, listeners, errs, log)
+	go watchListenersStopper(listenSys.cancel, lsnStop, log)
+	serviceWg := handleStopSequence(dCtx,
+		server, srvStop,
+		fsys.mount, mntStop,
+		errs, log,
+	)
+	var (
+		listener    = listenSys.Listener
+		permissions = p9.ModeFromOS(set.permissions)
+		listenersWg = listenOn(listener, permissions,
+			stopSend, errs,
+			set.serverMaddr,
+		)
+	)
 	if isPipe(os.Stdin) {
-		errs = append(errs, handleStdio(server.Handle))
+		errs.Add(1)
+		go handleStdio(server.Handle, listenersWg, errs)
 	}
-	if idleCheck := set.exitInterval; idleCheck != 0 {
-		errs = append(errs, stopWhen(dCtx, idleCheck, stopper,
-			makeMountChecker(system.mount, log)))
+	var (
+		shutdownFileData = fsys.control.shutdown.ch
+		idleCheck        = set.exitInterval
+	)
+	setupExtraStopWriters(idleCheck, fsys.mount,
+		shutdownFileData,
+		stopSend, errs,
+		log,
+	)
+	go func() {
+		serviceWg.Wait()
+		stopSend.closeSend()
+		stopSend.waitThenCloseCh()
+		errs.waitThenCloseCh()
+	}()
+	for e := range errs.ch {
+		log.Print(e)
+		err = fserrors.Join(err, e)
 	}
+	if err = fserrors.Join(ctx.Err(), err); err != nil {
+		err = fmt.Errorf("daemon: %w", err)
+	}
+	return err
+}
 
-	const emptyInterval = time.Hour
-	errs = append(errs, stopWhen(dCtx, emptyInterval, stopper,
-		makeEmptyChecker(system, log)))
-	return aggregateErrs()
+func makeStoppers(ctx context.Context) (*waitGroupChan[shutdownDisposition], <-chan shutdownDisposition) {
+	var (
+		shutdownChan   = newWaitGroupChan[shutdownDisposition](int(maximumShutdown))
+		shutdownLevels = make(chan shutdownDisposition)
+	)
+	shutdownChan.Add(2)
+	go stopOnSignal(os.Interrupt, shutdownChan)
+	go stopOnDone(ctx, shutdownChan)
+	go func() {
+		sequentialLeveling(shutdownChan.ch, shutdownLevels)
+		close(shutdownLevels)
+	}()
+	return shutdownChan, shutdownLevels
+}
+
+func makeServer(fsys p9.Attacher, log ulog.Logger) *p9net.Server {
+	server := p9net.NewServer(fsys,
+		p9net.WithServerLogger(log),
+	)
+	return server
+}
+
+func splitStopper(shutdownLevels <-chan shutdownDisposition) (_, _, _ <-chan shutdownDisposition) {
+	var lsnShutdownSignals,
+		srvShutdownSignals,
+		mntShutdownSignals <-chan shutdownDisposition
+	relayUnordered(shutdownLevels, &lsnShutdownSignals,
+		&srvShutdownSignals, &mntShutdownSignals)
+	return lsnShutdownSignals, srvShutdownSignals, mntShutdownSignals
+}
+
+func handleListeners(serveFn serveFunc,
+	listeners <-chan manet.Listener, errs *waitGroupChan[error],
+	log ulog.Logger,
+) {
+	if log != nil &&
+		log != ulog.Null {
+		var listenersDuplicate,
+			listenersLog <-chan manet.Listener
+		relayUnordered(listeners,
+			&listenersDuplicate, &listenersLog)
+		listeners = listenersDuplicate
+		go logListeners(log, listenersLog)
+	}
+	errs.Add(1)
+	go serveListeners(serveFn, listeners, errs)
+}
+
+func handleStopSequence(ctx context.Context,
+	server *p9net.Server, srvStop <-chan shutdownDisposition,
+	mount mountSubsystem, mntStop <-chan shutdownDisposition,
+	errs *waitGroupChan[error], log ulog.Logger,
+) *sync.WaitGroup {
+	var serverWg,
+		mountWg sync.WaitGroup
+	errs.Add(2)
+	serverWg.Add(1)
+	mountWg.Add(1)
+	go func() {
+		defer serverWg.Done()
+		serverStopper(ctx, server, srvStop, errs, log)
+	}()
+	go func() {
+		serverWg.Wait()
+		unmountAll(mount, mntStop, errs, log)
+		mountWg.Done()
+	}()
+	return &mountWg
+}
+
+func listenOn(listener *p9fs.Listener, permissions p9.FileMode,
+	stop *waitGroupChan[shutdownDisposition],
+	errs *waitGroupChan[error],
+	maddrs ...multiaddr.Multiaddr,
+) *sync.WaitGroup {
+	var (
+		wg         sync.WaitGroup
+		maddrCount = len(maddrs)
+	)
+	wg.Add(maddrCount)
+	stop.Add(maddrCount)
+	errs.Add(maddrCount)
+	for _, maddr := range maddrs {
+		go func(m multiaddr.Multiaddr) {
+			defer func() {
+				wg.Done()
+				stop.Done()
+				errs.Done()
+			}()
+			if err := p9fs.Listen(listener, m, permissions); err != nil {
+				const maddrFmt = "could not listen on: %s - %w"
+				err = fmt.Errorf(maddrFmt, m, err)
+				errs.send(err)
+				stop.send(immediateShutdown)
+				return
+			}
+		}(maddr)
+	}
+	return &wg
+}
+
+func setupExtraStopWriters(
+	idleCheck time.Duration, mount mountSubsystem,
+	shutdownFileData <-chan []byte,
+	stop *waitGroupChan[shutdownDisposition],
+	errs *waitGroupChan[error], log ulog.Logger,
+) {
+	stop.Add(1)
+	errs.Add(1)
+	go stopOnShutdownWrite(log, shutdownFileData, stop, errs)
+	if idleCheck != 0 {
+		stop.Add(1)
+		errs.Add(1)
+		checkFn := makeMountChecker(mount, log)
+		go stopWhen(checkFn, idleCheck, stop, errs)
+	}
+}
+
+type waitGroupChan[T any] struct {
+	ch      chan T
+	closing chan struct{}
+	sync.WaitGroup
+}
+
+func newWaitGroupChan[T any](size int) *waitGroupChan[T] {
+	return &waitGroupChan[T]{
+		ch:      make(chan T),
+		closing: make(chan struct{}, size),
+	}
+}
+
+func (wc *waitGroupChan[T]) Closing() <-chan struct{} {
+	return wc.closing
+}
+
+func (wc *waitGroupChan[T]) closeSend() {
+	close(wc.closing)
+}
+
+func (wc *waitGroupChan[T]) send(value T) (sent bool) {
+	select {
+	case wc.ch <- value:
+		sent = true
+	case <-wc.closing:
+	}
+	return sent
+}
+
+func (wc *waitGroupChan[T]) waitThenCloseCh() {
+	wc.WaitGroup.Wait()
+	close(wc.ch)
 }
 
 func newSystem(ctx context.Context, set *daemonSettings) (*daemonSystem, error) {
@@ -298,8 +459,8 @@ func newSystem(ctx context.Context, set *daemonSettings) (*daemonSystem, error) 
 		gid       = set.gid
 		fsys, err = newFileSystem(ctx, uid, gid)
 		system    = &daemonSystem{
-			fileSystem: fsys,
-			log:        newDaemonLog(set.verbose),
+			files: fsys,
+			log:   newDaemonLog(set.verbose),
 		}
 	)
 	return system, err
@@ -481,7 +642,8 @@ func newListener(ctx context.Context, parent p9.File, path ninePath,
 	uid p9.UID, gid p9.GID, permissions p9.FileMode,
 ) (listenSubsystem, error) {
 	const name = "listeners"
-	_, listenFS, listeners, err := p9fs.NewListener(ctx, append(
+	lCtx, cancel := context.WithCancel(ctx)
+	_, listenFS, listeners, err := p9fs.NewListener(lCtx, append(
 		commonOptions[p9fs.ListenerOption](
 			parent, name, path,
 			uid, gid, permissions,
@@ -490,12 +652,14 @@ func newListener(ctx context.Context, parent p9.File, path ninePath,
 	)...,
 	)
 	if err != nil {
+		cancel()
 		return listenSubsystem{}, err
 	}
 	return listenSubsystem{
 		name:      name,
 		Listener:  listenFS,
 		listeners: listeners,
+		cancel:    cancel,
 	}, nil
 }
 
@@ -515,13 +679,19 @@ func newControl(ctx context.Context,
 	if err != nil {
 		return controlSubsystem{}, err
 	}
-	_, shutdownFile, shutdownCh, err := p9fs.NewChannelFile(ctx,
-		commonOptions[p9fs.ChannelOption](control, shutdownName, path, uid, gid, permissions)...,
+	var (
+		sCtx, cancel    = context.WithCancel(ctx)
+		filePermissions = permissions ^ (p9fs.ExecuteOther | p9fs.ExecuteGroup | p9fs.ExecuteUser)
+	)
+	_, shutdownFile, shutdownCh, err := p9fs.NewChannelFile(sCtx,
+		commonOptions[p9fs.ChannelOption](control, shutdownName, path, uid, gid, filePermissions)...,
 	)
 	if err != nil {
+		cancel()
 		return controlSubsystem{}, err
 	}
 	if err := control.Link(shutdownFile, shutdownName); err != nil {
+		cancel()
 		return controlSubsystem{}, err
 	}
 	return controlSubsystem{
@@ -531,6 +701,7 @@ func newControl(ctx context.Context,
 			ChannelFile: shutdownFile,
 			name:        shutdownName,
 			ch:          shutdownCh,
+			cancel:      cancel,
 		},
 	}, nil
 }
@@ -561,51 +732,18 @@ func linkSystems(system fileSystem) error {
 	return nil
 }
 
-func makeAndStartServer(
-	fsys fileSystem, log ulog.Logger,
-) (*p9net.Server, <-chan error) {
-	var (
-		server = p9net.NewServer(fsys.root,
-			p9net.WithServerLogger(log),
-		)
-		listenSys = fsys.listen
-	)
-	return server, logAndServeListeners(listenSys, server, log)
-}
-
-func logAndServeListeners(system listenSubsystem,
-	server *p9net.Server, log ulog.Logger,
-) <-chan error {
-	var (
-		listeners = system.listeners
-		serveFn   = server.Serve
-	)
-	if log != nil &&
-		log != ulog.Null {
-		listeners = logListeners(log, listeners)
+func logListeners(log ulog.Logger, listeners <-chan manet.Listener) {
+	for l := range listeners {
+		log.Printf("listening on: %s\n", l.Multiaddr())
 	}
-	return serveListeners(serveFn, listeners)
 }
 
-func logListeners(log ulog.Logger, in <-chan manet.Listener,
-) <-chan manet.Listener {
-	out := make(chan manet.Listener, cap(in))
-	go func() {
-		defer close(out)
-		for l := range in {
-			log.Printf("listening on: %s\n", l.Multiaddr())
-			out <- l
-		}
-	}()
-	return out
-}
-
-func serveListeners(serveFn serveFunc,
-	listeners <-chan manet.Listener,
-) <-chan error {
+func serveListeners(serveFn serveFunc, listeners <-chan manet.Listener,
+	errs *waitGroupChan[error],
+) {
+	defer errs.Done()
 	var (
 		serveWg sync.WaitGroup
-		errs    = make(chan error)
 		serve   = func(listener manet.Listener) {
 			defer serveWg.Done()
 			err := serveFn(listener)
@@ -618,203 +756,247 @@ func serveListeners(serveFn serveFunc,
 				errors.Is(err, net.ErrClosed) {
 				return
 			}
-			errs <- fmt.Errorf("%w: %s - %s",
+			err = fmt.Errorf("%w: %s - %s",
 				errServe, listener.Multiaddr(), err,
 			)
+			errs.send(err)
 		}
 	)
-	go func() {
-		for listener := range listeners {
-			serveWg.Add(1)
-			go serve(listener)
-		}
-		serveWg.Wait()
-		close(errs)
-	}()
-	return errs
+	for listener := range listeners {
+		serveWg.Add(1)
+		go serve(listener)
+	}
+	serveWg.Wait()
 }
 
-func makeStopper(ctx context.Context, cancel context.CancelFunc,
-	mountSys mountSubsystem, server *p9net.Server,
-	log ulog.Logger,
-) (stopperWrite, <-chan error) {
+func relayUnordered[T any](in <-chan T, outs ...*<-chan T) {
+	chs := make([]chan<- T, len(outs))
+	for i := range outs {
+		ch := make(chan T, cap(in))
+		*outs[i] = ch
+		chs[i] = ch
+	}
+	go relayChan(in, chs...)
+}
+
+// relayChan will relay values (in a non-blocking manner)
+// from source to all relays (immediately or eventually).
+// The source must be closed to stop processing.
+// Each relay is closed after all values are sent.
+// Relay receive order is not guaranteed to match
+// source's order.
+func relayChan[T any](source <-chan T, relays ...chan<- T) {
 	var (
-		stopper      = make(stopperChan, maximumShutdown)
-		sRelay       = make(stopperChan, maximumShutdown)
-		mRelay       = make(stopperChan, 1)
-		shutdownErrs = shutdownWith(ctx, sRelay, server, log)
-		closeErrs    = closeWith(mRelay, mountSys, log)
-		errs         = make(chan error)
+		relayCount  = len(relays)
+		relayValues = make([]reflect.Value, relayCount)
+		closerWgs   = make([]*sync.WaitGroup, relayCount)
 	)
-	// Listen for signals, and stop in sequence.
-	// Always stop the network first;
-	// then when it's done, stop the mount subsystem.
-	// In the future these might be done concurrently.
-	// As-is we just don't want an active connection
-	// to be mucking with the system during shutdown.
-	// Tearing down connections first, loosely assures
-	// we're the only caller with a valid handle to the fs.
-	go func() {
-		defer func() {
-			cancel()
-			close(errs)
-		}()
-		var highestSeen shutdownDisposition
-		for shutdownErrs != nil ||
-			closeErrs != nil {
-			select {
-			case level := <-stopper:
-				if level > highestSeen {
-					highestSeen = level
-					sRelay <- level
-				}
-			case err, ok := <-shutdownErrs:
-				if nilClosedChan(&shutdownErrs, ok) {
-					mRelay <- patientShutdown
-					continue
-				}
-				errs <- err
-			case err, ok := <-closeErrs:
-				if nilClosedChan(&closeErrs, ok) {
-					continue
-				}
-				errs <- err
+	for i, relay := range relays {
+		relayValues[i] = reflect.ValueOf(relay)
+	}
+	var (
+		dflt  = relayCount
+		cases = make([]reflect.SelectCase, dflt+1)
+	)
+	cases[dflt] = reflect.SelectCase{
+		Dir: reflect.SelectDefault,
+	}
+	for value := range source {
+		rValue := reflect.ValueOf(value)
+		for i, relay := range relayValues {
+			cases[i] = reflect.SelectCase{
+				Dir:  reflect.SelectSend,
+				Chan: relay,
+				Send: rValue,
 			}
 		}
-	}()
-	return stopper, errs
-}
-
-func nilClosedChan[T any](chPtr *<-chan T, ok bool) bool {
-	if !ok {
-		*chPtr = nil
+		for remaining := relayCount; remaining != 0; {
+			chosen, _, _ := reflect.Select(cases)
+			if chosen != dflt {
+				cases[chosen].Chan = reflect.Value{}
+				remaining--
+				continue
+			}
+			for i, commCase := range cases[:relayCount] {
+				if !commCase.Chan.IsValid() {
+					continue
+				}
+				wg := closerWgs[i]
+				if wg == nil {
+					wg = new(sync.WaitGroup)
+					closerWgs[i] = wg
+				}
+				wg.Add(1)
+				go func(wg *sync.WaitGroup, ch chan<- T, value T) {
+					ch <- value
+					wg.Done()
+				}(wg, relays[i], value)
+			}
+			break
+		}
 	}
-	return !ok
+	for i, wg := range closerWgs {
+		if wg == nil {
+			close(relays[i])
+			continue
+		}
+		go func(wg *sync.WaitGroup, ch chan<- T) {
+			wg.Wait()
+			close(ch)
+		}(wg, relays[i])
+	}
 }
 
-func shutdownWith(ctx context.Context, levels stopperRead,
-	server *p9net.Server, log ulog.Logger,
-) <-chan error {
+func sequentialLeveling(stopper <-chan shutdownDisposition, filtered chan<- shutdownDisposition) {
+	var highestSeen shutdownDisposition
+	for level := range stopper {
+		if level > highestSeen {
+			highestSeen = level
+			filtered <- level
+		}
+	}
+}
+
+func watchListenersStopper(cancel context.CancelFunc,
+	stopper <-chan shutdownDisposition, log ulog.Logger,
+) {
+	for range stopper {
+		log.Print("stop signal received - not accepting new listeners")
+		cancel()
+		return
+	}
+}
+
+func serverStopper(ctx context.Context,
+	server *p9net.Server, stopper <-chan shutdownDisposition,
+	errs *waitGroupChan[error], log ulog.Logger,
+) {
+	defer errs.Done()
 	const (
-		waitMsg = "closing listeners now" +
+		deadline   = 10 * time.Second
+		msgPrefix  = "stop signal received - "
+		connPrefix = "closing connections"
+		waitMsg    = msgPrefix + "closing listeners now" +
 			" and connections when they're idle"
-		msgPrefix = "closing connections"
-		deadline  = 10 * time.Second
-		nowMsg    = msgPrefix + " immediately"
+		nowMsg = msgPrefix + connPrefix + " immediately"
 
 		waitForConns = patientShutdown
 		timeoutConns = shortShutdown
 		closeConns   = immediateShutdown
 	)
 	var (
-		sCtx, cancel = context.WithCancel(ctx)
-		errs         = make(chan error)
 		once         sync.Once
-		shutdownFn   = server.Shutdown
+		done         = make(chan struct{})
+		sCtx, cancel = context.WithCancel(ctx)
 		shutdown     = func() {
+			errs.Add(1)
 			go func() {
-				if err := shutdownFn(sCtx); err != nil {
-					errs <- err
+				defer func() {
+					cancel()
+					close(done)
+					errs.Done()
+				}()
+				if err := server.Shutdown(sCtx); err != nil &&
+					!errors.Is(err, context.Canceled) {
+					errs.send(err)
 				}
-				cancel()
-				close(errs)
 			}()
 		}
 	)
-	go func() {
-		for level := range levels {
-			once.Do(shutdown)
+	for {
+		select {
+		case level, ok := <-stopper:
+			if !ok {
+				return
+			}
 			switch level {
 			case waitForConns:
 				log.Print(waitMsg)
 			case timeoutConns:
 				time.AfterFunc(deadline, cancel)
-				log.Printf("%s in %s", msgPrefix, deadline)
+				log.Printf("%sforcefully %s in %s",
+					msgPrefix, connPrefix, deadline)
 			case closeConns:
 				cancel()
 				log.Print(nowMsg)
+			default:
+				err := fmt.Errorf("unexpected signal: %v", level)
+				errs.send(err)
+				continue
 			}
+			once.Do(shutdown)
+		case <-done:
+			return
 		}
-		close(errs)
-	}()
-	return errs
+	}
 }
 
-func closeWith(levels stopperRead,
-	system mountSubsystem, log ulog.Logger,
-) <-chan error {
-	var (
-		dir  = system.MountFile
-		errs = make(chan error)
-	)
-	go func() {
-		<-levels
-		log.Print("closing mounts")
-		if err := p9fs.UnmountAll(dir); err != nil {
-			errs <- err
-		}
-		close(errs)
-	}()
-	return errs
+func unmountAll(system mountSubsystem,
+	levels <-chan shutdownDisposition,
+	errs *waitGroupChan[error], log ulog.Logger,
+) {
+	defer errs.Done()
+	<-levels
+	log.Print("stop signal received - unmounting all")
+	dir := system.MountFile
+	if err := p9fs.UnmountAll(dir); err != nil {
+		errs.send(err)
+	}
 }
 
-func relayOSSignal(ctx context.Context, sig os.Signal, stopper chan<- shutdownDisposition) {
-	signals := make(chan os.Signal, cap(stopper))
+func stopOnSignal(sig os.Signal, stopCh *waitGroupChan[shutdownDisposition]) {
+	signals := make(chan os.Signal, generic.Max(1, cap(stopCh.ch)))
 	signal.Notify(signals, sig)
-	go func() {
-		defer signal.Stop(signals)
-		for count := minimumShutdown; count <= maximumShutdown; count++ {
-			select {
-			case <-signals:
-				select {
-				case stopper <- count:
-				case <-ctx.Done():
-					return
-				}
-			case <-ctx.Done():
+	defer func() {
+		signal.Stop(signals)
+		stopCh.Done()
+	}()
+	for count := minimumShutdown; count <= maximumShutdown; count++ {
+		select {
+		case <-signals:
+			if !stopCh.send(count) {
 				return
 			}
+		case <-stopCh.Closing():
+			return
 		}
-	}()
+	}
 }
 
-func watchCtx(ctx context.Context, stopper stopperWrite) {
-	go func() { <-ctx.Done(); stopper <- immediateShutdown }()
+func stopOnDone(ctx context.Context, stopCh *waitGroupChan[shutdownDisposition]) {
+	defer stopCh.Done()
+	select {
+	case <-ctx.Done():
+		stopCh.send(immediateShutdown)
+	case <-stopCh.closing:
+	}
 }
 
-func watchShutdown(ctx context.Context,
-	data <-chan []byte, stopper stopperWrite, log ulog.Logger,
-) <-chan error {
-	errs := make(chan error)
-	go func() {
-		defer close(errs)
-		for {
-			select {
-			case data, ok := <-data:
-				if !ok {
-					return
-				}
-				level, err := parseDispositionData(data)
-				if err != nil {
-					select {
-					case errs <- err:
-						continue
-					case <-ctx.Done():
-						return
-					}
-				}
-				log.Print("external source requested to shutdown")
-				select {
-				case stopper <- level:
-				case <-ctx.Done():
-					return
-				}
-			case <-ctx.Done():
+func stopOnShutdownWrite(log ulog.Logger,
+	data <-chan []byte, stopper *waitGroupChan[shutdownDisposition],
+	errs *waitGroupChan[error],
+) {
+	defer errs.Done()
+	defer stopper.Done()
+	for {
+		select {
+		case data, ok := <-data:
+			if !ok {
 				return
 			}
+			level, err := parseDispositionData(data)
+			if err != nil {
+				errs.send(err)
+				continue
+			}
+			log.Print("external source requested to shutdown")
+			if !stopper.send(level) {
+				return
+			}
+		case <-stopper.Closing():
+			return
 		}
-	}()
-	return errs
+	}
 }
 
 func parseDispositionData(data []byte) (shutdownDisposition, error) {
@@ -841,55 +1023,46 @@ func isPipe(file *os.File) bool {
 	return fStat.Mode().Type()&os.ModeNamedPipe != 0
 }
 
-func handleStdio(handleFn handleFunc) <-chan error {
-	errs := make(chan error)
-	go func() {
-		defer close(errs)
-		if err := handleFn(os.Stdin, os.Stdout); err != nil {
-			if !errors.Is(err, io.EOF) {
-				errs <- err
-				return
-			}
+func handleStdio(handleFn handleFunc, listenersUp *sync.WaitGroup, errs *waitGroupChan[error]) {
+	defer errs.Done()
+	listenersUp.Wait()
+	if err := handleFn(os.Stdin, os.Stdout); err != nil {
+		if !errors.Is(err, io.EOF) {
+			errs.send(err)
+			return
 		}
-		if err := os.Stderr.Close(); err != nil {
-			errs <- err
-		}
-	}()
-	return errs
+	}
+	if err := os.Stderr.Close(); err != nil {
+		errs.send(err)
+	}
 }
 
-func stopWhen(ctx context.Context, interval time.Duration,
-	stopper stopperWrite, checkFn checkFunc,
-) <-chan error {
-	errs := make(chan error)
-	go func() {
-		defer close(errs)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				stop, level, err := checkFn()
-				if err != nil {
-					select {
-					case errs <- err:
-					case <-ctx.Done():
-					}
-					return
-				}
-				if stop {
-					select {
-					case stopper <- level:
-					case <-ctx.Done():
-					}
-					return
-				}
-			case <-ctx.Done():
+func stopWhen(checkFn checkFunc, interval time.Duration,
+	stopper *waitGroupChan[shutdownDisposition],
+	errs *waitGroupChan[error],
+) {
+	defer func() {
+		errs.Done()
+		stopper.Done()
+	}()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			stop, level, err := checkFn()
+			if err != nil {
+				errs.send(err)
 				return
 			}
+			if stop {
+				stopper.send(level)
+				return
+			}
+		case <-stopper.Closing():
+			return
 		}
-	}()
-	return errs
+	}
 }
 
 func makeMountChecker(fsys p9.File, log ulog.Logger) checkFunc {
@@ -919,8 +1092,8 @@ func hasEntries(fsys p9.File) (bool, error) {
 // if a client closes all services, then disconnects.
 func makeEmptyChecker(systems *daemonSystem, log ulog.Logger) checkFunc {
 	var (
-		mountSys     = systems.mount
-		listenersSys = systems.listen
+		mountSys     = systems.files.mount
+		listenersSys = systems.files.listen
 	)
 	return func() (stop bool, sd shutdownDisposition, err error) {
 		var (
@@ -939,30 +1112,4 @@ func makeEmptyChecker(systems *daemonSystem, log ulog.Logger) checkFunc {
 		sd = minimumShutdown
 		return
 	}
-}
-
-func aggregate[T any](sources ...<-chan T) []T {
-	var (
-		sourceCount = len(sources)
-		cases       = make([]reflect.SelectCase, sourceCount)
-		out         = make([]T, 0)
-		disable     = reflect.Value{}
-	)
-	for i, source := range sources {
-		cases[i] = reflect.SelectCase{
-			Dir:  reflect.SelectRecv,
-			Chan: reflect.ValueOf(source),
-			Send: disable,
-		}
-	}
-	for remaining := sourceCount; remaining != 0; {
-		chosen, value, ok := reflect.Select(cases)
-		if !ok {
-			cases[chosen].Chan = disable
-			remaining--
-			continue
-		}
-		out = append(out, value.Interface().(T))
-	}
-	return out
 }
