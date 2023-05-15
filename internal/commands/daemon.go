@@ -207,7 +207,7 @@ func (set *daemonSettings) BindFlags(flagSet *flag.FlagSet) {
 	)
 	set.permissions = permissionsDefault
 	flagSet.Func(permissionsName, permissionsUsage, func(s string) (err error) {
-		set.permissions, err = parsePOSIXPermissions(s)
+		set.permissions, err = parsePOSIXPermissions(permissionsDefault, s)
 		return
 	})
 	setDefaultValueText(flagSet, flagDefaultText{
