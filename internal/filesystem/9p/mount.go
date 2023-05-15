@@ -1,6 +1,7 @@
 package p9
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,8 +43,15 @@ type (
 		error
 		target string
 	}
-
-	jsonMap = map[string]any
+	// DecodeTargetFunc will be called with bytes representing
+	// an encoded mount point, and should decode then return
+	// the mount point's target.
+	// Under typical operation, the encoded data should
+	// have the same format as the argument passed to
+	// [Client.Mount]. However, this is not guaranteed;
+	// as different clients with different formats may
+	// call `Mount` and `Unmount` independently.
+	DecodeTargetFunc func(filesystem.Host, filesystem.ID, []byte) (string, error)
 )
 
 func (ue unmountError) Error() string {
@@ -93,99 +101,208 @@ func (mf *MountFile) Mkdir(name string, permissions p9.FileMode, uid p9.UID, gid
 }
 
 func UnmountAll(mounts p9.File) error {
-	var (
-		errs         = make(chan error)
-		apiDirs, err = gatherMountAPIs(mounts, errs)
-	)
-	if err != nil {
-		return err
-	}
-	var wg sync.WaitGroup
-	for apiDir := range apiDirs {
-		wg.Add(1)
-		go func(api p9.File) {
-			unlinkAllChildren(api, errs)
-			if cErr := api.Close(); cErr != nil {
-				errs <- cErr
-			}
-			wg.Done()
-		}(apiDir)
-	}
-	go func() { wg.Wait(); close(errs) }()
-	for e := range errs {
-		err = fserrors.Join(err, e)
-	}
-	return err
+	return UnmountTargets(mounts, nil, nil)
 }
 
-func UnmountTargets(mounts p9.File, mountPoints []string) error {
+func UnmountTargets(mounts p9.File,
+	mountPoints []string, decodeTargetFn DecodeTargetFunc,
+) error {
 	var (
-		errs         = make(chan error)
-		apiDirs, err = gatherMountAPIs(mounts, errs)
+		errs        []error
+		unlinked    = make([]string, 0, len(mountPoints))
+		ctx, cancel = context.WithCancel(context.Background())
+		results     = unmountTargets(ctx, mounts,
+			mountPoints, decodeTargetFn)
 	)
-	if err != nil {
-		return err
+	defer cancel()
+	for result := range results {
+		if err := result.error; err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		unlinked = append(unlinked, result.value)
 	}
-	var wg sync.WaitGroup
-	unlinked := make([]string, 0, len(mountPoints))
-	for apiDir := range apiDirs {
-		wg.Add(1)
-		go func(api p9.File) {
-			removed, rErr := unlinkMountFiles(api, mountPoints, errs)
-			if rErr == nil {
-				for target := range removed {
-					unlinked = append(unlinked, target)
-				}
-			} else {
-				errs <- rErr
-			}
-			if cErr := api.Close(); cErr != nil {
-				errs <- cErr
-			}
-			wg.Done()
-		}(apiDir)
+	if len(mountPoints) != len(unlinked) ||
+		errs != nil {
+		return formatUnmountErr(mountPoints, unlinked, errs)
 	}
-	go func() { wg.Wait(); close(errs) }()
-	for e := range errs {
-		err = fserrors.Join(err, e)
-	}
-	if len(unlinked) != len(mountPoints) {
-		err = formatUnmountOperationErr(mountPoints, unlinked, err)
-	}
-	return err
+	return nil
 }
 
-func formatUnmountOperationErr(mountPoints, unlinked []string, err error) error {
-	var (
-		remaining = make([]string, len(mountPoints))
-		_         = copy(remaining, mountPoints)
-		remove    = func(target string) {
-			for i, existing := range remaining {
-				if existing == target {
-					remaining[i] = remaining[len(remaining)-1]
-					remaining = remaining[:len(remaining)-1]
-					break
-				}
-			}
+func unmountTargets(ctx context.Context,
+	mounts p9.File, mountPoints []string,
+	decodeTargetFn DecodeTargetFunc,
+) <-chan stringResult {
+	return mapDirPipeline(ctx, mounts,
+		func(ctx context.Context, dir p9.File,
+			wg *sync.WaitGroup, results chan<- stringResult,
+		) {
+			unmountTargetsPipeline(ctx, dir,
+				mountPoints, decodeTargetFn,
+				wg, results,
+			)
+		})
+}
+
+func unmountTargetsPipeline(ctx context.Context,
+	mounts p9.File, mountPoints []string, decodeTargetFn DecodeTargetFunc,
+	wg *sync.WaitGroup, results chan<- stringResult,
+) {
+	defer wg.Done()
+	unmountAll := mountPoints == nil
+	checkErr := func(err error) (sawError bool) {
+		if sawError = err != nil; sawError {
+			sendResult(ctx, results, stringResult{error: err})
 		}
-	)
-	for _, removed := range unlinked {
-		remove(removed)
+		return sawError
 	}
+	processEntry := func(result direntResult, dir p9.File, dirWg *sync.WaitGroup) {
+		defer dirWg.Done()
+		if checkErr(result.error) {
+			return
+		}
+		entry := result.value
+		const unlinkFlags = 0
+		if unmountAll {
+			checkErr(dir.UnlinkAt(entry.Name, unlinkFlags))
+			return
+		}
+		unmountGuestEntry(ctx,
+			dir, entry,
+			mountPoints, decodeTargetFn,
+			results,
+		)
+	}
+	processGuest := func(result fileResult) {
+		defer wg.Done()
+		if checkErr(result.error) {
+			return
+		}
+		var (
+			dirWg        sync.WaitGroup
+			guestDir     = result.value
+			guestResults = getDirents(ctx, guestDir)
+		)
+		for result := range guestResults {
+			dirWg.Add(1)
+			go processEntry(result, guestDir, &dirWg)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dirWg.Wait()
+			checkErr(guestDir.Close())
+		}()
+	}
+	for result := range flattenMounts(ctx, mounts) {
+		wg.Add(1)
+		go processGuest(result)
+	}
+}
+
+// flattenMounts returns all guest directories
+// for all hosts within mounts.
+func flattenMounts(ctx context.Context, mounts p9.File) <-chan fileResult {
+	return mapDirPipeline(ctx, mounts, flattenMountsPipeline)
+}
+
+func flattenMountsPipeline(ctx context.Context, mounts p9.File,
+	wg *sync.WaitGroup, results chan<- fileResult,
+) {
+	defer wg.Done()
+	processHost := func(result fileResult) {
+		defer wg.Done()
+		if err := result.error; err != nil {
+			sendResult(ctx, results, fileResult{error: err})
+			return
+		}
+		var (
+			hostDir     = result.value
+			hostResults = getDirFiles(ctx, hostDir)
+		)
+		if err := hostDir.Close(); err != nil {
+			sendResult(ctx, results, fileResult{error: err})
+		}
+		for result := range hostResults {
+			wg.Add(1)
+			go func(res fileResult) {
+				defer wg.Done()
+				sendResult(ctx, results, res)
+			}(result)
+		}
+	}
+	for result := range getDirFiles(ctx, mounts) {
+		wg.Add(1)
+		go processHost(result)
+	}
+}
+
+func unmountGuestEntry(ctx context.Context,
+	dir p9.File, entry p9.Dirent,
+	mountPoints []string, decodeTargetFn DecodeTargetFunc,
+	results chan<- stringResult,
+) {
+	mountFile, err := walkEnt(dir, entry)
 	if err != nil {
-		if joinErrs, ok := err.(interface {
-			Unwrap() []error
-		}); ok {
-			var ue unmountError
-			for _, e := range joinErrs.Unwrap() {
-				if errors.As(e, &ue) {
-					remove(ue.target)
-				}
-			}
+		sendResult(ctx, results, stringResult{error: err})
+		return
+	}
+	defer func() {
+		if err := mountFile.Close(); err != nil {
+			sendResult(ctx, results, stringResult{error: err})
+		}
+	}()
+	target, err := parseMountFile(mountFile, decodeTargetFn)
+	if err != nil {
+		sendResult(ctx, results, stringResult{error: err})
+		return
+	}
+	for _, point := range mountPoints {
+		if point != target {
+			continue
+		}
+		const unlinkFlags = 0
+		err := dir.UnlinkAt(entry.Name, unlinkFlags)
+		if err != nil {
+			err = unmountError{target: target, error: err}
+		}
+		sendResult(ctx, results, stringResult{value: target, error: err})
+		return
+	}
+}
+
+func parseMountFile(file p9.File, decodeFn DecodeTargetFunc) (string, error) {
+	fileData, err := ReadAll(file)
+	if err != nil {
+		return "", err
+	}
+	var point mountPointMarshal
+	if err := json.Unmarshal(fileData, &point); err != nil {
+		return "", err
+	}
+	return decodeFn(point.Host, point.ID, point.Data)
+}
+
+func formatUnmountErr(mountPoints, unlinked []string, errs []error) error {
+	faulty := make([]string, 0, len(errs))
+	for _, err := range errs {
+		var uErr unmountError
+		if errors.As(err, &uErr) {
+			faulty = append(faulty, uErr.target)
 		}
 	}
-	for i, path := range remaining {
-		remaining[i] = fmt.Sprintf(`"%s"`, path)
+	var (
+		skip      = append(faulty, unlinked...)
+		remaining = make([]string, 0, len(mountPoints)-len(skip))
+	)
+reduce:
+	for _, target := range mountPoints {
+		for _, skipped := range skip {
+			if target == skipped {
+				continue reduce
+			}
+		}
+		remaining = append(remaining, fmt.Sprintf(`"%s"`, target))
 	}
 	const prefix = "could not find mount point"
 	var errStr string
@@ -194,138 +311,5 @@ func formatUnmountOperationErr(mountPoints, unlinked []string, err error) error 
 	} else {
 		errStr = fmt.Sprintf(prefix+"s: %s", strings.Join(remaining, ", "))
 	}
-	return fserrors.Join(err, errors.New(errStr))
-}
-
-func gatherMountAPIs(mounts p9.File, errs chan<- error) (<-chan p9.File, error) {
-	hostDirs, err := gatherEnts(mounts, errs)
-	if err != nil {
-		return nil, err
-	}
-	apiRelay := make(chan p9.File)
-	go func() {
-		var wg sync.WaitGroup
-		for hostDir := range hostDirs {
-			apis, err := gatherEnts(hostDir, errs)
-			if err != nil {
-				errs <- err
-				continue
-			}
-			wg.Add(1)
-			go func(host p9.File) {
-				for api := range apis {
-					apiRelay <- api
-				}
-				if err := host.Close(); err != nil {
-					errs <- err
-				}
-				wg.Done()
-			}(hostDir)
-		}
-		wg.Wait()
-		close(apiRelay)
-	}()
-	return apiRelay, nil
-}
-
-func unlinkMountFiles(apiDir p9.File, mountPoints []string, errs chan<- error) (<-chan string, error) {
-	mountEnts, err := ReadDir(apiDir)
-	if err != nil {
-		return nil, err
-	}
-	var (
-		wg        sync.WaitGroup
-		remaining = make([]string, len(mountPoints))
-		_         = copy(remaining, mountPoints)
-		removed   = make(chan string, len(mountPoints))
-	)
-	wg.Add(len(mountEnts))
-	for _, mountEnt := range mountEnts {
-		go func(ent p9.Dirent) {
-			defer wg.Done()
-			fileMap, err := getMountData(apiDir, ent)
-			if err != nil {
-				errs <- err
-				return
-			}
-			for i, target := range remaining {
-				hasTarget, err := hasTarget(fileMap, target)
-				if err != nil {
-					errs <- err
-					continue
-				}
-				if !hasTarget {
-					continue
-				}
-				remaining[i] = remaining[len(remaining)-1]
-				remaining = remaining[:len(remaining)-1]
-				const flags = 0
-				if err := apiDir.UnlinkAt(ent.Name, flags); err == nil {
-					removed <- target
-				} else {
-					errs <- unmountError{
-						error:  err,
-						target: target,
-					}
-				}
-				break
-			}
-		}(mountEnt)
-	}
-	go func() { wg.Wait(); close(removed) }()
-	return removed, nil
-}
-
-func getMountData(apiDir p9.File, ent p9.Dirent) (jsonMap, error) {
-	mountFile, err := walkEnt(apiDir, ent)
-	if err != nil {
-		return nil, err
-	}
-	fileData, err := ReadAll(mountFile)
-	if err != nil {
-		return nil, err
-	}
-	if err := mountFile.Close(); err != nil {
-		return nil, err
-	}
-	var fileMap jsonMap
-	if err := json.Unmarshal(fileData, &fileMap); err != nil {
-		return nil, err
-	}
-	return fileMap, nil
-}
-
-// TODO:
-// consider taking in a list of fields to check
-// this way the client program
-// can have some insight+influence
-// on which fields are likely the target fields
-// this can even be an inverse of the file map.
-// i.e. {target:field}
-// so for each target, we know what field it should be in.
-// ^ this won't work as-is
-// client command doesn't
-// remember what API the target was mounted with
-// 1D list of fields is still better than all fields.
-// host packages can expose their target field
-// as some const, like is done with fsys.Host, fsys.ID
-func hasTarget(fileData jsonMap, target string) (bool, error) {
-	for _, value := range fileData {
-		if object, ok := value.(jsonMap); ok {
-			found, err := hasTarget(object, target)
-			if err != nil {
-				return false, err
-			}
-			if found {
-				return true, nil
-			}
-			continue
-		}
-		if jString, ok := value.(string); ok {
-			if jString == target {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
+	return fserrors.Join(append(errs, errors.New(errStr))...)
 }
