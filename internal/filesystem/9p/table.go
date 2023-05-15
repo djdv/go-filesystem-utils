@@ -10,8 +10,8 @@ import (
 
 type (
 	fileTableSync struct {
-		mu    sync.RWMutex
 		files fileTableMap
+		mu    sync.RWMutex
 	}
 	fileTableMap map[string]p9.File
 )
