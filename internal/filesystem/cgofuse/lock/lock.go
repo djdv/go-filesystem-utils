@@ -21,8 +21,8 @@ type (
 	// PathLocker is a hierarchical path locker,
 	// inspired by Ritik Malhotra's paper on path-based locks.
 	PathLocker struct {
-		lockTableMu sync.Mutex
 		lockTable   pathLockerMap
+		lockTableMu sync.Mutex
 	}
 	// UnlockFunc must be called after an operation completes.
 	// Typically a single defer statement is used
