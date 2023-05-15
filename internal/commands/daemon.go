@@ -102,6 +102,8 @@ type (
 )
 
 const (
+	daemonCommandName = "daemon"
+
 	errServe               = generic.ConstError("encountered error while serving")
 	errShutdownDisposition = generic.ConstError("invalid shutdown disposition")
 )
@@ -222,7 +224,7 @@ func (set *daemonSettings) BindFlags(flagSet *flag.FlagSet) {
 // hosts the file system service server.
 func Daemon() command.Command {
 	const (
-		name     = "daemon"
+		name     = daemonCommandName
 		synopsis = "Hosts the service."
 		usage    = "Placeholder text."
 	)
