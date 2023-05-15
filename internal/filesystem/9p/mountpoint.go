@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/hugelgupf/p9/fsimpl/templatefs"
 	"github.com/hugelgupf/p9/p9"
@@ -36,10 +37,26 @@ type (
 	Mounter interface {
 		Mount(fs.FS) (io.Closer, error)
 	}
+	mountPointTag struct {
+		filesystem.Host `json:"host"`
+		filesystem.ID   `json:"guest"`
+	}
+	mountPointMarshal struct {
+		mountPointTag `json:"tag"`
+		Data          json.RawMessage `json:"data"`
+	}
+	HostIdentifier interface {
+		HostID() filesystem.Host
+	}
+	GuestIdentifier interface {
+		GuestID() filesystem.ID
+	}
 	MountPoint interface {
 		FieldParser
 		SystemMaker
 		Mounter
+		HostIdentifier
+		GuestIdentifier
 	}
 	MountPointFile[MP MountPoint] struct {
 		mountPointFile
@@ -243,7 +260,17 @@ func (mf *MountPointFile[MP]) parseFieldsLocked(b []byte) error {
 }
 
 func (mf *MountPointFile[MP]) serializeLocked() ([]byte, error) {
-	return json.Marshal(mf.mountPoint)
+	mb, err := json.Marshal(mf.mountPoint)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(mountPointMarshal{
+		Data: json.RawMessage(mb),
+		mountPointTag: mountPointTag{
+			Host: mf.mountPoint.HostID(),
+			ID:   mf.mountPoint.GuestID(),
+		},
+	})
 }
 
 func (mf *MountPointFile[MP]) parseKeyWordLocked(keyWord string) error {
