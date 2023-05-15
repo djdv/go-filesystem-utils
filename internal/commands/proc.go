@@ -121,7 +121,7 @@ func getListenersAsync(cio io.ReadWriteCloser, fsysName string) <-chan listenerR
 			}
 			return
 		}
-		maddrs, err := flattenListeners(listenersDir)
+		maddrs, err := p9fs.GetListeners(listenersDir)
 		if err = fserrors.Join(err, listenersDir.Close()); err != nil {
 			results <- listenerResult{
 				error: fmt.Errorf(`could not parse listeners from "%s": %w`, fsysName, err),
@@ -131,40 +131,6 @@ func getListenersAsync(cio io.ReadWriteCloser, fsysName string) <-chan listenerR
 		results <- listenerResult{maddrs: maddrs}
 	}()
 	return results
-}
-
-// TODO: move this to p9fs near listener.
-func flattenListeners(dir p9.File) (_ []multiaddr.Multiaddr, err error) {
-	maddrFiles, err := p9fs.Flatten(dir)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		for _, file := range maddrFiles {
-			if cErr := file.Close(); cErr != nil {
-				err = fserrors.Join(err, cErr)
-			}
-		}
-	}()
-	maddrs := make([]multiaddr.Multiaddr, len(maddrFiles))
-	for i, file := range maddrFiles {
-		maddrBytes, err := p9fs.ReadAll(file)
-		if err != nil {
-			return nil, err
-		}
-		maddrFiles = maddrFiles[1:]
-		if err := file.Close(); err != nil {
-			return nil, err
-		}
-		// TODO: we should use binary mode when implemented
-		// maddr, err := multiaddr.NewMultiaddrBytes(maddrBytes)
-		maddr, err := multiaddr.NewMultiaddr(string(maddrBytes))
-		if err != nil {
-			return nil, err
-		}
-		maddrs[i] = maddr
-	}
-	return maddrs, nil
 }
 
 func maybeKill(cmd *exec.Cmd) error {
