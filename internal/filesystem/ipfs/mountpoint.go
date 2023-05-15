@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 	"github.com/multiformats/go-multiaddr"
@@ -29,6 +30,8 @@ type (
 	}
 	KeyFSGuest struct{ IPNSGuest }
 )
+
+func (*IPFSGuest) GuestID() filesystem.ID { return IPFSID }
 
 func (ig *IPFSGuest) UnmarshalJSON(b []byte) error {
 	// multiformats/go-multiaddr issue #100
@@ -124,6 +127,7 @@ func (ig *IPFSGuest) makeFS(api coreiface.CoreAPI) (fs.FS, error) {
 	return NewIPFS(api, options...)
 }
 
+func (*IPNSGuest) GuestID() filesystem.ID { return IPNSID }
 func (ng *IPNSGuest) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &ng.IPFSGuest); err != nil {
 		return err
@@ -174,6 +178,7 @@ func (ng *IPNSGuest) MakeFS() (fs.FS, error) {
 	return NewIPNS(client, ipfs, options...)
 }
 
+func (*PinFSGuest) GuestID() filesystem.ID { return PinFSID }
 func (pg *PinFSGuest) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &pg.IPFSGuest); err != nil {
 		return err
@@ -223,6 +228,8 @@ func (pg *PinFSGuest) ParseField(key, value string) error {
 		return nil
 	}
 }
+
+func (*KeyFSGuest) GuestID() filesystem.ID { return KeyFSID }
 
 func (kg *KeyFSGuest) MakeFS() (fs.FS, error) {
 	client, err := kg.makeCoreAPI()
