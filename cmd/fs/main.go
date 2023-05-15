@@ -76,11 +76,6 @@ func makeSubcommands() []command.Command {
 }
 
 func exitWithErr(err error) {
-	const (
-		success = iota
-		failure
-		misuse
-	)
 	var (
 		code     int
 		printErr = func() {
