@@ -37,11 +37,11 @@ type (
 	PinFS struct {
 		ctx    context.Context
 		cancel context.CancelFunc
+		statFn func(*pinDirEntry) error
 		pinShared
-		statFn   func(*pinDirEntry) error
-		cacheMu  sync.RWMutex
 		snapshot []filesystem.StreamDirEntry
 		expiry   time.Duration
+		cacheMu  sync.RWMutex
 	}
 	pinDirectory struct {
 		*pinShared
