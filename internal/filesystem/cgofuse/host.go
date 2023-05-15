@@ -43,6 +43,8 @@ const (
 
 func (close closer) Close() error { return close() }
 
+func (mh *Host) HostID() filesystem.Host { return HostID }
+
 func (mh *Host) ParseField(key, value string) error {
 	const (
 		pointKey           = "point"
