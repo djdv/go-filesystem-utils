@@ -2,11 +2,14 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
+	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
+	"github.com/djdv/go-filesystem-utils/internal/filesystem/cgofuse"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/hugelgupf/p9/p9"
 )
@@ -86,8 +89,23 @@ func (c *Client) Unmount(ctx context.Context, targets []string, options ...Unmou
 		}
 		return ctx.Err()
 	}
-	if err := p9fs.UnmountTargets(mRoot, targets); err != nil {
+	if err := p9fs.UnmountTargets(mRoot, targets, decodeMountPoint); err != nil {
 		return err
 	}
 	return ctx.Err()
+}
+
+func decodeMountPoint(host filesystem.Host, _ filesystem.ID, data []byte) (string, error) {
+	if host != cgofuse.HostID {
+		return "", fmt.Errorf("unexpected host: %v", host)
+	}
+	// TODO: we should use `mountPointSettings`
+	// same as [Mount], to assure consistency.
+	// For now we only have 1 host type, so
+	// ranging over them isn't necessary yet.
+	var mountPoint struct {
+		Host cgofuse.Host `json:"host"`
+	}
+	err := json.Unmarshal(data, &mountPoint)
+	return mountPoint.Host.Point, err
 }
