@@ -1,5 +1,7 @@
 package commands
 
+import fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
+
 const (
 	// serverRootName defines a name which servers and clients may use
 	// to refer to the service in namespace oriented APIs.
@@ -28,3 +30,16 @@ const (
 	// should use this name to resolve the [p9.File].
 	mountsFileName = "mounts"
 )
+
+func unwind(err error, funcs ...func() error) error {
+	var errs []error
+	for _, fn := range funcs {
+		if fnErr := fn(); fnErr != nil {
+			errs = append(errs, fnErr)
+		}
+	}
+	if errs == nil {
+		return err
+	}
+	return fserrors.Join(append([]error{err}, errs...)...)
+}
