@@ -41,7 +41,8 @@ type (
 	}
 	ninePath   = *atomic.Uint64
 	fileSystem struct {
-		root    p9fs.AttacherFile
+		path    ninePath
+		root    p9.File
 		mount   mountSubsystem
 		listen  listenSubsystem
 		control controlSubsystem
@@ -245,8 +246,10 @@ func daemonExecute(ctx context.Context, set *daemonSettings) error {
 	const errBuffer = 0
 	var (
 		fsys   = system.files
+		path   = fsys.path
+		root   = fsys.root
 		log    = system.log
-		server = makeServer(fsys.root, log)
+		server = makeServer(newAttacher(path, root), log)
 		stopSend,
 		stopReceive = makeStoppers(ctx)
 		lsnStop,
@@ -527,6 +530,7 @@ func newFileSystem(ctx context.Context, uid p9.UID, gid p9.GID) (fileSystem, err
 		return fileSystem{}, err
 	}
 	system := fileSystem{
+		path:    path,
 		root:    root,
 		mount:   mount,
 		listen:  listen,
