@@ -39,6 +39,9 @@ const (
 	idOptionBody    = `id=`
 	optionDelimiter = ','
 	delimiterSize   = len(string(optionDelimiter))
+
+	syscallFailedFmt = "%s returned `false` for \"%s\"" +
+		" - system log may have more information"
 )
 
 func (close closer) Close() error { return close() }
@@ -161,8 +164,10 @@ func (mh *Host) Mount(fsys fs.FS) (io.Closer, error) {
 		if fuseHost.Unmount() {
 			return nil
 		}
-		return fmt.Errorf(`unmounting "%s" failed`+
-			" - system log may have more information", mountPoint)
+		return fmt.Errorf(
+			syscallFailedFmt,
+			"unmount", mountPoint,
+		)
 	}), nil
 }
 
@@ -191,8 +196,10 @@ func safeMount(fuseSys *fuse.FileSystemHost, target string, args []string) error
 			close(errs)
 		}()
 		if !fuseSys.Mount(target, args) {
-			err := fmt.Errorf(`failed to mount "%s" for an unknown reason`+
-				"- system log may have more information", target)
+			err := fmt.Errorf(
+				syscallFailedFmt,
+				"mount", target,
+			)
 			errs <- err
 		}
 	}()
