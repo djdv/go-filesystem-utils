@@ -40,7 +40,7 @@ type (
 	}
 )
 
-func NewDirectory(options ...DirectoryOption) (p9.QID, AttacherFile, error) {
+func NewDirectory(options ...DirectoryOption) (p9.QID, p9.File, error) {
 	var settings directorySettings
 	if err := parseOptions(&settings, options...); err != nil {
 		return p9.QID{}, nil, err
@@ -59,8 +59,8 @@ func NewDirectory(options ...DirectoryOption) (p9.QID, AttacherFile, error) {
 			metadata:      metadata,
 			linkSync:      linkSync,
 		}
-		qid               = metadata.QID
-		file AttacherFile = &directory
+		qid          = metadata.QID
+		file p9.File = &directory
 	)
 	if settings.cleanupSelf {
 		if parent := linkSync.parent; parent == nil {
@@ -77,8 +77,6 @@ func NewDirectory(options ...DirectoryOption) (p9.QID, AttacherFile, error) {
 	metadata.incrementPath()
 	return *qid, file, nil
 }
-
-func (dir *Directory) Attach() (p9.File, error) { return dir, nil }
 
 func (dir *Directory) Walk(names []string) ([]p9.QID, p9.File, error) {
 	if dir.opened {
