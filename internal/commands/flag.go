@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -72,7 +71,10 @@ type (
 	// It also implements the lazyFlag interface,
 	// since it needs to perform I/O to find
 	// a dynamic/system local value.
-	defaultIPFSMaddr struct{ multiaddr.Multiaddr }
+	defaultIPFSMaddr struct {
+		multiaddr.Multiaddr
+		flagName string
+	}
 )
 
 const (
@@ -117,7 +119,10 @@ func (di *defaultIPFSMaddr) get() (multiaddr.Multiaddr, error) {
 	if maddr == nil {
 		maddrs, err := getIPFSAPI()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf(
+				"could not get default value for `-%s` flag: %w",
+				di.flagName, err,
+			)
 		}
 		maddr = maddrs[0]
 		di.Multiaddr = maddr
@@ -146,7 +151,7 @@ func getIPFSAPI() ([]multiaddr.Multiaddr, error) {
 		return nil, err
 	}
 	if !apiFileExists(location) {
-		return nil, errors.New("IPFS API file not found") // TODO: proper error value
+		return nil, generic.ConstError("IPFS API file not found")
 	}
 	return parseIPFSAPI(location)
 }

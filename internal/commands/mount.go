@@ -93,7 +93,7 @@ func ipfsAPIVar(flagSet *flag.FlagSet, field *multiaddr.Multiaddr) {
 		filepath.Join("$"+ipfsConfigEnv, ipfsAPIFileName),
 		filepath.Join(ipfsConfigDefaultDir, ipfsAPIFileName),
 	)
-	*field = &defaultIPFSMaddr{}
+	*field = &defaultIPFSMaddr{flagName: ipfsName}
 	flagSet.Func(ipfsName, ipfsUsage, func(s string) (err error) {
 		*field, err = multiaddr.NewMultiaddr(s)
 		return
