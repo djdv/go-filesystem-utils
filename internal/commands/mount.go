@@ -6,7 +6,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -16,10 +15,8 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem/cgofuse"
-	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem/ipfs"
 	"github.com/hugelgupf/p9/p9"
-	"github.com/hugelgupf/p9/perrors"
 	"github.com/jaevor/go-nanoid"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -475,7 +472,7 @@ func makeMountCommand[
 				return err
 			}
 			if err := client.Mount(host, fsid, data); err != nil {
-				return fserrors.Join(err, client.Close())
+				return unwind(err, client.Close)
 			}
 			if err := client.Close(); err != nil {
 				return err
@@ -484,21 +481,11 @@ func makeMountCommand[
 		})
 }
 
-func (c *Client) Mount(host filesystem.Host, fsid filesystem.ID, data [][]byte) (err error) {
-	const (
-		// Alloc hint; how many times
-		// [addCloser] is called in this scope.
-		// (omitting exclusive branches.)
-		addCloserCount = 3
-	)
-	addCloser, closeWith := makeCloserFuncs(addCloserCount)
-	defer func() { err = fserrors.Join(closeWith(err)...) }()
-
-	mRoot, err := (*p9.Client)(c).Attach(mountsFileName)
+func (c *Client) Mount(host filesystem.Host, fsid filesystem.ID, data [][]byte) error {
+	mounts, err := (*p9.Client)(c).Attach(mountsFileName)
 	if err != nil {
 		return err
 	}
-	addCloser(mRoot)
 	var (
 		hostName = string(host)
 		fsName   = string(fsid)
@@ -511,30 +498,35 @@ func (c *Client) Mount(host filesystem.Host, fsid filesystem.ID, data [][]byte) 
 		uid = p9.NoUID
 		gid = p9.NoGID
 	)
-	idRoot, err := p9fs.MkdirAll(mRoot, wnames, permissions, uid, gid)
+	guests, err := p9fs.MkdirAll(mounts, wnames, permissions, uid, gid)
 	if err != nil {
-		return err
+		err = receiveError(mounts, err)
+		return unwind(err, mounts.Close)
 	}
-	addCloser(idRoot)
 	const (
 		mountIDLength  = 9
 		base58Alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 	)
 	idGen, err := nanoid.CustomASCII(base58Alphabet, mountIDLength)
 	if err != nil {
-		return err
+		return unwind(err, mounts.Close, guests.Close)
 	}
-	// TODO: unwind? (see below)
-	// created []string{name1,name2}; parent.unlinkall(created)
+	var errs []error
 	for _, data := range data {
 		name := fmt.Sprintf("%s.json", idGen())
-		if err := newMountFile(idRoot, permissions, uid, gid,
+		if err := newMountFile(guests, permissions, uid, gid,
 			name, data); err != nil {
-			// TODO: unwind? del created mountfiles?
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	if errs != nil {
+		err = errors.Join(errs...)
+	}
+	err = unwind(err, guests.Close)
+	if err != nil {
+		err = receiveError(mounts, err)
+	}
+	return unwind(err, mounts.Close)
 }
 
 func newMountFile(idRoot p9.File,
@@ -547,41 +539,15 @@ func newMountFile(idRoot p9.File,
 	}
 	targetFile, _, _, err := idClone.Create(name, p9.WriteOnly, permissions, uid, gid)
 	if err != nil {
-		return fserrors.Join(err, idClone.Close())
+		return unwind(err, idClone.Close)
 	}
+	// NOTE: targetFile and idClone are now aliased
+	// (same fid because of `Create`).
 	if _, err := targetFile.WriteAt(data, 0); err != nil {
-		return fserrors.Join(err, targetFile.Close())
+		return unwind(err, targetFile.Close)
 	}
 	if err := targetFile.FSync(); err != nil {
-		if errors.Is(err, perrors.EIO) {
-			// TODO: [p9 fork]
-			// Our client should use a unique version string
-			// that allows the server to send Rerror (string),
-			// instead of Rlerror (errno).
-			// Until then, we only know generally
-			// "something went wrong", not what specifically.
-			err = fmt.Errorf("%w: %s", err, "IPFS node may be unreachable?")
-		}
-		return fserrors.Join(err, targetFile.Close())
+		return unwind(err, targetFile.Close)
 	}
 	return targetFile.Close()
-}
-
-func makeCloserFuncs(size int) (func(io.Closer), func(error) []error) {
-	var (
-		closers   = make([]io.Closer, 0, size)
-		add       = func(closer io.Closer) { closers = append(closers, closer) }
-		closeWith = func(err error) (errs []error) {
-			if err != nil {
-				errs = append(errs, err)
-			}
-			for i := len(closers) - 1; i >= 0; i-- {
-				if err := closers[i].Close(); err != nil {
-					errs = append(errs, err)
-				}
-			}
-			return errs
-		}
-	)
-	return add, closeWith
 }
