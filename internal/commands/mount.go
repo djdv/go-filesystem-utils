@@ -70,15 +70,16 @@ func supportedSystems() []filesystem.ID {
 	}
 }
 
-func registerCommonIPFSFlags(flagSet *flag.FlagSet,
+func registerCommonIPFSFlags(guest filesystem.ID, flagSet *flag.FlagSet,
 	api *multiaddr.Multiaddr,
 	timeout *time.Duration,
 	nodeCache, dirCache *int,
 ) {
+	flagPrefix := strings.ToLower(string(guest)) + "-"
 	ipfsAPIVar(flagSet, api)
-	ipfsTimeoutVar(flagSet, timeout)
-	ipfsNodeCacheVar(flagSet, nodeCache)
-	ipfsDirCacheVar(flagSet, dirCache)
+	ipfsTimeoutVar(flagPrefix, flagSet, timeout)
+	ipfsNodeCacheVar(flagPrefix, flagSet, nodeCache)
+	ipfsDirCacheVar(flagPrefix, flagSet, dirCache)
 }
 
 func ipfsAPIVar(flagSet *flag.FlagSet, field *multiaddr.Multiaddr) {
@@ -100,42 +101,40 @@ func ipfsAPIVar(flagSet *flag.FlagSet, field *multiaddr.Multiaddr) {
 	})
 }
 
-func ipfsTimeoutVar(flagSet *flag.FlagSet, field *time.Duration) {
-	const (
-		timeoutName  = "ipfs-timeout"
-		timeoutUsage = "timeout to use when communicating" +
-			" with the IPFS API" +
-			"\nif <= 0, operations will remain pending" +
-			" until the file or system is closed"
-	)
+func ipfsTimeoutVar(namePrefix string, flagSet *flag.FlagSet, field *time.Duration) {
+	timeoutName := namePrefix + "timeout"
+	const timeoutUsage = "timeout to use when communicating" +
+		" with the IPFS API" +
+		"\nif <= 0, operations will remain pending" +
+		" until the file or system is closed"
 	flagSet.DurationVar(field, timeoutName,
 		1*time.Minute, timeoutUsage,
 	)
 }
 
-func ipfsNodeCacheVar(flagSet *flag.FlagSet, field *int) {
+func ipfsNodeCacheVar(namePrefix string, flagSet *flag.FlagSet, field *int) {
+	nodeCacheName := namePrefix + "node-cache"
 	const (
 		defaultCacheCount = 64
-		nodeCacheName     = "ipfs-node-cache"
 		nodeCacheUsage    = "number of nodes to keep in the cache" +
 			"\nnegative values disable node caching"
 	)
 	flagSet.IntVar(field, nodeCacheName, defaultCacheCount, nodeCacheUsage)
 }
 
-func ipfsDirCacheVar(flagSet *flag.FlagSet, field *int) {
+func ipfsDirCacheVar(namePrefix string, flagSet *flag.FlagSet, field *int) {
+	dirCacheName := namePrefix + "directory-cache"
 	const (
 		defaultCacheCount = 64
-		dirCacheName      = "ipfs-directory-cache"
 		dirCacheUsage     = "number of directory entry lists to keep in the cache" +
 			"\nnegative values disable directory caching"
 	)
 	flagSet.IntVar(field, dirCacheName, defaultCacheCount, dirCacheUsage)
 }
 
-func ipnsExpiryVar(flagSet *flag.FlagSet, field *time.Duration) {
+func ipnsExpiryVar(namePrefix string, flagSet *flag.FlagSet, field *time.Duration) {
+	expiryName := namePrefix + "expiry"
 	const (
-		expiryName  = "ipns-expiry"
 		expiryUsage = "`duration` of how long a node is considered" +
 			"valid within the cache" +
 			"\nafter this time, the node will be refreshed during" +
@@ -287,7 +286,7 @@ func lazyMaddr(maddrPtr *multiaddr.Multiaddr) error {
 }
 
 func (set *mountIPFSSettings) BindFlags(flagSet *flag.FlagSet) {
-	registerCommonIPFSFlags(flagSet,
+	registerCommonIPFSFlags(ipfs.IPFSID, flagSet,
 		&set.APIMaddr,
 		&set.APITimeout,
 		&set.NodeCacheCount,
@@ -304,7 +303,7 @@ func (set *mountIPFSSettings) marshal(string) ([]byte, error) {
 }
 
 func (set *mountPinFSSettings) BindFlags(flagSet *flag.FlagSet) {
-	registerCommonIPFSFlags(flagSet,
+	registerCommonIPFSFlags(ipfs.PinFSID, flagSet,
 		&set.APIMaddr,
 		&set.APITimeout,
 		&set.NodeCacheCount,
@@ -328,13 +327,14 @@ func (set *mountPinFSSettings) marshal(string) ([]byte, error) {
 }
 
 func (set *mountIPNSSettings) BindFlags(flagSet *flag.FlagSet) {
-	registerCommonIPFSFlags(flagSet,
+	registerCommonIPFSFlags(ipfs.IPNSID, flagSet,
 		&set.APIMaddr,
 		&set.APITimeout,
 		&set.NodeCacheCount,
 		&set.DirectoryCacheCount,
 	)
-	ipnsExpiryVar(flagSet, &set.NodeExpiry)
+	flagPrefix := strings.ToLower(string(ipfs.IPNSID)) + "-"
+	ipnsExpiryVar(flagPrefix, flagSet, &set.NodeExpiry)
 }
 
 func (set *mountIPNSSettings) lazyInit() error {
@@ -346,13 +346,14 @@ func (set *mountIPNSSettings) marshal(string) ([]byte, error) {
 }
 
 func (set *mountKeyFSFSSettings) BindFlags(flagSet *flag.FlagSet) {
-	registerCommonIPFSFlags(flagSet,
+	registerCommonIPFSFlags(ipfs.KeyFSID, flagSet,
 		&set.APIMaddr,
 		&set.APITimeout,
 		&set.NodeCacheCount,
 		&set.DirectoryCacheCount,
 	)
-	ipnsExpiryVar(flagSet, &set.NodeExpiry)
+	flagPrefix := strings.ToLower(string(ipfs.KeyFSID)) + "-"
+	ipnsExpiryVar(flagPrefix, flagSet, &set.NodeExpiry)
 }
 
 func (set *mountKeyFSFSSettings) lazyInit() error {
