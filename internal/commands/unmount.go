@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"strconv"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
@@ -15,21 +16,39 @@ import (
 )
 
 type (
-	unmountSettings struct {
+	unmountCmdSettings struct {
 		clientSettings
+		options []UnmountOption
+		allFlag bool
+	}
+	unmountSettings struct {
 		all bool
 	}
 	UnmountOption func(*unmountSettings) error
 )
 
-// TODO: shared option?
 func UnmountAll(b bool) UnmountOption {
-	return func(us *unmountSettings) error { us.all = b; return nil }
+	return func(us *unmountSettings) error {
+		us.all = b
+		return nil
+	}
 }
 
-func (set *unmountSettings) BindFlags(flagSet *flag.FlagSet) {
+func (set *unmountCmdSettings) BindFlags(flagSet *flag.FlagSet) {
 	set.clientSettings.BindFlags(flagSet)
-	flagSet.BoolVar(&set.all, "all", false, "unmount all")
+	const (
+		allName  = "all"
+		allUsage = "unmount all"
+	)
+	boolFunc(flagSet, allName, allUsage, func(s string) error {
+		b, err := strconv.ParseBool(s)
+		if err != nil {
+			return err
+		}
+		set.options = append(set.options, UnmountAll(b))
+		set.allFlag = true
+		return nil
+	})
 }
 
 // Unmount constructs the command which requests the file system service
@@ -40,47 +59,48 @@ func Unmount() command.Command {
 		synopsis = "Unmount file systems."
 		usage    = "Placeholder text."
 	)
-	return command.MustMakeCommand[*unmountSettings](name, synopsis, usage, unmountExecute)
+	return command.MustMakeCommand[*unmountCmdSettings](name, synopsis, usage, unmountExecute)
 }
 
-func unmountExecute(ctx context.Context, set *unmountSettings, args ...string) error {
+func unmountExecute(ctx context.Context, set *unmountCmdSettings, args ...string) error {
 	var (
-		all      = set.all
+		allFlag  = set.allFlag
 		haveArgs = len(args) != 0
 	)
-	if all && haveArgs {
-		return fmt.Errorf("%w - `all` flag cannot be combined with arguments", command.ErrUsage)
+	if allFlag && haveArgs {
+		return fmt.Errorf(
+			"%w - `all` flag cannot be combined with arguments",
+			command.ErrUsage,
+		)
 	}
-	if !haveArgs && !all {
-		return fmt.Errorf("%w - expected mount point(s)", command.ErrUsage)
+	if !haveArgs && !allFlag {
+		return fmt.Errorf(
+			"%w - expected mount point(s)",
+			command.ErrUsage,
+		)
 	}
-
 	const autoLaunchDaemon = false
 	client, err := set.getClient(autoLaunchDaemon)
 	if err != nil {
 		return err
 	}
-	unmountOpts := []UnmountOption{
-		UnmountAll(all),
-	}
+	options := set.options
 	return fserrors.Join(
-		client.Unmount(ctx, args, unmountOpts...),
+		client.Unmount(ctx, args, options...),
 		client.Close(),
 		ctx.Err(),
 	)
 }
 
 func (c *Client) Unmount(ctx context.Context, targets []string, options ...UnmountOption) error {
-	set := new(unmountSettings)
+	var set unmountSettings
 	for _, setter := range options {
-		if err := setter(set); err != nil {
+		if err := setter(&set); err != nil {
 			return err
 		}
 	}
 	mRoot, err := (*p9.Client)(c).Attach(mountsFileName)
 	if err != nil {
-		// TODO: if not-exist add context to err msg.
-		// I.e. "client can't ... because ..."
 		return err
 	}
 	if set.all {
