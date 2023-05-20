@@ -45,6 +45,12 @@ const (
 
 	keyWord     fieldType = 1
 	keyAndValue fieldType = 2
+
+	// NOTE: [2023.01.02]
+	// The reference documentation and implementation
+	// do not specify which error number to use.
+	// If this value seems incorrect, request to change it.
+	fidOpenedErr = perrors.EBUSY
 )
 
 func (df dataField) typ() fieldType { return fieldType(len(df)) }
