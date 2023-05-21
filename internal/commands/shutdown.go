@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
-	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/hugelgupf/p9/p9"
 )
 
@@ -79,15 +78,15 @@ func shutdownExecute(ctx context.Context, set *shutdownSettings) error {
 	const autoLaunchDaemon = false
 	client, err := set.getClient(autoLaunchDaemon)
 	if err != nil {
-		return fmt.Errorf("could not get client (already down?): %w", err)
+		return fmt.Errorf("could not get client (server already down?): %w", err)
 	}
 	if err := client.Shutdown(set.disposition); err != nil {
+		return unwind(err, client.Close)
+	}
+	if err := client.Close(); err != nil {
 		return err
 	}
-	return fserrors.Join(
-		client.Close(),
-		ctx.Err(),
-	)
+	return ctx.Err()
 }
 
 func (c *Client) Shutdown(level shutdownDisposition) error {
@@ -96,18 +95,19 @@ func (c *Client) Shutdown(level shutdownDisposition) error {
 	if err != nil {
 		return err
 	}
-	defer controlDir.Close()
 	_, shutdownFile, err := controlDir.Walk([]string{"shutdown"})
 	if err != nil {
-		return err
+		err = receiveError(controlDir, err)
+		return unwind(err, controlDir.Close)
 	}
-	defer shutdownFile.Close()
 	if _, _, err := shutdownFile.Open(p9.WriteOnly); err != nil {
-		return err
+		err = receiveError(controlDir, err)
+		return unwind(err, shutdownFile.Close, controlDir.Close)
 	}
 	data := []byte{byte(level)}
 	if _, err := shutdownFile.WriteAt(data, 0); err != nil {
-		return err
+		err = receiveError(controlDir, err)
+		return unwind(err, shutdownFile.Close, controlDir.Close)
 	}
-	return nil
+	return unwind(nil, shutdownFile.Close, controlDir.Close)
 }
