@@ -166,7 +166,9 @@ func (set *daemonSettings) BindFlags(flagSet *flag.FlagSet) {
 	set.commonSettings.BindFlags(flagSet)
 	const (
 		sockName  = serverFlagName
-		sockUsage = "listening socket `maddr`"
+		sockUsage = "listening socket `maddr`" +
+			"\ncan be specified multiple times and/or comma separated" +
+			"\n\b" // Newline for default value, sans space.
 	)
 	var (
 		sockFlagSet     bool
