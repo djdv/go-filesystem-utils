@@ -40,6 +40,10 @@ type (
 		commonSettings
 		permissions fs.FileMode
 	}
+	nineIDs struct {
+		uid p9.UID
+		gid p9.GID
+	}
 	ninePath   = *atomic.Uint64
 	fileSystem struct {
 		path    ninePath
