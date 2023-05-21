@@ -33,7 +33,7 @@ import (
 
 type (
 	daemonSettings struct {
-		serverMaddr  multiaddr.Multiaddr
+		serverMaddrs []multiaddr.Multiaddr
 		exitInterval time.Duration
 		nineIDs
 		commonSettings
@@ -167,7 +167,10 @@ func (set *daemonSettings) BindFlags(flagSet *flag.FlagSet) {
 		sockName  = serverFlagName
 		sockUsage = "listening socket `maddr`"
 	)
-	var sockDefaultText string
+	var (
+		sockFlagSet     bool
+		sockDefaultText string
+	)
 	{
 		maddrs, err := userServiceMaddrs()
 		if err != nil {
@@ -175,11 +178,21 @@ func (set *daemonSettings) BindFlags(flagSet *flag.FlagSet) {
 		}
 		sockDefault := maddrs[0]
 		sockDefaultText = sockDefault.String()
-		set.serverMaddr = sockDefault
+		set.serverMaddrs = maddrs[:1]
 	}
-	flagSet.Func(sockName, sockUsage, func(s string) (err error) {
-		set.serverMaddr, err = multiaddr.NewMultiaddr(s)
-		return
+	flagSet.Func(sockName, sockUsage, func(s string) error {
+		maddr, err := multiaddr.NewMultiaddr(s)
+		if err != nil {
+			return err
+		}
+		if !sockFlagSet {
+			// Don't append to the default value(s).
+			set.serverMaddrs = []multiaddr.Multiaddr{maddr}
+			sockFlagSet = true
+			return nil
+		}
+		set.serverMaddrs = append(set.serverMaddrs, maddr)
+		return nil
 	})
 	const (
 		exitFlag  = exitAfterFlagName
@@ -271,7 +284,7 @@ func daemonExecute(ctx context.Context, set *daemonSettings) error {
 		permissions = modeFromFS(set.permissions)
 		listenersWg = listenOn(listener, permissions,
 			stopSend, errs,
-			set.serverMaddr,
+			set.serverMaddrs...,
 		)
 	)
 	if isPipe(os.Stdin) {
