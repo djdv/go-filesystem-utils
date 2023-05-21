@@ -123,8 +123,7 @@ func selfConnect(args []string, options ...p9.ClientOpt) (*Client, error) {
 	abort := func() error {
 		return fserrors.Join(maybeKill(cmd), cmd.Process.Release())
 	}
-	const fsysName = "listeners" // TODO: magic string should probably be elsewhere. From Options?
-	cmdMaddrs, err := getListenersFrom(cmdIO, fsysName)
+	cmdMaddrs, err := getListenersFrom(cmdIO, listenersFileName)
 	err = fserrors.Join(err, cmdIO.Close())
 	if err != nil {
 		return nil, fserrors.Join(err, abort())

@@ -693,11 +693,10 @@ func newMountPointFunc[
 func newListener(ctx context.Context, parent p9.File, path ninePath,
 	uid p9.UID, gid p9.GID, permissions p9.FileMode,
 ) (listenSubsystem, error) {
-	const name = "listeners"
 	lCtx, cancel := context.WithCancel(ctx)
 	_, listenFS, listeners, err := p9fs.NewListener(lCtx, append(
 		commonOptions[p9fs.ListenerOption](
-			parent, name, path,
+			parent, listenersFileName, path,
 			uid, gid, permissions,
 		),
 		p9fs.UnlinkEmptyChildren[p9fs.ListenerOption](true),
@@ -708,7 +707,7 @@ func newListener(ctx context.Context, parent p9.File, path ninePath,
 		return listenSubsystem{}, err
 	}
 	return listenSubsystem{
-		name:      name,
+		name:      listenersFileName,
 		Listener:  listenFS,
 		listeners: listeners,
 		cancel:    cancel,
@@ -719,12 +718,8 @@ func newControl(ctx context.Context,
 	parent p9.File, path ninePath,
 	uid p9.UID, gid p9.GID, permissions p9.FileMode,
 ) (controlSubsystem, error) {
-	const (
-		controlName  = "control"
-		shutdownName = "shutdown"
-	)
 	_, control, err := p9fs.NewDirectory(append(
-		commonOptions[p9fs.DirectoryOption](parent, controlName, path, uid, gid, permissions),
+		commonOptions[p9fs.DirectoryOption](parent, controlFileName, path, uid, gid, permissions),
 		p9fs.WithoutRename[p9fs.DirectoryOption](true),
 	)...,
 	)
@@ -736,22 +731,22 @@ func newControl(ctx context.Context,
 		filePermissions = permissions ^ (p9fs.ExecuteOther | p9fs.ExecuteGroup | p9fs.ExecuteUser)
 	)
 	_, shutdownFile, shutdownCh, err := p9fs.NewChannelFile(sCtx,
-		commonOptions[p9fs.ChannelOption](control, shutdownName, path, uid, gid, filePermissions)...,
+		commonOptions[p9fs.ChannelOption](control, shutdownFileName, path, uid, gid, filePermissions)...,
 	)
 	if err != nil {
 		cancel()
 		return controlSubsystem{}, err
 	}
-	if err := control.Link(shutdownFile, shutdownName); err != nil {
+	if err := control.Link(shutdownFile, shutdownFileName); err != nil {
 		cancel()
 		return controlSubsystem{}, err
 	}
 	return controlSubsystem{
-		name:      controlName,
+		name:      controlFileName,
 		directory: control,
 		shutdown: shutdown{
 			ChannelFile: shutdownFile,
-			name:        shutdownName,
+			name:        shutdownFileName,
 			ch:          shutdownCh,
 			cancel:      cancel,
 		},
