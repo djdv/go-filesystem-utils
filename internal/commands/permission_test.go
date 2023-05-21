@@ -11,6 +11,52 @@ import (
 	"testing"
 )
 
+func TestPermissionSymbolizer(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		string
+		fs.FileMode
+	}{
+		{
+			FileMode: 0o777 | fs.ModeSetuid,
+			string:   "u=rwxs,g=rwx,o=rwx",
+		},
+		{
+			FileMode: 0o777 | fs.ModeSetgid,
+			string:   "u=rwx,g=rwxs,o=rwx",
+		},
+		{
+			FileMode: 0o777 | fs.ModeSticky,
+			string:   "u=rwx,g=rwx,o=rwxt",
+		},
+		{
+			FileMode: 0o777 | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky,
+			string:   "u=rwxs,g=rwxs,o=rwxt",
+		},
+		{
+			FileMode: 0o751,
+			string:   "u=rwx,g=rx,o=x",
+		},
+		{
+			FileMode: 0o704,
+			string:   "u=rwx,o=r",
+		},
+	} {
+		var (
+			mode = test.FileMode
+			got  = modeToSymbolicPermissions(mode)
+			want = test.string
+		)
+		if got != want {
+			t.Errorf("unexpected symbolic representation of \"%o\""+
+				"\n\tgot: %s"+
+				"\n\twant: %s",
+				mode, got, want,
+			)
+		}
+	}
+}
+
 func TestParsePOSIXPermissions(t *testing.T) {
 	t.Parallel()
 	t.Run("valid", parsePOSIXPermissionsValid)
