@@ -90,12 +90,11 @@ func shutdownExecute(ctx context.Context, set *shutdownSettings) error {
 }
 
 func (c *Client) Shutdown(level shutdownDisposition) error {
-	// TODO: const name in files pkg?
-	controlDir, err := (*p9.Client)(c).Attach("control")
+	controlDir, err := (*p9.Client)(c).Attach(controlFileName)
 	if err != nil {
 		return err
 	}
-	_, shutdownFile, err := controlDir.Walk([]string{"shutdown"})
+	_, shutdownFile, err := controlDir.Walk([]string{shutdownFileName})
 	if err != nil {
 		err = receiveError(controlDir, err)
 		return unwind(err, controlDir.Close)

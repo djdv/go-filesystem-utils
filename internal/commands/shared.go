@@ -28,11 +28,28 @@ const (
 	// if they spawn one. Otherwise it is ignored (after parsing).
 	exitAfterFlagName = apiFlagPrefix + "exit-after"
 
+	// For names; all commands that interact with
+	// that file's protocol should use appropriate
+	// constants to resolve the [p9.File] via `Walk`.
+
 	// mountsFileName is the name used by servers
 	// to host a [p9fs.MountFile].
-	// All commands that interact with its protocol
-	// should use this name to resolve the [p9.File].
 	mountsFileName = "mounts"
+
+	// listenersFileName is the name used by servers
+	// to host a [p9fs.Listener].
+	listenersFileName = "listeners"
+
+	// controlFileName is the name used by servers
+	// to host 9P directory containing various server
+	// control files.
+	controlFileName = "control"
+
+	// shutdownFileName is the name used by servers
+	// to host a 9P file used to request shutdown,
+	// by writing a [shutdownDisposition] (string or byte)
+	// value to the file.
+	shutdownFileName = "shutdown"
 )
 
 func unwind(err error, funcs ...func() error) error {
