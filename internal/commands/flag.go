@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 	"unsafe"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
@@ -22,13 +21,6 @@ type (
 	commonSettings struct {
 		command.HelpArg
 		verbose bool
-	}
-	daemonDecay struct {
-		exitInterval time.Duration
-	}
-	nineIDs struct {
-		uid p9.UID
-		gid p9.GID
 	}
 
 	// flagDefaultText is a map of flag names and the text

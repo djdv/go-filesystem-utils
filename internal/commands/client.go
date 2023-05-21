@@ -23,8 +23,8 @@ type (
 	Client         p9.Client
 	clientSettings struct {
 		serviceMaddr multiaddr.Multiaddr
+		exitInterval time.Duration
 		commonSettings
-		daemonDecay
 	}
 	// defaultClientMaddr distinguishes
 	// the default maddr value, from an arbitrary maddr value.
