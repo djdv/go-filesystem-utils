@@ -428,3 +428,125 @@ func applyOp(impliedAll bool,
 	}
 	return mode
 }
+
+func modeFromFS(mode fs.FileMode) p9.FileMode {
+	const (
+		linuxSuid = 0o4000
+		linuxSgid = 0o2000
+	)
+	// NOTE: [2023.05.20]
+	// Upstream library drops bits `0o7000`
+	// in this call. Since we (currently) use
+	// 9P2000.L and these bits are valid, we add
+	// them back in if present.
+	mode9 := p9.ModeFromOS(mode)
+	for _, pair := range [...]struct {
+		plan9  p9.FileMode
+		golang fs.FileMode
+	}{
+		{
+			plan9:  linuxSuid,
+			golang: fs.ModeSetuid,
+		},
+		{
+			plan9:  linuxSgid,
+			golang: fs.ModeSetgid,
+		},
+		{
+			plan9:  p9.Sticky,
+			golang: fs.ModeSticky,
+		},
+	} {
+		if mode&pair.golang != 0 {
+			mode9 |= pair.plan9
+		}
+	}
+	return mode9
+}
+
+func modeToSymbolicPermissions(mode fs.FileMode) string {
+	const (
+		prefix    = 2 // u=
+		maxCell   = 4 // rwxs
+		separator = 1 // ,
+		groups    = 3 // u,g,o
+		maxSize   = ((prefix + maxCell) * groups) + (separator * (groups - 1))
+	)
+	var (
+		sb    strings.Builder
+		pairs = []struct {
+			whoMask, specMask     fs.FileMode
+			whoSymbol, specSymbol rune
+		}{
+			{
+				whoMask:    permUserBits,
+				whoSymbol:  permWhoUser,
+				specMask:   fs.ModeSetuid,
+				specSymbol: permSymSetID,
+			},
+			{
+				whoMask:    permGroupBits,
+				whoSymbol:  permWhoGroup,
+				specMask:   fs.ModeSetgid,
+				specSymbol: permSymSetID,
+			},
+			{
+				whoMask:    permOtherBits,
+				whoSymbol:  permWhoOther,
+				specMask:   fs.ModeSticky,
+				specSymbol: permSymText,
+			},
+		}
+	)
+	sb.Grow(maxSize)
+	var previousLen int
+	for i, pair := range pairs {
+		writePermSymbols(&sb, mode, pair.whoMask, pair.specMask, pair.whoSymbol, pair.specSymbol)
+		if i != len(pairs)-1 && sb.Len() != previousLen {
+			sb.WriteRune(',')
+		}
+		previousLen = sb.Len() // No writes, no separator.
+	}
+	return sb.String()
+}
+
+func writePermSymbols(sb *strings.Builder, mode, who, special fs.FileMode, whoSym, specSym rune) {
+	var (
+		filtered    = mode & who
+		haveSpecial = mode&special != 0
+		runes       []rune
+		pairs       = []struct {
+			mask   fs.FileMode
+			symbol rune
+		}{
+			{
+				mask:   permReadAll,
+				symbol: permSymRead,
+			},
+			{
+				mask:   permWriteAll,
+				symbol: permSymWrite,
+			},
+			{
+				mask:   permExecuteAll,
+				symbol: permSymExecute,
+			},
+		}
+	)
+	for _, pair := range pairs {
+		if filtered&pair.mask != 0 {
+			runes = append(runes, pair.symbol)
+		}
+	}
+	if len(runes) == 0 && !haveSpecial {
+		return
+	}
+	sb.WriteRune(whoSym)
+	sb.WriteRune('=')
+	for _, r := range runes {
+		sb.WriteRune(r)
+	}
+	if haveSpecial {
+		sb.WriteRune(specSym)
+	}
+}
