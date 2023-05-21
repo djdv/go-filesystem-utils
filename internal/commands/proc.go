@@ -63,7 +63,10 @@ func selfCommand(args []string, exitInterval time.Duration) (*exec.Cmd, error) {
 	cmd := exec.Command(self, args...)
 	if exitInterval != 0 {
 		cmd.Args = append(cmd.Args,
-			fmt.Sprintf("-exit-after=%s", exitInterval),
+			fmt.Sprintf(
+				"-%s=%s",
+				exitAfterFlagName, exitInterval,
+			),
 		)
 	}
 	return cmd, nil
