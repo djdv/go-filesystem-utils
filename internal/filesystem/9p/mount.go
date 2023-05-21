@@ -19,20 +19,11 @@ type (
 		directory
 		makeHostFn MakeHostFunc
 	}
-	// TODO: Concern:
-	// clients could return a file when we want a directory
-	// it'd be possible to tell the client which 9P op
-	// was called and allow both.
-	// Internally we can stat the returned file to make sure
-	// it complies.
-	// i.e. add `operation{mknod|mkdir}` parameter to this,
-	// and when doing the operation, call GetAttr on the returned file
-	// (to validate {regular|directory}).
-	//
 	// MakeHostFunc should handle file creation operations
 	// for files representing a [filesystem.Host].
+	// The file `mode` will contain file type bits.
 	MakeHostFunc func(parent p9.File, host filesystem.Host,
-		permissions p9.FileMode,
+		mode p9.FileMode,
 		uid p9.UID, gid p9.GID) (p9.QID, p9.File, error)
 	mounterSettings struct {
 		directoryOptions []DirectoryOption
@@ -92,8 +83,31 @@ func (mf *MountFile) Mkdir(name string, permissions p9.FileMode, uid p9.UID, gid
 	if err != nil {
 		return p9.QID{}, err
 	}
+	mode := permissions | p9.ModeDirectory
 	qid, file, err := mf.makeHostFn(mf, filesystem.Host(name),
-		permissions, uid, gid)
+		mode, uid, gid)
+	if err != nil {
+		return p9.QID{}, fserrors.Join(perrors.EACCES, err)
+	}
+	return qid, mf.Link(file, name)
+}
+
+func (mf *MountFile) Create(name string, flags p9.OpenFlags, permissions p9.FileMode,
+	uid p9.UID, gid p9.GID,
+) (p9.File, p9.QID, uint32, error) {
+	return createViaMknod(mf, name, flags, permissions, uid, gid)
+}
+
+func (mf *MountFile) Mknod(name string, mode p9.FileMode,
+	_, _ uint32, uid p9.UID, gid p9.GID,
+) (p9.QID, error) {
+	uid, gid, err := mkPreamble(mf, name, uid, gid)
+	if err != nil {
+		return p9.QID{}, err
+	}
+	mode |= p9.ModeRegular
+	qid, file, err := mf.makeHostFn(mf, filesystem.Host(name),
+		mode, uid, gid)
 	if err != nil {
 		return p9.QID{}, fserrors.Join(perrors.EACCES, err)
 	}

@@ -17,8 +17,9 @@ type (
 	GuestOption func(*guestSettings) error
 	// MakeMountPointFunc should handle file creation operations
 	// for files representing mount points.
+	// The file `mode` will contain file type bits.
 	MakeMountPointFunc func(parent p9.File, name string,
-		permissions p9.FileMode, uid p9.UID, gid p9.GID,
+		mode p9.FileMode, uid p9.UID, gid p9.GID,
 	) (p9.QID, p9.File, error)
 	detacher interface {
 		detach() error
@@ -53,8 +54,18 @@ func (gf *GuestFile) Walk(names []string) ([]p9.QID, p9.File, error) {
 }
 
 // TODO: stub out [Link] too?
-func (gf *GuestFile) Mkdir(string, p9.FileMode, p9.UID, p9.GID) (p9.QID, error) {
-	return p9.QID{}, perrors.ENOSYS
+func (gf *GuestFile) Mkdir(name string, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, error) {
+	uid, gid, err := mkPreamble(gf, name, uid, gid)
+	if err != nil {
+		return p9.QID{}, err
+	}
+	mode := permissions | p9.ModeDirectory
+	qid, file, err := gf.makeMountPointFn(gf, name,
+		mode, uid, gid)
+	if err != nil {
+		return p9.QID{}, fserrors.Join(perrors.EACCES, err)
+	}
+	return qid, gf.Link(file, name)
 }
 
 func (gf *GuestFile) Create(name string, flags p9.OpenFlags, permissions p9.FileMode,
@@ -70,6 +81,7 @@ func (gf *GuestFile) Mknod(name string, mode p9.FileMode,
 	if err != nil {
 		return p9.QID{}, err
 	}
+	mode |= p9.ModeRegular
 	qid, file, err := gf.makeMountPointFn(gf, name,
 		mode, uid, gid)
 	if err != nil {
