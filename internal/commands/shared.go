@@ -13,16 +13,20 @@ const (
 	// E.g. a socket of path `/$ServerRootName/$serverName`.
 	serverName = "server"
 
+	// apiFlagPrefix should be prepended to all flag names
+	// that relate to the `fs` service itself.
+	apiFlagPrefix = "api-"
+
 	// serverFlagName is used by server and client commands
 	// to specify the listening channel;
 	// typically a socket multiaddr.
-	serverFlagName = "server"
+	serverFlagName = apiFlagPrefix + "server"
 
 	// exitAfterFlagName is used by server and client commands
 	// to specify the idle check interval for the server.
 	// Client commands will relay this to server instances
 	// if they spawn one. Otherwise it is ignored (after parsing).
-	exitAfterFlagName = "exit-after"
+	exitAfterFlagName = apiFlagPrefix + "exit-after"
 
 	// mountsFileName is the name used by servers
 	// to host a [p9fs.MountFile].
