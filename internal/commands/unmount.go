@@ -11,7 +11,6 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem/cgofuse"
-	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/hugelgupf/p9/p9"
 )
 
@@ -85,11 +84,13 @@ func unmountExecute(ctx context.Context, set *unmountCmdSettings, args ...string
 		return err
 	}
 	options := set.options
-	return fserrors.Join(
-		client.Unmount(ctx, args, options...),
-		client.Close(),
-		ctx.Err(),
-	)
+	if err := client.Unmount(ctx, args, options...); err != nil {
+		return unwind(err, client.Close)
+	}
+	if err := client.Close(); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 func (c *Client) Unmount(ctx context.Context, targets []string, options ...UnmountOption) error {
@@ -99,20 +100,22 @@ func (c *Client) Unmount(ctx context.Context, targets []string, options ...Unmou
 			return err
 		}
 	}
-	mRoot, err := (*p9.Client)(c).Attach(mountsFileName)
+	mounts, err := (*p9.Client)(c).Attach(mountsFileName)
 	if err != nil {
 		return err
 	}
 	if set.all {
-		if err := p9fs.UnmountAll(mRoot); err != nil {
-			return err
+		if err := p9fs.UnmountAll(mounts); err != nil {
+			err = receiveError(mounts, err)
+			return unwind(err, mounts.Close)
 		}
-		return ctx.Err()
+		return mounts.Close()
 	}
-	if err := p9fs.UnmountTargets(mRoot, targets, decodeMountPoint); err != nil {
-		return err
+	if err := p9fs.UnmountTargets(mounts, targets, decodeMountPoint); err != nil {
+		err = receiveError(mounts, err)
+		return unwind(err, mounts.Close)
 	}
-	return ctx.Err()
+	return mounts.Close()
 }
 
 func decodeMountPoint(host filesystem.Host, _ filesystem.ID, data []byte) (string, error) {
