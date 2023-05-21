@@ -586,9 +586,20 @@ func newMounter(parent p9.File, path ninePath,
 	}, nil
 }
 
+func mountsDirCreatePreamble(mode p9.FileMode) (p9.FileMode, error) {
+	if !mode.IsDir() {
+		return 0, generic.ConstError("expected to be called from mkdir")
+	}
+	return mode.Permissions(), nil
+}
+
 func newHostFunc(path ninePath, autoUnlink bool) p9fs.MakeHostFunc {
 	linkOptions := unlinkEmptyDirs[p9fs.HosterOption](autoUnlink)
-	return func(parent p9.File, host filesystem.Host, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
+	return func(parent p9.File, host filesystem.Host, mode p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
+		permissions, err := mountsDirCreatePreamble(mode)
+		if err != nil {
+			return p9.QID{}, nil, err
+		}
 		var makeGuestFn p9fs.MakeGuestFunc
 		switch host {
 		case cgofuse.HostID:
@@ -616,7 +627,11 @@ func newHostFunc(path ninePath, autoUnlink bool) p9fs.MakeHostFunc {
 
 func newGuestFunc[H mountHost[T], T any](path ninePath, autoUnlink bool) p9fs.MakeGuestFunc {
 	linkOptions := unlinkEmptyDirs[p9fs.GuestOption](autoUnlink)
-	return func(parent p9.File, guest filesystem.ID, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
+	return func(parent p9.File, guest filesystem.ID, mode p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
+		permissions, err := mountsDirCreatePreamble(mode)
+		if err != nil {
+			return p9.QID{}, nil, err
+		}
 		var (
 			makeMountPointFn p9fs.MakeMountPointFunc
 			options          = append(
@@ -648,13 +663,24 @@ func newGuestFunc[H mountHost[T], T any](path ninePath, autoUnlink bool) p9fs.Ma
 	}
 }
 
+func mountsFileCreatePreamble(mode p9.FileMode) (p9.FileMode, error) {
+	if !mode.IsRegular() {
+		return 0, generic.ConstError("expected to be called from mknod")
+	}
+	return mode.Permissions(), nil
+}
+
 func newMountPointFunc[
 	H mountHost[HT],
 	G mountGuest[GT],
 	HT, GT any,
 ](path ninePath,
 ) p9fs.MakeMountPointFunc {
-	return func(parent p9.File, name string, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
+	return func(parent p9.File, name string, mode p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
+		permissions, err := mountsFileCreatePreamble(mode)
+		if err != nil {
+			return p9.QID{}, nil, err
+		}
 		return p9fs.NewMountPoint[*mountPoint[HT, GT, H, G]](
 			commonOptions[p9fs.MountPointOption](
 				parent, name, path,
