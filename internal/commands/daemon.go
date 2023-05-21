@@ -187,7 +187,8 @@ func (set *daemonSettings) BindFlags(flagSet *flag.FlagSet) {
 	)
 	flagSet.DurationVar(&set.exitInterval, exitFlag, 0, exitUsage)
 	const (
-		uidName        = "uid"
+		prefix         = "api-"
+		uidName        = prefix + "uid"
 		uidDefaultText = "nobody"
 		uidUsage       = "file owner's `uid`"
 	)
@@ -197,7 +198,7 @@ func (set *daemonSettings) BindFlags(flagSet *flag.FlagSet) {
 		return
 	})
 	const (
-		gidName        = "gid"
+		gidName        = prefix + "gid"
 		gidDefaultText = "nobody"
 		gidUsage       = "file owner's `gid`"
 	)
@@ -207,7 +208,7 @@ func (set *daemonSettings) BindFlags(flagSet *flag.FlagSet) {
 		return
 	})
 	const (
-		permissionsName        = "api-permissions"
+		permissionsName        = prefix + "permissions"
 		permissionsUsage       = "`permissions` to use when creating service files"
 		permissionsDefault     = 0o751            // Skip parsing and direct assign.
 		permissionsDefaultText = "u=rwx,g=rx,o=x" // Make sure these values stay in sync.
@@ -268,7 +269,7 @@ func daemonExecute(ctx context.Context, set *daemonSettings) error {
 	)
 	var (
 		listener    = listenSys.Listener
-		permissions = p9.ModeFromOS(set.permissions)
+		permissions = modeFromFS(set.permissions)
 		listenersWg = listenOn(listener, permissions,
 			stopSend, errs,
 			set.serverMaddr,
