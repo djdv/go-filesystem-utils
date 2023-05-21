@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -37,11 +38,31 @@ type (
 		command.FlagBinder
 		marshal(arg string) ([]byte, error)
 	}
-	mountIPFSSettings    struct{ ipfs.IPFSGuest }
-	mountPinFSSettings   struct{ ipfs.PinFSGuest }
-	mountIPNSSettings    struct{ ipfs.IPNSGuest }
-	mountKeyFSFSSettings struct{ ipfs.KeyFSGuest }
-
+	mountSettings struct {
+		permissions p9.FileMode
+		uid         p9.UID
+		gid         p9.GID
+	}
+	mountIPFSSettings struct {
+		ipfs.IPFSGuest
+		mountSettings
+	}
+	mountPinFSSettings struct {
+		ipfs.PinFSGuest
+		mountSettings
+	}
+	mountIPNSSettings struct {
+		ipfs.IPNSGuest
+		mountSettings
+	}
+	mountKeyFSFSSettings struct {
+		ipfs.KeyFSGuest
+		mountSettings
+	}
+	mountCmdSettings struct {
+		clientSettings
+		options []MountOption
+	}
 	mountPointSettings[
 		HT, GT any,
 		H hostSettings[HT],
@@ -49,11 +70,41 @@ type (
 	] struct {
 		Host  HT
 		Guest GT
-		clientSettings
+		mountCmdSettings
 	}
+
+	MountOption func(*mountSettings) error
 )
 
-const subcommandUsage = "Must be called with a subcommand."
+const (
+	subcommandUsage            = "Must be called with a subcommand."
+	mountAPIPermissionsDefault = p9fs.ReadUser | p9fs.WriteUser | p9fs.ExecuteUser |
+		p9fs.ReadGroup | p9fs.ExecuteGroup |
+		p9fs.ReadOther | p9fs.ExecuteOther
+	mountAPIUIDDefault = p9.NoUID
+	mountAPIGIDDefault = p9.NoGID
+)
+
+func WithPermissions(permissions p9.FileMode) MountOption {
+	return func(ms *mountSettings) error {
+		ms.permissions = permissions
+		return nil
+	}
+}
+
+func WithUID(uid p9.UID) MountOption {
+	return func(ms *mountSettings) error {
+		ms.uid = uid
+		return nil
+	}
+}
+
+func WithGID(gid p9.GID) MountOption {
+	return func(ms *mountSettings) error {
+		ms.gid = gid
+		return nil
+	}
+}
 
 func supportedHosts() []filesystem.Host {
 	return []filesystem.Host{
@@ -68,6 +119,63 @@ func supportedSystems() []filesystem.ID {
 		ipfs.IPNSID,
 		ipfs.KeyFSID,
 	}
+}
+
+func (set *mountCmdSettings) BindFlags(flagSet *flag.FlagSet) {
+	set.clientSettings.BindFlags(flagSet)
+	const (
+		prefix   = "api-"
+		uidName  = prefix + "uid"
+		uidUsage = "file owner's `uid`"
+	)
+	uidDefaultText := idString(mountAPIUIDDefault)
+	flagSet.Func(uidName, uidUsage, func(s string) error {
+		uid, err := parseID[p9.UID](s)
+		if err != nil {
+			return err
+		}
+		set.options = append(set.options, WithUID(uid))
+		return nil
+	})
+	const (
+		gidName  = prefix + "gid"
+		gidUsage = "file owner's `gid`"
+	)
+	gidDefaultText := idString(mountAPIGIDDefault)
+	flagSet.Func(gidName, gidUsage, func(s string) error {
+		gid, err := parseID[p9.GID](s)
+		if err != nil {
+			return err
+		}
+		set.options = append(set.options, WithGID(gid))
+		return nil
+	})
+	const (
+		permissionsName  = prefix + "permissions"
+		permissionsUsage = "`permissions` to use when creating service files"
+	)
+	permissionsDefaultText := modeToSymbolicPermissions(
+		fs.FileMode(mountAPIPermissionsDefault &^ p9.FileModeMask),
+	)
+	flagSet.Func(permissionsName, permissionsUsage, func(s string) error {
+		permissions, err := parsePOSIXPermissions(0, s)
+		if err != nil {
+			return err
+		}
+		// TODO: [2023.05.20]
+		// patch `.Permissions()` method in 9P library.
+		// For whatever reason the (unexported)
+		// const `p9.permissionsMask` is defined as `01777`
+		// but should be `0o7777`
+		permissions9 := modeFromFS(permissions) &^ p9.FileModeMask
+		set.options = append(set.options, WithPermissions(permissions9))
+		return nil
+	})
+	setDefaultValueText(flagSet, flagDefaultText{
+		uidName:         uidDefaultText,
+		gidName:         gidDefaultText,
+		permissionsName: permissionsDefaultText,
+	})
 }
 
 func registerCommonIPFSFlags(guest filesystem.ID, flagSet *flag.FlagSet,
@@ -144,7 +252,7 @@ func ipnsExpiryVar(namePrefix string, flagSet *flag.FlagSet, field *time.Duratio
 }
 
 func (mp *mountPointSettings[HT, GT, H, G]) BindFlags(flagSet *flag.FlagSet) {
-	mp.clientSettings.BindFlags(flagSet)
+	mp.mountCmdSettings.BindFlags(flagSet)
 	H(&mp.Host).BindFlags(flagSet)
 	G(&mp.Guest).BindFlags(flagSet)
 }
@@ -472,7 +580,8 @@ func makeMountCommand[
 			if err != nil {
 				return err
 			}
-			if err := client.Mount(host, fsid, data); err != nil {
+			options := settings.mountCmdSettings.options
+			if err := client.Mount(host, fsid, data, options...); err != nil {
 				return unwind(err, client.Close)
 			}
 			if err := client.Close(); err != nil {
@@ -482,22 +591,28 @@ func makeMountCommand[
 		})
 }
 
-func (c *Client) Mount(host filesystem.Host, fsid filesystem.ID, data [][]byte) error {
+func (c *Client) Mount(host filesystem.Host, fsid filesystem.ID, data [][]byte, options ...MountOption) error {
+	set := mountSettings{
+		permissions: mountAPIPermissionsDefault,
+		uid:         mountAPIUIDDefault,
+		gid:         mountAPIGIDDefault,
+	}
+	for _, setter := range options {
+		if err := setter(&set); err != nil {
+			return err
+		}
+	}
 	mounts, err := (*p9.Client)(c).Attach(mountsFileName)
 	if err != nil {
 		return err
 	}
 	var (
-		hostName = string(host)
-		fsName   = string(fsid)
-		wnames   = []string{hostName, fsName}
-	)
-	const ( // TODO: from options
-		permissions = p9fs.ReadUser | p9fs.WriteUser | p9fs.ExecuteUser |
-			p9fs.ReadGroup | p9fs.ExecuteGroup |
-			p9fs.ReadOther | p9fs.ExecuteOther
-		uid = p9.NoUID
-		gid = p9.NoGID
+		hostName    = string(host)
+		fsName      = string(fsid)
+		wnames      = []string{hostName, fsName}
+		permissions = set.permissions
+		uid         = set.uid
+		gid         = set.gid
 	)
 	guests, err := p9fs.MkdirAll(mounts, wnames, permissions, uid, gid)
 	if err != nil {
@@ -512,10 +627,13 @@ func (c *Client) Mount(host filesystem.Host, fsid filesystem.ID, data [][]byte) 
 	if err != nil {
 		return unwind(err, mounts.Close, guests.Close)
 	}
-	var errs []error
+	var (
+		errs            []error
+		filePermissions = permissions ^ (p9fs.ExecuteOther | p9fs.ExecuteGroup | p9fs.ExecuteUser)
+	)
 	for _, data := range data {
 		name := fmt.Sprintf("%s.json", idGen())
-		if err := newMountFile(guests, permissions, uid, gid,
+		if err := newMountFile(guests, filePermissions, uid, gid,
 			name, data); err != nil {
 			errs = append(errs, err)
 		}
