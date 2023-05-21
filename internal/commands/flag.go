@@ -145,6 +145,21 @@ func parseID[id uint32 | p9.UID | p9.GID](arg string) (id, error) {
 	return id(num), nil
 }
 
+func idString[id uint32 | p9.UID | p9.GID](who id) string {
+	const nobody = "nobody"
+	switch typed := any(who).(type) {
+	case p9.UID:
+		if typed == p9.NoUID {
+			return nobody
+		}
+	case p9.GID:
+		if typed == p9.NoGID {
+			return nobody
+		}
+	}
+	return strconv.Itoa(int(who))
+}
+
 func getIPFSAPI() ([]multiaddr.Multiaddr, error) {
 	location, err := getIPFSAPIPath()
 	if err != nil {
