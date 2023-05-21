@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"encoding/csv"
 	"errors"
 	"flag"
 	"fmt"
@@ -181,17 +182,23 @@ func (set *daemonSettings) BindFlags(flagSet *flag.FlagSet) {
 		set.serverMaddrs = maddrs[:1]
 	}
 	flagSet.Func(sockName, sockUsage, func(s string) error {
-		maddr, err := multiaddr.NewMultiaddr(s)
+		maddrStrings, err := csv.NewReader(strings.NewReader(s)).Read()
 		if err != nil {
 			return err
 		}
-		if !sockFlagSet {
-			// Don't append to the default value(s).
-			set.serverMaddrs = []multiaddr.Multiaddr{maddr}
-			sockFlagSet = true
-			return nil
+		for _, maddrString := range maddrStrings {
+			maddr, err := multiaddr.NewMultiaddr(maddrString)
+			if err != nil {
+				return err
+			}
+			if !sockFlagSet {
+				// Don't append to the default value(s).
+				set.serverMaddrs = []multiaddr.Multiaddr{maddr}
+				sockFlagSet = true
+				continue
+			}
+			set.serverMaddrs = append(set.serverMaddrs, maddr)
 		}
-		set.serverMaddrs = append(set.serverMaddrs, maddr)
 		return nil
 	})
 	const (
