@@ -6,9 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
-	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
+	"github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/hugelgupf/p9/p9"
 	"github.com/multiformats/go-multiaddr"
@@ -17,77 +18,160 @@ import (
 type (
 	cmdIO struct {
 		in       io.WriteCloser
-		out, err io.ReadCloser
+		out      io.ReadCloser
+		closeErr error
+		once     sync.Once
 	}
-	listenerResult struct {
-		error
-		maddrs []multiaddr.Multiaddr
-	}
+	cmdIPCSignal = byte
 )
 
-func (cio cmdIO) Read(p []byte) (n int, err error) {
+const (
+	EOT                         = 0x4
+	ipcProcRelease cmdIPCSignal = EOT
+	// stdio Clients should signal this file
+	// immediately before closing, so the subprocess
+	// can be aware it is about to be decoupled.
+	ipcReleaseFileName = "release"
+)
+
+func (cio *cmdIO) Read(p []byte) (n int, err error) {
 	return cio.out.Read(p)
 }
 
-func (cio cmdIO) Write(p []byte) (n int, err error) {
+func (cio *cmdIO) Write(p []byte) (n int, err error) {
 	return cio.in.Write(p)
 }
 
-func (cio cmdIO) Close() (err error) {
-	for _, c := range []io.Closer{cio.in, cio.out, cio.err} {
-		if cErr := c.Close(); cErr != nil {
-			err = fserrors.Join(err, cErr)
+func (cio *cmdIO) Close() (err error) {
+	cio.once.Do(func() {
+		var errs []error
+		for _, c := range []io.Closer{cio.in, cio.out} {
+			if cErr := c.Close(); cErr != nil {
+				errs = append(errs, cErr)
+			}
 		}
-	}
-	return err
+		if errs != nil {
+			cio.closeErr = fserrors.Join(errs...)
+		}
+	})
+	return cio.closeErr
 }
 
-func setupCmdIPC(cmd *exec.Cmd) (sio cmdIO, err error) {
-	if sio.in, err = cmd.StdinPipe(); err != nil {
-		return
+func spawnDaemonProc(exitInterval time.Duration) (*exec.Cmd, *cmdIO, io.ReadCloser, error) {
+	cmd, err := newDaemonCommand(exitInterval)
+	if err != nil {
+		return nil, nil, nil, err
 	}
-	if sio.out, err = cmd.StdoutPipe(); err != nil {
-		return
+	cmd.SysProcAttr = emancipatedSubproc()
+	cmdIO, stderr, err := setupCmdIPC(cmd)
+	if err != nil {
+		return nil, nil, nil, err
 	}
-	if sio.err, err = cmd.StderrPipe(); err != nil {
-		return
+	if err := cmd.Start(); err != nil {
+		return nil, nil, nil, unwind(err, cmdIO.Close, stderr.Close)
 	}
-	return
+	return cmd, cmdIO, stderr, nil
 }
 
-func selfCommand(args []string, exitInterval time.Duration) (*exec.Cmd, error) {
+func newDaemonCommand(exitInterval time.Duration) (*exec.Cmd, error) {
 	self, err := os.Executable()
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(self, args...)
-	if exitInterval != 0 {
-		cmd.Args = append(cmd.Args,
+	const (
+		mandatoryArgs = 1
+		likelyArgs    = 2
+	)
+	args := make([]string, mandatoryArgs, likelyArgs)
+	args[0] = daemonCommandName
+	if exitInterval > 0 {
+		args = append(args,
 			fmt.Sprintf(
 				"-%s=%s",
 				exitAfterFlagName, exitInterval,
 			),
 		)
 	}
-	return cmd, nil
+	return exec.Command(self, args...), nil
 }
 
-func getListenersFrom(cio cmdIO, fsysName string) ([]multiaddr.Multiaddr, error) {
-	var (
-		stderrs       = watchStderr(cio.err)
-		clientResults = getListenersAsync(cio, fsysName)
-	)
-	for {
-		select {
-		case err, ok := <-stderrs:
-			if ok {
-				return nil, err
-			}
-			stderrs = nil
-		case result := <-clientResults:
-			return result.maddrs, result.error
-		}
+func setupCmdIPC(cmd *exec.Cmd) (*cmdIO, io.ReadCloser, error) {
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, nil, err
 	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, nil, unwind(err, stdin.Close)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, nil, unwind(err, stdin.Close, stdout.Close)
+	}
+	return &cmdIO{in: stdin, out: stdout}, stderr, nil
+}
+
+func getListenersFromProc(ipc io.ReadWriteCloser, stderr io.ReadCloser, options ...p9.ClientOpt) ([]multiaddr.Multiaddr, error) {
+	var (
+		stdErrs     = watchStderr(stderr)
+		client, err = newClient(ipc, options...)
+		errs        []error
+	)
+	if err != nil {
+		errs = append(errs, fmt.Errorf(
+			"could not connect to daemon: %w", err,
+		))
+		// An errant process should close stderr,
+		// but we won't trust it.
+		const exitGrace = 512 * time.Millisecond
+		select {
+		case err := <-stdErrs:
+			if err != nil {
+				errs = append(errs, err)
+			}
+		case <-time.After(exitGrace): // Rogue process.
+		}
+		return nil, errors.Join(errs...)
+	}
+	var (
+		done           = make(chan struct{})
+		maddrs         []multiaddr.Multiaddr
+		fetchListeners = func() {
+			defer close(done)
+			var err error
+			if maddrs, err = client.getListeners(); err != nil {
+				errs = append(errs, fmt.Errorf(
+					"subproccess protocol error: %w", err,
+				))
+			}
+		}
+		accumulateErr = func(err error) {
+			if err != nil {
+				errs = append(errs, err)
+			}
+		}
+	)
+	go fetchListeners()
+	select {
+	case <-done:
+		if errs != nil {
+			accumulateErr(client.Shutdown(patientShutdown))
+		} else if len(maddrs) == 0 {
+			errs = append(errs, fmt.Errorf(
+				"%w: daemon didn't return any addresses",
+				ErrServiceNotFound,
+			))
+		}
+		accumulateErr(client.ipcRelease())
+		accumulateErr(stderr.Close())
+	case err := <-stdErrs:
+		errs = append(errs, err, stderr.Close())
+	}
+	accumulateErr(client.Close())
+	if errs != nil {
+		return nil, errors.Join(errs...)
+	}
+	return maddrs, nil
 }
 
 func watchStderr(stderr io.Reader) <-chan error {
@@ -100,40 +184,36 @@ func watchStderr(stderr io.Reader) <-chan error {
 			return
 		}
 		if len(stdErr) != 0 {
-			errs <- fmt.Errorf("stderr: %s", stdErr)
+			errs <- fmt.Errorf(
+				"subprocess stderr:"+
+					"\n%s",
+				stdErr,
+			)
 		}
 	}()
 	return errs
 }
 
-func getListenersAsync(cio io.ReadWriteCloser, fsysName string) <-chan listenerResult {
-	results := make(chan listenerResult, 1)
-	go func() {
-		defer close(results)
-		client, err := p9.NewClient(cio)
-		if err != nil {
-			results <- listenerResult{
-				error: fmt.Errorf("could not create client: %w", err),
-			}
-			return
-		}
-		listenersDir, err := client.Attach(fsysName)
-		if err != nil {
-			results <- listenerResult{
-				error: fmt.Errorf(`could not attach to "%s": %w`, fsysName, err),
-			}
-			return
-		}
-		maddrs, err := p9fs.GetListeners(listenersDir)
-		if err = fserrors.Join(err, listenersDir.Close()); err != nil {
-			results <- listenerResult{
-				error: fmt.Errorf(`could not parse listeners from "%s": %w`, fsysName, err),
-			}
-			return
-		}
-		results <- listenerResult{maddrs: maddrs}
-	}()
-	return results
+func (c *Client) ipcRelease() error {
+	controlDir, err := (*p9.Client)(c).Attach(controlFileName)
+	if err != nil {
+		return err
+	}
+	_, releaseFile, err := controlDir.Walk([]string{ipcReleaseFileName})
+	if err != nil {
+		err = receiveError(controlDir, err)
+		return unwind(err, controlDir.Close)
+	}
+	if _, _, err := releaseFile.Open(p9.WriteOnly); err != nil {
+		err = receiveError(controlDir, err)
+		return unwind(err, releaseFile.Close, controlDir.Close)
+	}
+	data := []byte{ipcProcRelease}
+	if _, err := releaseFile.WriteAt(data, 0); err != nil {
+		err = receiveError(controlDir, err)
+		return unwind(err, releaseFile.Close, controlDir.Close)
+	}
+	return unwind(nil, releaseFile.Close, controlDir.Close)
 }
 
 func maybeKill(cmd *exec.Cmd) error {

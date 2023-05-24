@@ -295,14 +295,18 @@ func daemonExecute(ctx context.Context, set *daemonSettings) error {
 	var (
 		listener    = listenSys.Listener
 		permissions = modeFromFS(set.permissions)
-		listenersWg = listenOn(listener, permissions,
+		procExitCh  = listenOn(listener, permissions,
 			stopSend, errs,
 			set.serverMaddrs...,
 		)
 	)
 	if isPipe(os.Stdin) {
+		serviceWg.Add(1)
 		errs.Add(1)
-		go handleStdio(server.Handle, listenersWg, errs)
+		go handleStdio(dCtx, fsys.control.directory,
+			procExitCh, server.Handle,
+			serviceWg, errs,
+		)
 	}
 	var (
 		shutdownFileData = fsys.control.shutdown.ch
@@ -319,14 +323,15 @@ func daemonExecute(ctx context.Context, set *daemonSettings) error {
 		stopSend.waitThenCloseCh()
 		errs.waitThenCloseCh()
 	}()
-	for e := range errs.ch {
-		log.Print(e)
-		err = fserrors.Join(err, e)
+	var errSl []error
+	for err := range errs.ch {
+		log.Print(err)
+		errSl = append(errSl, err)
 	}
-	if err = fserrors.Join(ctx.Err(), err); err != nil {
-		err = fmt.Errorf("daemon: %w", err)
+	if errSl != nil {
+		return fmt.Errorf("daemon: %w", errors.Join(errSl...))
 	}
-	return err
+	return ctx.Err()
 }
 
 func makeStoppers(ctx context.Context) (*waitGroupChan[shutdownDisposition], <-chan shutdownDisposition) {
@@ -403,31 +408,39 @@ func listenOn(listener *p9fs.Listener, permissions p9.FileMode,
 	stop *waitGroupChan[shutdownDisposition],
 	errs *waitGroupChan[error],
 	maddrs ...multiaddr.Multiaddr,
-) *sync.WaitGroup {
+) <-chan bool {
 	var (
-		wg         sync.WaitGroup
+		wg           sync.WaitGroup
+		sawError     atomic.Bool
+		processMaddr = func(maddr multiaddr.Multiaddr) {
+			defer func() { wg.Done(); stop.Done(); errs.Done() }()
+			err := p9fs.Listen(listener, maddr, permissions)
+			if err != nil {
+				errs.send(fmt.Errorf(
+					"could not listen on: %s - %w",
+					maddr, err,
+				))
+				stop.send(patientShutdown)
+				sawError.Store(true)
+			}
+		}
 		maddrCount = len(maddrs)
 	)
 	wg.Add(maddrCount)
 	stop.Add(maddrCount)
 	errs.Add(maddrCount)
 	for _, maddr := range maddrs {
-		go func(m multiaddr.Multiaddr) {
-			defer func() {
-				wg.Done()
-				stop.Done()
-				errs.Done()
-			}()
-			if err := p9fs.Listen(listener, m, permissions); err != nil {
-				const maddrFmt = "could not listen on: %s - %w"
-				err = fmt.Errorf(maddrFmt, m, err)
-				errs.send(err)
-				stop.send(immediateShutdown)
-				return
-			}
-		}(maddr)
+		go processMaddr(maddr)
 	}
-	return &wg
+	failureSignal := make(chan bool, 1)
+	go func() {
+		defer close(failureSignal)
+		wg.Wait()
+		if sawError.Load() {
+			failureSignal <- true
+		}
+	}()
+	return failureSignal
 }
 
 func setupExtraStopWriters(
@@ -1074,18 +1087,74 @@ func isPipe(file *os.File) bool {
 	return fStat.Mode().Type()&os.ModeNamedPipe != 0
 }
 
-func handleStdio(handleFn handleFunc, listenersUp *sync.WaitGroup, errs *waitGroupChan[error]) {
-	defer errs.Done()
-	listenersUp.Wait()
+func handleStdio(ctx context.Context, control p9.File,
+	exitCh <-chan bool, handleFn handleFunc,
+	wg *sync.WaitGroup, errs *waitGroupChan[error],
+) {
+	defer func() { wg.Done(); errs.Done() }()
+	childProcInit()
+	if exiting := <-exitCh; exiting {
+		// Process wants to exit. Parent process
+		return // should be monitoring stderr.
+	}
+	var (
+		releaseCtx, cancel = context.WithCancel(ctx)
+		releaseChan, err   = addIPCReleaseFile(releaseCtx, control)
+	)
+	if err != nil {
+		cancel()
+		errs.send(err)
+		return
+	}
+	go func() {
+		// NOTE:
+		// 1) If we receive data, the parent process
+		// is signaling that it's about to close the
+		// write end of stderr. We don't validate this
+		// because we'll be in a detached state. I.e.
+		// even if we ferry the errors back to execute,
+		// the write end of stderr is (likely) closed.
+		// 2) If the parent process doesn't follow
+		// our IPC protocol, this routine will remain
+		// active. We don't force the service to wait
+		// for our return; it's allowed to halt regardless.
+		select {
+		case <-releaseChan:
+			defer cancel()
+			const flags = 0
+			// XXX: [presumption / no guard]
+			// we assume no os handle access or changes
+			// will happen during this window. Our only
+			// writer should be in the return from main,
+			// and daemon's execute should not be doing
+			// (other) os file operations at this time.
+			os.Stderr.Close()
+			if discard, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0); err == nil {
+				os.Stderr = discard
+			}
+			control.UnlinkAt(ipcReleaseFileName, flags)
+		case <-releaseCtx.Done():
+		}
+	}()
 	if err := handleFn(os.Stdin, os.Stdout); err != nil {
 		if !errors.Is(err, io.EOF) {
 			errs.send(err)
 			return
 		}
+		// NOTE: handleFn implicitly closes its parameters
+		// before returning. Otherwise we'd close them.
 	}
-	if err := os.Stderr.Close(); err != nil {
-		errs.send(err)
+}
+
+func addIPCReleaseFile(ctx context.Context, control p9.File) (<-chan []byte, error) {
+	_, releaseFile, releaseChan, err := p9fs.NewChannelFile(ctx)
+	if err != nil {
+		return nil, err
 	}
+	if err := control.Link(releaseFile, ipcReleaseFileName); err != nil {
+		return nil, err
+	}
+	return releaseChan, nil
 }
 
 func stopWhen(checkFn checkFunc, interval time.Duration,
