@@ -2,6 +2,7 @@ package commands
 
 import (
 	"os"
+	"syscall"
 
 	"golang.org/x/sys/windows"
 )
@@ -25,4 +26,14 @@ func procRunning(proc *os.Process) bool {
 		return false
 	}
 	return windows.NTStatus(exitcode) == STILL_ACTIVE
+}
+
+func childProcInit() { /* NOOP */ }
+
+func emancipatedSubproc() *syscall.SysProcAttr {
+	return &syscall.SysProcAttr{
+		HideWindow: true,
+		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP |
+			windows.DETACHED_PROCESS,
+	}
 }

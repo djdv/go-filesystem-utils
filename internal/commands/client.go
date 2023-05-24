@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/adrg/xdg"
+	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/hugelgupf/p9/p9"
@@ -34,6 +35,8 @@ type (
 	defaultClientMaddr struct{ multiaddr.Multiaddr }
 )
 
+const ErrServiceNotFound = generic.ConstError("could not find service instance")
+
 func (set *clientSettings) getClient(autoLaunchDaemon bool) (*Client, error) {
 	var (
 		serviceMaddr = set.serviceMaddr
@@ -46,7 +49,7 @@ func (set *clientSettings) getClient(autoLaunchDaemon bool) (*Client, error) {
 	}
 	if autoLaunchDaemon {
 		if _, wasUnset := serviceMaddr.(defaultClientMaddr); wasUnset {
-			return connectOrLaunchLocal(clientOpts...)
+			return connectOrLaunchLocal(set.exitInterval, clientOpts...)
 		}
 	}
 	return Connect(serviceMaddr, clientOpts...)
@@ -56,9 +59,11 @@ func (set *clientSettings) BindFlags(flagSet *flag.FlagSet) {
 	set.commonSettings.BindFlags(flagSet)
 	const (
 		exitFlag  = exitAfterFlagName
-		exitUsage = "passed to the daemon command if we launch it\nrefer to daemon's helptext"
+		exitUsage = "passed to the daemon command if we launch it" +
+			"\n(refer to daemon's helptext)"
+		exitAfterDefault = 30 * time.Second
 	)
-	flagSet.DurationVar(&set.exitInterval, exitFlag, 0, exitUsage)
+	flagSet.DurationVar(&set.exitInterval, exitFlag, exitAfterDefault, exitUsage)
 	const (
 		sockName  = serverFlagName
 		sockUsage = "file system service `maddr`"
@@ -82,9 +87,19 @@ func (set *clientSettings) BindFlags(flagSet *flag.FlagSet) {
 	})
 }
 
-const ErrServiceNotFound = generic.ConstError("could not find service instance")
+func (c *Client) getListeners() ([]multiaddr.Multiaddr, error) {
+	listenersDir, err := (*p9.Client)(c).Attach(listenersFileName)
+	if err != nil {
+		return nil, err
+	}
+	maddrs, err := p9fs.GetListeners(listenersDir)
+	if err != nil {
+		return nil, unwind(err, listenersDir.Close)
+	}
+	return maddrs, listenersDir.Close()
+}
 
-func connectOrLaunchLocal(options ...p9.ClientOpt) (*Client, error) {
+func connectOrLaunchLocal(exitInterval time.Duration, options ...p9.ClientOpt) (*Client, error) {
 	conn, err := findLocalServer()
 	if err == nil {
 		return newClient(conn, options...)
@@ -92,55 +107,53 @@ func connectOrLaunchLocal(options ...p9.ClientOpt) (*Client, error) {
 	if !errors.Is(err, ErrServiceNotFound) {
 		return nil, err
 	}
-	return selfConnect([]string{daemonCommandName}, options...)
+	return launchAndConnect(exitInterval, options...)
 }
 
-// TODO: name is misleading,
-// this launches and connects to self.
-// The launching logic should go into its caller.
-func selfConnect(args []string, options ...p9.ClientOpt) (*Client, error) {
-	// TODO: should be a ClientOption value?
-	// argument?
-	const defaultDecay = 30 * time.Second
-	cmd, err := selfCommand(args, defaultDecay)
+func launchAndConnect(exitInterval time.Duration, options ...p9.ClientOpt) (*Client, error) {
+	daemon, ipc, stderr, err := spawnDaemonProc(exitInterval)
 	if err != nil {
 		return nil, err
 	}
-	cmdIO, err := setupCmdIPC(cmd)
+	var (
+		errs     []error
+		killProc = func() error {
+			return errors.Join(
+				maybeKill(daemon),
+				daemon.Process.Release(),
+			)
+		}
+	)
+	maddrs, err := getListenersFromProc(ipc, stderr, options...)
 	if err != nil {
-		return nil, err
+		errs = append(errs, err)
+		if err := killProc(); err != nil {
+			errs = append(errs, err)
+		}
+		return nil, errors.Join(errs...)
 	}
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-	// NOTE: Order of operations is important here.
-	// 1) We must always close IO when done with the subprocess.
-	// Otherwise either process could block on IO operations.
-	// 2) The subprocess handle must remain held if it is to be killed.
-	// PIDs may be reused by other processes if they're released from us and the process exits.
-	// 3) The subprocess must be released before returning.
-	// We must not terminate the subprocess when our process terminates.
-	abort := func() error {
-		return fserrors.Join(maybeKill(cmd), cmd.Process.Release())
-	}
-	cmdMaddrs, err := getListenersFrom(cmdIO, listenersFileName)
-	err = fserrors.Join(err, cmdIO.Close())
+	conn, err := firstDialable(maddrs)
 	if err != nil {
-		return nil, fserrors.Join(err, abort())
+		return nil, unwind(err, killProc)
 	}
-	if len(cmdMaddrs) == 0 {
-		var cErr error = ErrServiceNotFound
-		err = fmt.Errorf("%w: daemon didn't return any addresses", cErr)
-		return nil, fserrors.Join(err, abort())
-	}
-	conn, err := firstDialable(cmdMaddrs)
+	client, err := newClient(conn, options...)
 	if err != nil {
-		return nil, fserrors.Join(err, abort())
+		return nil, unwind(err, killProc)
 	}
-	if err := fserrors.Join(err, cmd.Process.Release()); err != nil {
-		return nil, err
+	if err := daemon.Process.Release(); err != nil {
+		// We can no longer call `Kill`, and stdio
+		// IPC is closed. Attempt to abort the service
+		// via the established socket connection.
+		errs := []error{err}
+		if err := client.Shutdown(immediateShutdown); err != nil {
+			errs = append(errs, err)
+		}
+		if err := client.Close(); err != nil {
+			errs = append(errs, err)
+		}
+		return nil, errors.Join(errs...)
 	}
-	return newClient(conn, options...)
+	return client, nil
 }
 
 func Connect(serverMaddr multiaddr.Multiaddr, options ...p9.ClientOpt) (*Client, error) {
