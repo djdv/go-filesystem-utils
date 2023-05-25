@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/hugelgupf/p9/p9"
 	"github.com/hugelgupf/p9/perrors"
 	"github.com/multiformats/go-multiaddr"
@@ -140,23 +139,18 @@ func (ce *chanEmitter[T]) emit(value T) error {
 
 func createViaMknod(fsys p9.File, name string, flags p9.OpenFlags,
 	permissions p9.FileMode, uid p9.UID, gid p9.GID,
-) (_ p9.File, _ p9.QID, _ ioUnit, err error) {
+) (p9.File, p9.QID, ioUnit, error) {
 	if qid, err := fsys.Mknod(name, permissions, 0, 0, uid, gid); err != nil {
 		return nil, qid, 0, err
 	}
-	defer func() {
-		if err != nil {
-			const ulFlags = 0
-			err = fserrors.Join(err, fsys.UnlinkAt(name, ulFlags))
-		}
-	}()
+	const ulFlags = 0
 	_, file, err := fsys.Walk([]string{name})
 	if err != nil {
-		return nil, p9.QID{}, 0, err
+		return nil, p9.QID{}, 0, errors.Join(err, fsys.UnlinkAt(name, ulFlags))
 	}
 	qid, ioUnit, err := file.Open(flags)
 	if err != nil {
-		return nil, p9.QID{}, 0, err
+		return nil, p9.QID{}, 0, errors.Join(err, fsys.UnlinkAt(name, ulFlags))
 	}
 	return file, qid, ioUnit, nil
 }
@@ -174,10 +168,10 @@ func MkdirAll(root p9.File, names []string,
 			cErr      = current.Close()
 		)
 		if err != nil {
-			return nil, fserrors.Join(err, cErr)
+			return nil, errors.Join(err, cErr)
 		}
 		if cErr != nil {
-			return nil, fserrors.Join(cErr, next.Close())
+			return nil, errors.Join(cErr, next.Close())
 		}
 		current = next
 	}
@@ -300,7 +294,7 @@ func walkEnt(parent p9.File, ent p9.Dirent) (p9.File, error) {
 
 // ReadAll performs the following sequence on file:
 // clone, stat(size), open(read-only), read, close.
-func ReadAll(file p9.File) (_ []byte, err error) {
+func ReadAll(file p9.File) ([]byte, error) {
 	// TODO: walkgetattr with fallback.
 	_, fileClone, err := file.Walk(nil)
 	if err != nil {
@@ -310,18 +304,21 @@ func ReadAll(file p9.File) (_ []byte, err error) {
 	want := p9.AttrMask{Size: true}
 	_, valid, attr, err := fileClone.GetAttr(want)
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(err, fileClone.Close())
 	}
 	if !valid.Contains(want) {
-		return nil, attrErr(valid, want)
+		return nil, errors.Join(
+			attrErr(valid, want),
+			fileClone.Close(),
+		)
 	}
 
 	if _, _, err := fileClone.Open(p9.ReadOnly); err != nil {
-		return nil, err
+		return nil, errors.Join(err, fileClone.Close())
 	}
 	sr := io.NewSectionReader(fileClone, 0, int64(attr.Size))
 	data, err := io.ReadAll(sr)
-	return data, fserrors.Join(err, fileClone.Close())
+	return data, errors.Join(err, fileClone.Close())
 }
 
 func renameAt(oldDir, newDir p9.File, oldName, newName string) error {
@@ -332,7 +329,7 @@ func renameAt(oldDir, newDir p9.File, oldName, newName string) error {
 	err = rename(file, oldDir, newDir, oldName, newName)
 	if cErr := file.Close(); cErr != nil {
 		const closeFmt = "could not close old file: %w"
-		err = fserrors.Join(err, fmt.Errorf(closeFmt, cErr))
+		return errors.Join(err, fmt.Errorf(closeFmt, cErr))
 	}
 	return err
 }
@@ -346,10 +343,11 @@ func rename(file, oldDir, newDir p9.File, oldName, newName string) error {
 	if err != nil {
 		if uErr := newDir.UnlinkAt(newName, flags); uErr != nil {
 			const unlinkFmt = "could not unlink new file: %w"
-			err = fserrors.Join(err, fmt.Errorf(unlinkFmt, uErr))
+			return errors.Join(err, fmt.Errorf(unlinkFmt, uErr))
 		}
+		return err
 	}
-	return err
+	return nil
 }
 
 // flattenDir returns all files within a directory (recursively).
@@ -482,7 +480,7 @@ func unlinkChildSync(link *linkSync) error {
 		return err
 	}
 	const flags = 0
-	return fserrors.Join(
+	return errors.Join(
 		clone.UnlinkAt(link.child, flags),
 		clone.Close(),
 	)
@@ -505,7 +503,7 @@ func aggregateResults[T any, R result[T]](cancel context.CancelFunc, results <-c
 		values = append(values, rc(result).value)
 	}
 	if errs != nil {
-		return nil, fserrors.Join(errs...)
+		return nil, errors.Join(errs...)
 	}
 	return values, nil
 }
@@ -551,5 +549,5 @@ func unwind(err error, funcs ...func() error) error {
 	if errs == nil {
 		return err
 	}
-	return fserrors.Join(append([]error{err}, errs...)...)
+	return errors.Join(append([]error{err}, errs...)...)
 }

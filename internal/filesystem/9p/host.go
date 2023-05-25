@@ -1,8 +1,9 @@
 package p9
 
 import (
+	"errors"
+
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
-	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/hugelgupf/p9/p9"
 	"github.com/hugelgupf/p9/perrors"
 )
@@ -61,7 +62,7 @@ func (hd *HostFile) Mkdir(name string, permissions p9.FileMode, uid p9.UID, gid 
 	qid, file, err := hd.makeGuestFn(hd, filesystem.ID(name),
 		mode, uid, gid)
 	if err != nil {
-		return p9.QID{}, fserrors.Join(perrors.EACCES, err)
+		return p9.QID{}, errors.Join(perrors.EACCES, err)
 	}
 	return qid, hd.Link(file, name)
 }
@@ -83,7 +84,7 @@ func (hf *HostFile) Mknod(name string, mode p9.FileMode,
 	qid, file, err := hf.makeGuestFn(hf, filesystem.ID(name),
 		mode, uid, gid)
 	if err != nil {
-		return p9.QID{}, fserrors.Join(perrors.EACCES, err)
+		return p9.QID{}, errors.Join(perrors.EACCES, err)
 	}
 	return qid, hf.Link(file, name)
 }

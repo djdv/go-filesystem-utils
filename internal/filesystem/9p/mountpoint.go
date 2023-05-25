@@ -3,6 +3,7 @@ package p9
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
-	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/hugelgupf/p9/fsimpl/templatefs"
 	"github.com/hugelgupf/p9/p9"
 	"github.com/hugelgupf/p9/perrors"
@@ -243,14 +243,14 @@ func (mf *MountPointFile[MP]) parseFieldsLocked(b []byte) error {
 				mountPoint = mf.mountPoint
 			)
 			if err := mountPoint.ParseField(key, value); err != nil {
-				return fserrors.Join(perrors.EINVAL, err)
+				return errors.Join(perrors.EINVAL, err)
 			}
 			mf.modified = true
 			return nil
 		case keyWord:
 			key := fields[key]
 			if err := mf.parseKeyWordLocked(key); err != nil {
-				return fserrors.Join(perrors.EINVAL, err)
+				return errors.Join(perrors.EINVAL, err)
 			}
 			return nil
 		}
@@ -383,11 +383,13 @@ func (mf *MountPointFile[MP]) mountFileLocked() error {
 	if parent := mf.linkSync.parent; parent != nil {
 		const flags = 0
 		child := mf.linkSync.child
-		err = fserrors.Join(err,
+		return errors.Join(
+			perrors.EIO,
+			err,
 			parent.UnlinkAt(child, flags),
 		)
 	}
-	return fserrors.Join(perrors.EIO, err)
+	return errors.Join(perrors.EIO, err)
 }
 
 func (mf *MountPointFile[MP]) ReadAt(p []byte, offset int64) (int, error) {
@@ -401,7 +403,7 @@ func (mf *MountPointFile[MP]) ReadAt(p []byte, offset int64) (int, error) {
 		data, err := mf.serializeLocked()
 		if err != nil {
 			// TODO: check spec for best errno
-			return -1, fserrors.Join(perrors.EIO, err)
+			return -1, errors.Join(perrors.EIO, err)
 		}
 		reader = bytes.NewReader(data)
 		mf.reader = reader

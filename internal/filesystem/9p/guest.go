@@ -1,7 +1,8 @@
 package p9
 
 import (
-	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
+	"errors"
+
 	"github.com/hugelgupf/p9/p9"
 	"github.com/hugelgupf/p9/perrors"
 )
@@ -63,7 +64,7 @@ func (gf *GuestFile) Mkdir(name string, permissions p9.FileMode, uid p9.UID, gid
 	qid, file, err := gf.makeMountPointFn(gf, name,
 		mode, uid, gid)
 	if err != nil {
-		return p9.QID{}, fserrors.Join(perrors.EACCES, err)
+		return p9.QID{}, errors.Join(perrors.EACCES, err)
 	}
 	return qid, gf.Link(file, name)
 }
@@ -105,5 +106,5 @@ func (gf *GuestFile) UnlinkAt(name string, flags uint32) error {
 		dErr = target.detach()
 	}
 	uErr := dir.UnlinkAt(name, flags)
-	return fserrors.Join(dErr, uErr)
+	return errors.Join(dErr, uErr)
 }
