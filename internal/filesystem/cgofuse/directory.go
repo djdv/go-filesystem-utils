@@ -4,11 +4,11 @@ package cgofuse
 
 import (
 	"context"
-	"errors"
 	"io/fs"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/winfsp/cgofuse/fuse"
 )
 
@@ -30,6 +30,11 @@ type (
 		fuseContext
 		position int64
 	}
+)
+
+const (
+	errNotReadDirFile     = generic.ConstError("file does not implement ReadDirFile")
+	errDirStreamNotOpened = generic.ConstError("directory stream not opened")
 )
 
 func (gw *goWrapper) Mkdir(path string, mode uint32) errNo {
@@ -93,12 +98,11 @@ func openDir(fsys fs.FS, path string) (fs.ReadDirFile, error) {
 	}
 	directory, ok := file.(fs.ReadDirFile)
 	if !ok {
-		err := errors.New("does not implement ReadDirFile")
 		return nil, &fserrors.Error{
 			PathError: fs.PathError{
 				Op:   "open",
 				Path: path,
-				Err:  err,
+				Err:  errNotReadDirFile,
 			},
 			Kind: fserrors.NotDir,
 		}
@@ -158,11 +162,10 @@ func newStreamDir(directory fs.ReadDirFile, fCtx fuseContext) *directoryStream {
 // ^^ With funny business. Directory contents should change between calls.
 // opendidr; readdir; modify dir contents; rewinddir; readdir; closedir
 func rewinddir(fsys fs.FS, stream *directoryStream, path string) (errNo, error) {
-	if cancel := stream.CancelFunc; cancel != nil {
-		cancel()
-	} else {
-		return -fuse.EIO, errors.New("directory stream missing CancelFunc")
+	if !stream.opened() {
+		return -fuse.EIO, errDirStreamNotOpened
 	}
+	stream.CancelFunc()
 	directory, err := openDir(fsys, path)
 	if err != nil {
 		return interpretError(err), err
@@ -230,20 +233,16 @@ func (gw *goWrapper) Rmdir(path string) errNo {
 	return -fuse.ENOSYS
 }
 
-func (ds *directoryStream) Close() (err error) {
-	// TODO: can we make this less gross but still safe?
-	if cancel := ds.CancelFunc; cancel != nil {
-		cancel()
-		ds.CancelFunc = nil
-		ds.entries = nil
-	} else {
-		err = errors.New("directory canceler is missing")
+func (ds *directoryStream) opened() bool {
+	return ds.ReadDirFile != nil && ds.CancelFunc != nil
+}
+
+func (ds *directoryStream) Close() error {
+	if !ds.opened() {
+		return errDirStreamNotOpened
 	}
-	if dirFile := ds.ReadDirFile; dirFile != nil {
-		err = fserrors.Join(err, ds.ReadDirFile.Close())
-		ds.ReadDirFile = nil
-	} else {
-		err = fserrors.Join(err, errors.New("directory interface is missing"))
-	}
-	return err
+	ds.CancelFunc()
+	ds.CancelFunc = nil
+	ds.entries = nil
+	return ds.ReadDirFile.Close()
 }
