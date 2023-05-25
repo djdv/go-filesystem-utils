@@ -22,7 +22,6 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem/cgofuse"
-	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem/ipfs"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	p9net "github.com/djdv/go-filesystem-utils/internal/net/9p"
@@ -1220,7 +1219,7 @@ func makeEmptyChecker(systems *daemonSystem, log ulog.Logger) checkFunc {
 			mounted, mErr   = hasEntries(mountSys)
 			listening, lErr = hasEntries(listenersSys)
 		)
-		if err = fserrors.Join(mErr, lErr); err != nil {
+		if err = errors.Join(mErr, lErr); err != nil {
 			return
 		}
 		if mounted || listening {

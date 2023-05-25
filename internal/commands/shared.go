@@ -1,6 +1,6 @@
 package commands
 
-import fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
+import "errors"
 
 const (
 	// serverRootName defines a name which servers and clients may use
@@ -62,5 +62,5 @@ func unwind(err error, funcs ...func() error) error {
 	if errs == nil {
 		return err
 	}
-	return fserrors.Join(append([]error{err}, errs...)...)
+	return errors.Join(append([]error{err}, errs...)...)
 }

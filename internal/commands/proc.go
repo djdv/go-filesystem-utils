@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,8 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
-	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/hugelgupf/p9/p9"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -51,7 +50,7 @@ func (cio *cmdIO) Close() (err error) {
 			}
 		}
 		if errs != nil {
-			cio.closeErr = fserrors.Join(errs...)
+			cio.closeErr = errors.Join(errs...)
 		}
 	})
 	return cio.closeErr
