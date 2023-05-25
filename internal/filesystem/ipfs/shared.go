@@ -61,6 +61,8 @@ const (
 	ErrIsDir    = generic.ConstError("file is a directory")
 	ErrIsNotDir = generic.ConstError("file is not a directory")
 
+	errUnexpectedType = generic.ConstError("unexpected type")
+
 	rootName = "."
 	// If this is encountered, it is an implementation error.
 	// All option types must be handled explicitly.
@@ -432,4 +434,27 @@ func walkLinks(root cid.Cid, names []string, getNodeFn getNodeFunc) (cid.Cid, er
 		}
 	}
 	return leafCid, nil
+}
+
+func fsTypeName(mode fs.FileMode) string {
+	switch mode.Type() {
+	case fs.FileMode(0):
+		return "regular"
+	case fs.ModeDir:
+		return "directory"
+	case fs.ModeSymlink:
+		return "symbolic link"
+	case fs.ModeNamedPipe:
+		return "named pipe"
+	case fs.ModeSocket:
+		return "socket"
+	case fs.ModeDevice:
+		return "device"
+	case fs.ModeCharDevice:
+		return "character device"
+	case fs.ModeIrregular:
+		fallthrough
+	default:
+		return "irregular"
+	}
 }
