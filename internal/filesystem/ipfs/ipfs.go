@@ -2,7 +2,7 @@ package ipfs
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"io/fs"
 	"strings"
 	"time"
@@ -338,13 +338,16 @@ func (fsys *IPFS) openCid(name string, cid cid.Cid) (fs.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	switch info.mode.Type() {
+	switch typ := info.mode.Type(); typ {
 	case fs.FileMode(0):
 		return fsys.openFile(cid, info)
 	case fs.ModeDir:
 		return fsys.openDir(cid, info)
 	default:
-		return nil, errors.New("unsupported node type")
+		return nil, fmt.Errorf(
+			"%w got: \"%s\" want: regular file or directory",
+			errUnexpectedType, fsTypeName(typ),
+		)
 	}
 }
 

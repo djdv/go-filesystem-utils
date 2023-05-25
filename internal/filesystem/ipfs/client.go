@@ -2,16 +2,18 @@ package ipfs
 
 import (
 	"context"
-	"errors"
 	"net"
 	"net/http"
 	"time"
 
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	httpapi "github.com/ipfs/go-ipfs-http-client"
 	"github.com/multiformats/go-multiaddr"
 	madns "github.com/multiformats/go-multiaddr-dns"
 	manet "github.com/multiformats/go-multiaddr/net"
 )
+
+const errCantResolveAPI = generic.ConstError("non-resolvable API endpoint")
 
 func newIPFSClient(apiMaddr multiaddr.Multiaddr) (*httpapi.HttpApi, error) {
 	address, client, err := newHTTPClient(apiMaddr)
@@ -80,7 +82,7 @@ func resolveMaddr(ctx context.Context, addr multiaddr.Multiaddr) (multiaddr.Mult
 	}
 
 	if len(addrs) == 0 {
-		return nil, errors.New("non-resolvable API endpoint")
+		return nil, errCantResolveAPI
 	}
 
 	return addrs[0], nil

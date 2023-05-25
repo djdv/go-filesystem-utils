@@ -7,7 +7,6 @@ import (
 	"io/fs"
 
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
-	"github.com/djdv/go-filesystem-utils/internal/generic"
 	files "github.com/ipfs/boxo/files"
 	unixfsfile "github.com/ipfs/boxo/ipld/unixfs/file"
 	ipld "github.com/ipfs/go-ipld-format"
@@ -20,8 +19,6 @@ type (
 		info   nodeInfo
 	}
 )
-
-const errUnexpectedType = generic.ConstError("unexpected type")
 
 func openUFSFile(ctx context.Context, dag ipld.DAGService,
 	node ipld.Node, stat *nodeInfo,
