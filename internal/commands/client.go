@@ -13,7 +13,6 @@ import (
 
 	"github.com/adrg/xdg"
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
-	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/hugelgupf/p9/p9"
 	"github.com/multiformats/go-multiaddr"
@@ -189,7 +188,7 @@ func allServiceMaddrs() ([]multiaddr.Multiaddr, error) {
 		systemMaddrs, sErr = systemServiceMaddrs()
 		serviceMaddrs      = append(userMaddrs, systemMaddrs...)
 	)
-	return serviceMaddrs, fserrors.Join(uErr, sErr)
+	return serviceMaddrs, errors.Join(uErr, sErr)
 }
 
 // TODO: [Ame] docs.
