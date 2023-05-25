@@ -3,7 +3,6 @@
 package cgofuse
 
 import (
-	"errors"
 	"fmt"
 	"io/fs"
 	"math"
@@ -32,11 +31,9 @@ const (
 	tableGrowthfactor      = 2
 	tableShrinkLimitFactor = tableGrowthfactor * 2
 	tableShrinkBound       = tableStartingSize * tableShrinkLimitFactor
-)
 
-var (
-	errInvalidHandle = errors.New("handle not found")
-	errFull          = errors.New("all slots filled")
+	errInvalidHandle = generic.ConstError("handle not found")
+	errFull          = generic.ConstError("all slots filled")
 )
 
 func newFileTable() *fileTable { return new(fileTable) }

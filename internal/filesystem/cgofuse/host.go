@@ -3,7 +3,6 @@
 package cgofuse
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/u-root/uio/ulog"
 	"github.com/winfsp/cgofuse/fuse"
 )
@@ -216,7 +216,7 @@ func safeMount(fuseSys *fuse.FileSystemHost, target string, args []string) error
 func disambiguateCgoPanic(r any) error {
 	if panicString, ok := r.(string); ok &&
 		panicString == cgoDepPanic {
-		return errors.New(cgoDepMessage)
+		return generic.ConstError(cgoDepMessage)
 	}
 	return fmt.Errorf("cgofuse panicked while attempting to mount: %v", r)
 }

@@ -9,10 +9,14 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/winfsp/cgofuse/fuse"
 )
 
-const goRoot = "."
+const (
+	goRoot       = "."
+	errEmptyPath = generic.ConstError("path argument is empty")
+)
 
 // fuseToGo converts a FUSE absolute path
 // to a relative [fs.FS] name.
@@ -23,7 +27,7 @@ func fuseToGo(path string) (string, error) {
 			PathError: fs.PathError{
 				Op:   "fuseToGo",
 				Path: path,
-				Err:  errors.New("empty path argument"),
+				Err:  errEmptyPath,
 			},
 			Kind: fserrors.InvalidItem,
 		}
