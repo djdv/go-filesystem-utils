@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/hugelgupf/p9/p9"
 	manet "github.com/multiformats/go-multiaddr/net"
@@ -248,7 +247,7 @@ func (srv *Server) getConnections() connectionMap {
 // Serve handles requests from the listener.
 //
 // The passed listener _must_ be created in packet mode.
-func (srv *Server) Serve(listener manet.Listener) (err error) {
+func (srv *Server) Serve(listener manet.Listener) error {
 	listener = onceCloseListener{
 		Listener:   listener,
 		onceCloser: new(onceCloser),
@@ -257,22 +256,13 @@ func (srv *Server) Serve(listener manet.Listener) (err error) {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		err = fserrors.Join(err, listener.Close())
-		srv.dropListener(trackToken)
-	}()
-	for handle := srv.Handle; ; {
-		connection, err := listener.Accept()
-		if err != nil {
-			if srv.shuttingDown() {
-				return ErrServerClosed
-			}
-			return err
-		}
-		go func(t io.ReadCloser, r io.WriteCloser) {
+	defer srv.dropListener(trackToken)
+	var (
+		handleFn   = srv.Handle
+		handleConn = func(t io.ReadCloser, r io.WriteCloser) {
 			// If a connection fails, we'll just alert the operator.
 			// No need to accumulate these, nor take the whole server down.
-			if err := handle(t, r); err != nil &&
+			if err := handleFn(t, r); err != nil &&
 				err != io.EOF {
 				if srv.shuttingDown() &&
 					errors.Is(err, net.ErrClosed) {
@@ -280,7 +270,17 @@ func (srv *Server) Serve(listener manet.Listener) (err error) {
 				}
 				srv.log.Printf("connection handler encountered an error: %s\n", err)
 			}
-		}(splitConn(connection))
+		}
+	)
+	for {
+		connection, err := listener.Accept()
+		if err != nil {
+			if srv.shuttingDown() {
+				return errors.Join(ErrServerClosed, listener.Close())
+			}
+			return errors.Join(err, listener.Close())
+		}
+		go handleConn(splitConn(connection))
 	}
 }
 
@@ -342,17 +342,17 @@ func (srv *Server) Close() error {
 	srv.mu.Unlock()
 	srv.listenersWg.Wait()
 	srv.mu.Lock()
-	return fserrors.Join(err, srv.closeAllConns())
+	return errors.Join(err, srv.closeAllConns())
 }
 
 func (srv *Server) closeListenersLocked() error {
-	var err error
+	var errs []error
 	for listener := range srv.listeners {
-		if cErr := (*listener).Close(); cErr != nil {
-			err = fserrors.Join(err, cErr)
+		if err := (*listener).Close(); err != nil {
+			errs = append(errs, err)
 		}
 	}
-	return err
+	return errors.Join(errs...)
 }
 
 // Shutdown requests the server to stop accepting new request
@@ -363,7 +363,10 @@ func (srv *Server) closeListenersLocked() error {
 func (srv *Server) Shutdown(ctx context.Context) error {
 	srv.shutdown.Store(true)
 	srv.mu.Lock()
-	err := srv.closeListenersLocked()
+	var errs []error
+	if err := srv.closeListenersLocked(); err != nil {
+		errs = append(errs, err)
+	}
 	// NOTE: refer to [net/http.Server]
 	// implementation for lock sequence explanation.
 	srv.mu.Unlock()
@@ -374,21 +377,22 @@ func (srv *Server) Shutdown(ctx context.Context) error {
 	)
 	defer timer.Stop()
 	for {
-		idle, iErr := srv.closeIdleConns()
-		if iErr != nil {
-			err = fserrors.Join(err, iErr)
+		idle, err := srv.closeIdleConns()
+		if err != nil {
+			errs = append(errs, err)
 		}
 		if idle {
-			return err
+			return errors.Join(errs...)
 		}
 		select {
 		case <-ctx.Done():
 			srv.mu.Lock()
 			defer srv.mu.Unlock()
-			return fserrors.Join(err,
-				srv.closeAllConns(),
-				ctx.Err(),
-			)
+			errs = append([]error{ctx.Err()}, errs...)
+			if err := srv.closeAllConns(); err != nil {
+				errs = append(errs, err)
+			}
+			return errors.Join(errs...)
 		case <-timer.C:
 			timer.Reset(nextPollInterval())
 		}
@@ -412,10 +416,13 @@ func makeJitterFunc(initial time.Duration) func() time.Duration {
 }
 
 func (srv *Server) closeIdleConns() (allIdle bool, err error) {
-	threshold := srv.idleDuration
-	allIdle = true
 	srv.mu.Lock()
 	defer srv.mu.Unlock()
+	var (
+		errs      []error
+		threshold = srv.idleDuration
+	)
+	allIdle = true
 	for connection := range srv.connections {
 		var (
 			lastActive = lastActive(connection)
@@ -425,21 +432,22 @@ func (srv *Server) closeIdleConns() (allIdle bool, err error) {
 			allIdle = false
 			continue
 		}
-		if cErr := connection.Close(); cErr != nil {
-			err = fserrors.Join(err, cErr)
+		if err := connection.Close(); err != nil {
+			errs = append(errs, err)
 		}
 		delete(srv.connections, connection)
 	}
-	return allIdle, err
+	return allIdle, errors.Join(errs...)
 }
 
-func (srv *Server) closeAllConns() (err error) {
+func (srv *Server) closeAllConns() error {
+	var errs []error
 	for connection := range srv.connections {
-		if cErr := (*connection).Close(); cErr != nil {
-			err = fserrors.Join(err, cErr)
+		if err := (*connection).Close(); err != nil {
+			errs = append(errs, err)
 		}
 	}
-	return err
+	return errors.Join(errs...)
 }
 
 // NewTrackedConn wraps conn, providing operation metrics.
@@ -549,7 +557,7 @@ func lastActive(tio TrackedIO) time.Time {
 }
 
 func (ct *trackedIOpair) Close() error {
-	return fserrors.Join(
+	return errors.Join(
 		ct.trackedReads.Close(),
 		ct.trackedWrites.Close(),
 	)
