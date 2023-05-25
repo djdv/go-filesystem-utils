@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"strings"
@@ -81,7 +82,7 @@ func shutdownExecute(ctx context.Context, set *shutdownSettings) error {
 		return fmt.Errorf("could not get client (server already down?): %w", err)
 	}
 	if err := client.Shutdown(set.disposition); err != nil {
-		return unwind(err, client.Close)
+		return errors.Join(err, client.Close())
 	}
 	if err := client.Close(); err != nil {
 		return err
@@ -97,16 +98,16 @@ func (c *Client) Shutdown(level shutdownDisposition) error {
 	_, shutdownFile, err := controlDir.Walk([]string{shutdownFileName})
 	if err != nil {
 		err = receiveError(controlDir, err)
-		return unwind(err, controlDir.Close)
+		return errors.Join(err, controlDir.Close())
 	}
 	if _, _, err := shutdownFile.Open(p9.WriteOnly); err != nil {
 		err = receiveError(controlDir, err)
-		return unwind(err, shutdownFile.Close, controlDir.Close)
+		return errors.Join(err, shutdownFile.Close(), controlDir.Close())
 	}
 	data := []byte{byte(level)}
 	if _, err := shutdownFile.WriteAt(data, 0); err != nil {
 		err = receiveError(controlDir, err)
-		return unwind(err, shutdownFile.Close, controlDir.Close)
+		return errors.Join(err, shutdownFile.Close(), controlDir.Close())
 	}
-	return unwind(nil, shutdownFile.Close, controlDir.Close)
+	return errors.Join(shutdownFile.Close(), controlDir.Close())
 }

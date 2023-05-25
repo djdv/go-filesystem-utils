@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"strconv"
@@ -85,7 +86,7 @@ func unmountExecute(ctx context.Context, set *unmountCmdSettings, args ...string
 	}
 	options := set.options
 	if err := client.Unmount(ctx, args, options...); err != nil {
-		return unwind(err, client.Close)
+		return errors.Join(err, client.Close())
 	}
 	if err := client.Close(); err != nil {
 		return err
@@ -107,13 +108,13 @@ func (c *Client) Unmount(ctx context.Context, targets []string, options ...Unmou
 	if set.all {
 		if err := p9fs.UnmountAll(mounts); err != nil {
 			err = receiveError(mounts, err)
-			return unwind(err, mounts.Close)
+			return errors.Join(err, mounts.Close())
 		}
 		return mounts.Close()
 	}
 	if err := p9fs.UnmountTargets(mounts, targets, decodeMountPoint); err != nil {
 		err = receiveError(mounts, err)
-		return unwind(err, mounts.Close)
+		return errors.Join(err, mounts.Close())
 	}
 	return mounts.Close()
 }

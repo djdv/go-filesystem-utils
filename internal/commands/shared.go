@@ -1,7 +1,5 @@
 package commands
 
-import "errors"
-
 const (
 	// serverRootName defines a name which servers and clients may use
 	// to refer to the service in namespace oriented APIs.
@@ -51,16 +49,3 @@ const (
 	// value to the file.
 	shutdownFileName = "shutdown"
 )
-
-func unwind(err error, funcs ...func() error) error {
-	var errs []error
-	for _, fn := range funcs {
-		if fnErr := fn(); fnErr != nil {
-			errs = append(errs, fnErr)
-		}
-	}
-	if errs == nil {
-		return err
-	}
-	return errors.Join(append([]error{err}, errs...)...)
-}

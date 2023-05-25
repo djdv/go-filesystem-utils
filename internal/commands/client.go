@@ -93,7 +93,7 @@ func (c *Client) getListeners() ([]multiaddr.Multiaddr, error) {
 	}
 	maddrs, err := p9fs.GetListeners(listenersDir)
 	if err != nil {
-		return nil, unwind(err, listenersDir.Close)
+		return nil, errors.Join(err, listenersDir.Close())
 	}
 	return maddrs, listenersDir.Close()
 }
@@ -133,11 +133,11 @@ func launchAndConnect(exitInterval time.Duration, options ...p9.ClientOpt) (*Cli
 	}
 	conn, err := firstDialable(maddrs)
 	if err != nil {
-		return nil, unwind(err, killProc)
+		return nil, errors.Join(err, killProc())
 	}
 	client, err := newClient(conn, options...)
 	if err != nil {
-		return nil, unwind(err, killProc)
+		return nil, errors.Join(err, killProc())
 	}
 	if err := daemon.Process.Release(); err != nil {
 		// We can no longer call `Kill`, and stdio
