@@ -9,8 +9,6 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
-
-	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 )
 
 type (
@@ -131,7 +129,7 @@ func (cmd *command[EF, S, T]) Execute(ctx context.Context, args ...string) error
 	}
 	if settings.Help() {
 		if printErr := cmd.printUsage(cmd.usageOutput, flagSet); printErr != nil {
-			return fserrors.Join(printErr, ErrUsage)
+			return errors.Join(printErr, ErrUsage)
 		}
 		return ErrUsage
 	}
@@ -155,7 +153,7 @@ func (cmd *command[EF, S, T]) Execute(ctx context.Context, args ...string) error
 	}
 	if errors.Is(execErr, ErrUsage) {
 		if printErr := cmd.printUsage(cmd.usageOutput, flagSet); printErr != nil {
-			execErr = fserrors.Join(printErr, execErr)
+			return errors.Join(printErr, execErr)
 		}
 	}
 	return execErr
