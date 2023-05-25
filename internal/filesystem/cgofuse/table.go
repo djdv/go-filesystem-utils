@@ -3,12 +3,12 @@
 package cgofuse
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"math"
 	"sync"
 
-	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/winfsp/cgofuse/fuse"
 )
@@ -194,7 +194,7 @@ func (ft *fileTable) release(fh fileDescriptor) (errorCode errNo, err error) {
 			if errorCode == operationSuccess {
 				errorCode = -fuse.EBADF
 			}
-			err = fserrors.Join(err, rErr)
+			err = errors.Join(err, rErr)
 		}
 	}()
 	if err := file.goFile.Close(); err != nil {
