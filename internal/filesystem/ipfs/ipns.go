@@ -279,7 +279,7 @@ func (fsys *IPNS) Open(name string) (fs.File, error) {
 		if err := seekToSame(file, newFile); err != nil {
 			err = newFSError(op, name, err, fserrors.IO)
 			if cErr := newFile.Close(); cErr != nil {
-				err = fserrors.Join(err, cErr)
+				return errors.Join(err, cErr)
 			}
 			return err
 		}
@@ -419,7 +419,7 @@ func (nf *ipnsFile) ReadDir(count int) ([]fs.DirEntry, error) {
 		if info, sErr := file.Stat(); sErr == nil {
 			name = info.Name()
 		} else {
-			err = fserrors.Join(err, sErr)
+			err = errors.Join(err, sErr)
 			kind = fserrors.IO
 		}
 		return nil, newFSError("ReadDir", name, err, kind)
