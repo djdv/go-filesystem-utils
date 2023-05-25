@@ -67,7 +67,7 @@ func spawnDaemonProc(exitInterval time.Duration) (*exec.Cmd, *cmdIO, io.ReadClos
 		return nil, nil, nil, err
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, nil, nil, unwind(err, cmdIO.Close, stderr.Close)
+		return nil, nil, nil, errors.Join(err, cmdIO.Close(), stderr.Close())
 	}
 	return cmd, cmdIO, stderr, nil
 }
@@ -101,11 +101,11 @@ func setupCmdIPC(cmd *exec.Cmd) (*cmdIO, io.ReadCloser, error) {
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, nil, unwind(err, stdin.Close)
+		return nil, nil, errors.Join(err, stdin.Close())
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return nil, nil, unwind(err, stdin.Close, stdout.Close)
+		return nil, nil, errors.Join(err, stdin.Close(), stdout.Close())
 	}
 	return &cmdIO{in: stdin, out: stdout}, stderr, nil
 }
@@ -201,18 +201,18 @@ func (c *Client) ipcRelease() error {
 	_, releaseFile, err := controlDir.Walk([]string{ipcReleaseFileName})
 	if err != nil {
 		err = receiveError(controlDir, err)
-		return unwind(err, controlDir.Close)
+		return errors.Join(err, controlDir.Close())
 	}
 	if _, _, err := releaseFile.Open(p9.WriteOnly); err != nil {
 		err = receiveError(controlDir, err)
-		return unwind(err, releaseFile.Close, controlDir.Close)
+		return errors.Join(err, releaseFile.Close(), controlDir.Close())
 	}
 	data := []byte{ipcProcRelease}
 	if _, err := releaseFile.WriteAt(data, 0); err != nil {
 		err = receiveError(controlDir, err)
-		return unwind(err, releaseFile.Close, controlDir.Close)
+		return errors.Join(err, releaseFile.Close(), controlDir.Close())
 	}
-	return unwind(nil, releaseFile.Close, controlDir.Close)
+	return errors.Join(releaseFile.Close(), controlDir.Close())
 }
 
 func maybeKill(cmd *exec.Cmd) error {

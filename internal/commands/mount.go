@@ -582,7 +582,7 @@ func makeMountCommand[
 			}
 			options := settings.mountCmdSettings.options
 			if err := client.Mount(host, fsid, data, options...); err != nil {
-				return unwind(err, client.Close)
+				return errors.Join(err, client.Close())
 			}
 			if err := client.Close(); err != nil {
 				return err
@@ -617,7 +617,7 @@ func (c *Client) Mount(host filesystem.Host, fsid filesystem.ID, data [][]byte, 
 	guests, err := p9fs.MkdirAll(mounts, wnames, permissions, uid, gid)
 	if err != nil {
 		err = receiveError(mounts, err)
-		return unwind(err, mounts.Close)
+		return errors.Join(err, mounts.Close())
 	}
 	const (
 		mountIDLength  = 9
@@ -625,7 +625,7 @@ func (c *Client) Mount(host filesystem.Host, fsid filesystem.ID, data [][]byte, 
 	)
 	idGen, err := nanoid.CustomASCII(base58Alphabet, mountIDLength)
 	if err != nil {
-		return unwind(err, mounts.Close, guests.Close)
+		return errors.Join(err, mounts.Close(), guests.Close())
 	}
 	var (
 		errs            []error
@@ -641,11 +641,11 @@ func (c *Client) Mount(host filesystem.Host, fsid filesystem.ID, data [][]byte, 
 	if errs != nil {
 		err = errors.Join(errs...)
 	}
-	err = unwind(err, guests.Close)
+	err = errors.Join(err, guests.Close())
 	if err != nil {
 		err = receiveError(mounts, err)
 	}
-	return unwind(err, mounts.Close)
+	return errors.Join(err, mounts.Close())
 }
 
 func newMountFile(idRoot p9.File,
@@ -658,15 +658,15 @@ func newMountFile(idRoot p9.File,
 	}
 	targetFile, _, _, err := idClone.Create(name, p9.WriteOnly, permissions, uid, gid)
 	if err != nil {
-		return unwind(err, idClone.Close)
+		return errors.Join(err, idClone.Close())
 	}
 	// NOTE: targetFile and idClone are now aliased
 	// (same fid because of `Create`).
 	if _, err := targetFile.WriteAt(data, 0); err != nil {
-		return unwind(err, targetFile.Close)
+		return errors.Join(err, targetFile.Close())
 	}
 	if err := targetFile.FSync(); err != nil {
-		return unwind(err, targetFile.Close)
+		return errors.Join(err, targetFile.Close())
 	}
 	return targetFile.Close()
 }
