@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/hugelgupf/p9/fsimpl/templatefs"
 	"github.com/hugelgupf/p9/p9"
@@ -108,17 +107,17 @@ func (dir *Directory) Walk(names []string) ([]p9.QID, p9.File, error) {
 		attrMaskNone p9.AttrMask
 	)
 	if qids[0], _, _, err = clone.GetAttr(attrMaskNone); err != nil {
-		return nil, nil, fserrors.Join(err, clone.Close())
+		return nil, nil, errors.Join(err, clone.Close())
 	}
 	if noRemainder := nwNames == 1; noRemainder {
 		return qids, clone, nil
 	}
 	subQIDS, descendant, err := clone.Walk(names[1:])
 	if err != nil {
-		return nil, nil, fserrors.Join(err, clone.Close())
+		return nil, nil, errors.Join(err, clone.Close())
 	}
 	if err := clone.Close(); err != nil {
-		return nil, nil, fserrors.Join(err, descendant.Close())
+		return nil, nil, errors.Join(err, descendant.Close())
 	}
 	return append(qids, subQIDS...), descendant, nil
 }
@@ -137,7 +136,7 @@ func (dir *Directory) backtrack(names []string) ([]p9.QID, p9.File, error) {
 	}
 	var attrMaskNone p9.AttrMask
 	if qids[0], _, _, err = clone.GetAttr(attrMaskNone); err != nil {
-		return nil, nil, fserrors.Join(err, clone.Close())
+		return nil, nil, errors.Join(err, clone.Close())
 	}
 	if noRemainder := len(names) == 0; noRemainder {
 		return qids, clone, nil
@@ -146,10 +145,10 @@ func (dir *Directory) backtrack(names []string) ([]p9.QID, p9.File, error) {
 	// depending on the remaining names.
 	relQIDS, relative, err := clone.Walk(names)
 	if err != nil {
-		return nil, nil, fserrors.Join(err, clone.Close())
+		return nil, nil, errors.Join(err, clone.Close())
 	}
 	if err := clone.Close(); err != nil {
-		return nil, nil, fserrors.Join(err, relative.Close())
+		return nil, nil, errors.Join(err, relative.Close())
 	}
 	return append(qids, relQIDS...), relative, nil
 }

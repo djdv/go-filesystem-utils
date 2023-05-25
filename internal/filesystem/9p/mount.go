@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
-	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/hugelgupf/p9/p9"
 	"github.com/hugelgupf/p9/perrors"
 )
@@ -87,7 +86,7 @@ func (mf *MountFile) Mkdir(name string, permissions p9.FileMode, uid p9.UID, gid
 	qid, file, err := mf.makeHostFn(mf, filesystem.Host(name),
 		mode, uid, gid)
 	if err != nil {
-		return p9.QID{}, fserrors.Join(perrors.EACCES, err)
+		return p9.QID{}, errors.Join(perrors.EACCES, err)
 	}
 	return qid, mf.Link(file, name)
 }
@@ -109,7 +108,7 @@ func (mf *MountFile) Mknod(name string, mode p9.FileMode,
 	qid, file, err := mf.makeHostFn(mf, filesystem.Host(name),
 		mode, uid, gid)
 	if err != nil {
-		return p9.QID{}, fserrors.Join(perrors.EACCES, err)
+		return p9.QID{}, errors.Join(perrors.EACCES, err)
 	}
 	return qid, mf.Link(file, name)
 }
@@ -325,5 +324,5 @@ reduce:
 	} else {
 		errStr = fmt.Sprintf(prefix+"s: %s", strings.Join(remaining, ", "))
 	}
-	return fserrors.Join(append(errs, errors.New(errStr))...)
+	return errors.Join(append(errs, errors.New(errStr))...)
 }

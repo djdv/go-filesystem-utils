@@ -18,7 +18,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	p9net "github.com/djdv/go-filesystem-utils/internal/net/9p"
 	"github.com/hugelgupf/p9/fsimpl/templatefs"
 	"github.com/hugelgupf/p9/p9"
@@ -160,7 +159,7 @@ func Listen(listener p9.File, maddr multiaddr.Multiaddr, permissions p9.FileMode
 	permissions ^= ExecuteOther | ExecuteGroup | ExecuteUser
 	_, err = valueDir.Mknod(listenerFileName, permissions, 0, 0, p9.NoUID, p9.NoGID)
 	if cErr := valueDir.Close(); cErr != nil {
-		err = fserrors.Join(err, cErr)
+		return errors.Join(err, cErr)
 	}
 	return err
 }
@@ -196,7 +195,7 @@ func listenerPipeline(ctx context.Context,
 			maddr, err   = parseListenerFile(listenerFile)
 		)
 		if cErr := listenerFile.Close(); cErr != nil {
-			err = fserrors.Join(err, cErr)
+			err = errors.Join(err, cErr)
 		}
 		sendResult(ctx, results, maddrResult{value: maddr, error: err})
 	}
@@ -256,7 +255,7 @@ func connectionPipeline(ctx context.Context,
 				info, err = parseConnFile(connFile)
 			)
 			if cErr := connFile.Close(); cErr != nil {
-				err = fserrors.Join(err, cErr)
+				err = errors.Join(err, cErr)
 			}
 			sendResult(ctx, results, connInfoResult{value: info, error: err})
 		}
@@ -519,10 +518,10 @@ func (vd *valueDir) Mknod(name string, mode p9.FileMode,
 	)
 	qid, file, err := vd.newListenerFile(mode, uid, gid, fileListener)
 	if err != nil {
-		return p9.QID{}, fserrors.Join(err, listener.Close())
+		return p9.QID{}, errors.Join(err, listener.Close())
 	}
 	if err := vd.Link(file, name); err != nil {
-		return p9.QID{}, fserrors.Join(err, listener.Close())
+		return p9.QID{}, errors.Join(err, listener.Close())
 	}
 	var (
 		link             = file.linkSync
@@ -539,7 +538,7 @@ func (vd *valueDir) Mknod(name string, mode p9.FileMode,
 		}
 	)
 	if err := vd.emitter.emit(unlinkerListener); err != nil {
-		return p9.QID{}, fserrors.Join(err, unlinkerListener.Close())
+		return p9.QID{}, errors.Join(err, unlinkerListener.Close())
 	}
 	return qid, nil
 }
@@ -559,7 +558,7 @@ func (vd *valueDir) listen(maddr multiaddr.Multiaddr, permissions p9.FileMode) (
 	listener, err := manet.Listen(maddr)
 	if err != nil {
 		if cleanup != nil {
-			return nil, fserrors.Join(err, cleanup())
+			return nil, errors.Join(err, cleanup())
 		}
 		return nil, err
 	}
@@ -568,7 +567,7 @@ func (vd *valueDir) listen(maddr multiaddr.Multiaddr, permissions p9.FileMode) (
 			err := listener.Close()
 			if cleanup != nil {
 				if cErr := cleanup(); cErr != nil {
-					err = fserrors.Join(err, cErr)
+					return errors.Join(err, cErr)
 				}
 			}
 			return err
@@ -639,7 +638,7 @@ func (vd *valueDir) UnlinkAt(name string, flags uint32) error {
 		*vd.connDirPtr = nil
 		vd.connDirMu.Unlock()
 	}
-	return fserrors.Join(
+	return errors.Join(
 		file.Close(),
 		directory.UnlinkAt(name, flags),
 	)
@@ -759,7 +758,7 @@ func (cd *connDir) UnlinkAt(name string, flags uint32) error {
 	if cFile, ok := file.(*connFile); ok {
 		cFile.trackedConn.Close()
 	}
-	return fserrors.Join(
+	return errors.Join(
 		file.Close(),
 		directory.UnlinkAt(name, flags),
 	)
