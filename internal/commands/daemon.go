@@ -100,6 +100,13 @@ type (
 		Host  HT `json:"host"`
 		Guest GT `json:"guest"`
 	}
+	waitGroupChan[T any] struct {
+		ch      chan T
+		closing chan struct{}
+		sync.WaitGroup
+	}
+	wgErrs     = *waitGroupChan[error]
+	wgShutdown = *waitGroupChan[shutdownDisposition]
 )
 
 const (
@@ -298,24 +305,29 @@ func daemonExecute(ctx context.Context, set *daemonSettings) error {
 			stopSend, errs,
 			set.serverMaddrs...,
 		)
+		control  = fsys.control.directory
+		handleFn = server.Handle
 	)
-	if isPipe(os.Stdin) {
-		serviceWg.Add(1)
-		errs.Add(1)
-		go handleStdio(dCtx, fsys.control.directory,
-			procExitCh, server.Handle,
-			serviceWg, errs,
-		)
-	}
-	var (
-		shutdownFileData = fsys.control.shutdown.ch
-		idleCheck        = set.exitInterval
+	setupIPCHandler(dCtx, procExitCh,
+		control, handleFn,
+		serviceWg, errs,
 	)
-	setupExtraStopWriters(idleCheck, fsys.mount,
-		shutdownFileData,
+	idleCheckInterval := set.exitInterval
+	setupExtraStopWriters(idleCheckInterval, fsys,
 		stopSend, errs,
 		log,
 	)
+	return watchService(ctx, serviceWg,
+		stopSend, errs,
+		log,
+	)
+}
+
+func watchService(ctx context.Context,
+	serviceWg *sync.WaitGroup,
+	stopSend wgShutdown, errs wgErrs,
+	log ulog.Logger,
+) error {
 	go func() {
 		serviceWg.Wait()
 		stopSend.closeSend()
@@ -333,7 +345,7 @@ func daemonExecute(ctx context.Context, set *daemonSettings) error {
 	return ctx.Err()
 }
 
-func makeStoppers(ctx context.Context) (*waitGroupChan[shutdownDisposition], <-chan shutdownDisposition) {
+func makeStoppers(ctx context.Context) (wgShutdown, <-chan shutdownDisposition) {
 	var (
 		shutdownChan   = newWaitGroupChan[shutdownDisposition](int(maximumShutdown))
 		shutdownLevels = make(chan shutdownDisposition)
@@ -365,7 +377,7 @@ func splitStopper(shutdownLevels <-chan shutdownDisposition) (_, _, _ <-chan shu
 }
 
 func handleListeners(serveFn serveFunc,
-	listeners <-chan manet.Listener, errs *waitGroupChan[error],
+	listeners <-chan manet.Listener, errs wgErrs,
 	log ulog.Logger,
 ) {
 	if log != nil &&
@@ -384,7 +396,7 @@ func handleListeners(serveFn serveFunc,
 func handleStopSequence(ctx context.Context,
 	server *p9net.Server, srvStop <-chan shutdownDisposition,
 	mount mountSubsystem, mntStop <-chan shutdownDisposition,
-	errs *waitGroupChan[error], log ulog.Logger,
+	errs wgErrs, log ulog.Logger,
 ) *sync.WaitGroup {
 	var serverWg,
 		mountWg sync.WaitGroup
@@ -404,29 +416,29 @@ func handleStopSequence(ctx context.Context,
 }
 
 func listenOn(listener *p9fs.Listener, permissions p9.FileMode,
-	stop *waitGroupChan[shutdownDisposition],
-	errs *waitGroupChan[error],
+	stopper wgShutdown,
+	errs wgErrs,
 	maddrs ...multiaddr.Multiaddr,
 ) <-chan bool {
 	var (
 		wg           sync.WaitGroup
 		sawError     atomic.Bool
 		processMaddr = func(maddr multiaddr.Multiaddr) {
-			defer func() { wg.Done(); stop.Done(); errs.Done() }()
+			defer func() { wg.Done(); stopper.Done(); errs.Done() }()
 			err := p9fs.Listen(listener, maddr, permissions)
 			if err != nil {
 				errs.send(fmt.Errorf(
 					"could not listen on: %s - %w",
 					maddr, err,
 				))
-				stop.send(patientShutdown)
+				stopper.send(patientShutdown)
 				sawError.Store(true)
 			}
 		}
 		maddrCount = len(maddrs)
 	)
 	wg.Add(maddrCount)
-	stop.Add(maddrCount)
+	stopper.Add(maddrCount)
 	errs.Add(maddrCount)
 	for _, maddr := range maddrs {
 		go processMaddr(maddr)
@@ -442,27 +454,37 @@ func listenOn(listener *p9fs.Listener, permissions p9.FileMode,
 	return failureSignal
 }
 
-func setupExtraStopWriters(
-	idleCheck time.Duration, mount mountSubsystem,
-	shutdownFileData <-chan []byte,
-	stop *waitGroupChan[shutdownDisposition],
-	errs *waitGroupChan[error], log ulog.Logger,
+func setupIPCHandler(ctx context.Context, procExitCh <-chan bool,
+	control p9.File, handlerFn handleFunc,
+	serviceWg *sync.WaitGroup, errs wgErrs,
 ) {
-	stop.Add(1)
-	errs.Add(1)
-	go stopOnShutdownWrite(log, shutdownFileData, stop, errs)
-	if idleCheck != 0 {
-		stop.Add(1)
-		errs.Add(1)
-		checkFn := makeMountChecker(mount, log)
-		go stopWhen(checkFn, idleCheck, stop, errs)
+	if !isPipe(os.Stdin) {
+		return
 	}
+	serviceWg.Add(1)
+	errs.Add(1)
+	go handleStdio(ctx, procExitCh,
+		control, handlerFn,
+		serviceWg, errs,
+	)
 }
 
-type waitGroupChan[T any] struct {
-	ch      chan T
-	closing chan struct{}
-	sync.WaitGroup
+func setupExtraStopWriters(
+	idleCheck time.Duration, fsys fileSystem,
+	stopper wgShutdown,
+	errs wgErrs, log ulog.Logger,
+) {
+	shutdownFileData := fsys.control.shutdown.ch
+	stopper.Add(2)
+	errs.Add(2)
+	go stopOnUnreachable(fsys, stopper, errs, log)
+	go stopOnShutdownWrite(shutdownFileData, stopper, errs, log)
+	if idleCheck != 0 {
+		stopper.Add(1)
+		errs.Add(1)
+		idleCheckFn := makeIdleChecker(fsys, idleCheck, log)
+		go stopWhen(idleCheckFn, idleCheck, stopper, errs)
+	}
 }
 
 func newWaitGroupChan[T any](size int) *waitGroupChan[T] {
@@ -802,7 +824,7 @@ func logListeners(log ulog.Logger, listeners <-chan manet.Listener) {
 }
 
 func serveListeners(serveFn serveFunc, listeners <-chan manet.Listener,
-	errs *waitGroupChan[error],
+	errs wgErrs,
 ) {
 	defer errs.Done()
 	var (
@@ -843,46 +865,37 @@ func relayUnordered[T any](in <-chan T, outs ...*<-chan T) {
 }
 
 // relayChan will relay values (in a non-blocking manner)
-// from source to all relays (immediately or eventually).
+// from `source` to all `relays` (immediately or eventually).
 // The source must be closed to stop processing.
 // Each relay is closed after all values are sent.
 // Relay receive order is not guaranteed to match
 // source's order.
 func relayChan[T any](source <-chan T, relays ...chan<- T) {
 	var (
-		relayCount  = len(relays)
-		relayValues = make([]reflect.Value, relayCount)
-		closerWgs   = make([]*sync.WaitGroup, relayCount)
-	)
-	for i, relay := range relays {
-		relayValues[i] = reflect.ValueOf(relay)
-	}
-	var (
-		dflt  = relayCount
-		cases = make([]reflect.SelectCase, dflt+1)
-	)
-	cases[dflt] = reflect.SelectCase{
-		Dir: reflect.SelectDefault,
-	}
-	for value := range source {
-		rValue := reflect.ValueOf(value)
-		for i, relay := range relayValues {
-			cases[i] = reflect.SelectCase{
-				Dir:  reflect.SelectSend,
-				Chan: relay,
-				Send: rValue,
-			}
+		relayValues  = reflectSendChans(relays...)
+		relayCount   = len(relayValues)
+		disabledCase = reflect.Value{}
+		defaultCase  = relayCount
+		cases        = make([]reflect.SelectCase, defaultCase+1)
+		closerWgs    = make([]*sync.WaitGroup, relayCount)
+		send         = func(wg *sync.WaitGroup, ch chan<- T, value T) {
+			ch <- value
+			wg.Done()
 		}
+	)
+	cases[defaultCase] = reflect.SelectCase{Dir: reflect.SelectDefault}
+	for value := range source {
+		populateSelectSendCases(value, relayValues, cases)
 		for remaining := relayCount; remaining != 0; {
 			chosen, _, _ := reflect.Select(cases)
-			if chosen != dflt {
-				cases[chosen].Chan = reflect.Value{}
+			if chosen != defaultCase {
+				cases[chosen].Chan = disabledCase
 				remaining--
 				continue
 			}
 			for i, commCase := range cases[:relayCount] {
 				if !commCase.Chan.IsValid() {
-					continue
+					continue // Already sent.
 				}
 				wg := closerWgs[i]
 				if wg == nil {
@@ -890,23 +903,44 @@ func relayChan[T any](source <-chan T, relays ...chan<- T) {
 					closerWgs[i] = wg
 				}
 				wg.Add(1)
-				go func(wg *sync.WaitGroup, ch chan<- T, value T) {
-					ch <- value
-					wg.Done()
-				}(wg, relays[i], value)
+				go send(wg, relays[i], value)
 			}
 			break
 		}
+	}
+	waitAndClose := func(wg *sync.WaitGroup, ch chan<- T) {
+		wg.Wait()
+		close(ch)
 	}
 	for i, wg := range closerWgs {
 		if wg == nil {
 			close(relays[i])
 			continue
 		}
-		go func(wg *sync.WaitGroup, ch chan<- T) {
-			wg.Wait()
-			close(ch)
-		}(wg, relays[i])
+		go waitAndClose(wg, relays[i])
+	}
+}
+
+func reflectSendChans[T any](chans ...chan<- T) []reflect.Value {
+	values := make([]reflect.Value, len(chans))
+	for i, relay := range chans {
+		values[i] = reflect.ValueOf(relay)
+	}
+	return values
+}
+
+// populateSelectSendCases will create
+// send cases containing `value` for
+// each channel in `channels`, and assign it
+// within `cases`. Panics if len(cases) < len(channels).
+func populateSelectSendCases[T any](value T, channels []reflect.Value, cases []reflect.SelectCase) {
+	rValue := reflect.ValueOf(value)
+	for i, channel := range channels {
+		cases[i] = reflect.SelectCase{
+			Dir:  reflect.SelectSend,
+			Chan: channel,
+			Send: rValue,
+		}
 	}
 }
 
@@ -932,7 +966,7 @@ func watchListenersStopper(cancel context.CancelFunc,
 
 func serverStopper(ctx context.Context,
 	server *p9net.Server, stopper <-chan shutdownDisposition,
-	errs *waitGroupChan[error], log ulog.Logger,
+	errs wgErrs, log ulog.Logger,
 ) {
 	defer errs.Done()
 	const (
@@ -941,31 +975,17 @@ func serverStopper(ctx context.Context,
 		connPrefix = "closing connections"
 		waitMsg    = msgPrefix + "closing listeners now" +
 			" and connections when they're idle"
-		nowMsg = msgPrefix + connPrefix + " immediately"
-
+		nowMsg       = msgPrefix + connPrefix + " immediately"
 		waitForConns = patientShutdown
 		timeoutConns = shortShutdown
 		closeConns   = immediateShutdown
 	)
 	var (
-		once         sync.Once
-		done         = make(chan struct{})
+		initiated    bool
+		shutdownErr  = make(chan error, 1)
 		sCtx, cancel = context.WithCancel(ctx)
-		shutdown     = func() {
-			errs.Add(1)
-			go func() {
-				defer func() {
-					cancel()
-					close(done)
-					errs.Done()
-				}()
-				if err := server.Shutdown(sCtx); err != nil &&
-					!errors.Is(err, context.Canceled) {
-					errs.send(err)
-				}
-			}()
-		}
 	)
+	defer cancel()
 	for {
 		select {
 		case level, ok := <-stopper:
@@ -987,8 +1007,15 @@ func serverStopper(ctx context.Context,
 				errs.send(err)
 				continue
 			}
-			once.Do(shutdown)
-		case <-done:
+			if !initiated {
+				initiated = true
+				go func() { shutdownErr <- server.Shutdown(sCtx) }()
+			}
+		case err := <-shutdownErr:
+			if err != nil &&
+				!errors.Is(err, context.Canceled) {
+				errs.send(err)
+			}
 			return
 		}
 	}
@@ -996,7 +1023,7 @@ func serverStopper(ctx context.Context,
 
 func unmountAll(system mountSubsystem,
 	levels <-chan shutdownDisposition,
-	errs *waitGroupChan[error], log ulog.Logger,
+	errs wgErrs, log ulog.Logger,
 ) {
 	defer errs.Done()
 	<-levels
@@ -1007,7 +1034,7 @@ func unmountAll(system mountSubsystem,
 	}
 }
 
-func stopOnSignal(sig os.Signal, stopCh *waitGroupChan[shutdownDisposition]) {
+func stopOnSignal(sig os.Signal, stopCh wgShutdown) {
 	signals := make(chan os.Signal, generic.Max(1, cap(stopCh.ch)))
 	signal.Notify(signals, sig)
 	defer func() {
@@ -1026,7 +1053,7 @@ func stopOnSignal(sig os.Signal, stopCh *waitGroupChan[shutdownDisposition]) {
 	}
 }
 
-func stopOnDone(ctx context.Context, stopCh *waitGroupChan[shutdownDisposition]) {
+func stopOnDone(ctx context.Context, stopCh wgShutdown) {
 	defer stopCh.Done()
 	select {
 	case <-ctx.Done():
@@ -1035,9 +1062,37 @@ func stopOnDone(ctx context.Context, stopCh *waitGroupChan[shutdownDisposition])
 	}
 }
 
-func stopOnShutdownWrite(log ulog.Logger,
-	data <-chan []byte, stopper *waitGroupChan[shutdownDisposition],
-	errs *waitGroupChan[error],
+func stopOnUnreachable(fsys fileSystem, stopper wgShutdown,
+	errs wgErrs, log ulog.Logger,
+) {
+	const (
+		keepRunning = false
+		stopRunning = true
+		interval    = 10 * time.Minute
+		idleMessage = "daemon is unreachable and has" +
+			" no active mounts - unreachable shutdown"
+	)
+	var (
+		idleCheckFn        = makeIdleChecker(fsys, interval, ulog.Null)
+		listeners          = fsys.listen.Listener
+		unreachableCheckFn = func() (bool, shutdownDisposition, error) {
+			shutdown, _, err := idleCheckFn()
+			if !shutdown || err != nil {
+				return keepRunning, dontShutdown, err
+			}
+			haveNetwork, err := hasEntries(listeners)
+			if haveNetwork || err != nil {
+				return keepRunning, dontShutdown, err
+			}
+			log.Print(idleMessage)
+			return stopRunning, immediateShutdown, nil
+		}
+	)
+	stopWhen(unreachableCheckFn, interval, stopper, errs)
+}
+
+func stopOnShutdownWrite(data <-chan []byte, stopper wgShutdown,
+	errs wgErrs, log ulog.Logger,
 ) {
 	defer errs.Done()
 	defer stopper.Done()
@@ -1086,9 +1141,9 @@ func isPipe(file *os.File) bool {
 	return fStat.Mode().Type()&os.ModeNamedPipe != 0
 }
 
-func handleStdio(ctx context.Context, control p9.File,
-	exitCh <-chan bool, handleFn handleFunc,
-	wg *sync.WaitGroup, errs *waitGroupChan[error],
+func handleStdio(ctx context.Context, exitCh <-chan bool,
+	control p9.File, handleFn handleFunc,
+	wg *sync.WaitGroup, errs wgErrs,
 ) {
 	defer func() { wg.Done(); errs.Done() }()
 	childProcInit()
@@ -1157,8 +1212,8 @@ func addIPCReleaseFile(ctx context.Context, control p9.File) (<-chan []byte, err
 }
 
 func stopWhen(checkFn checkFunc, interval time.Duration,
-	stopper *waitGroupChan[shutdownDisposition],
-	errs *waitGroupChan[error],
+	stopper wgShutdown,
+	errs wgErrs,
 ) {
 	defer func() {
 		errs.Done()
@@ -1184,18 +1239,30 @@ func stopWhen(checkFn checkFunc, interval time.Duration,
 	}
 }
 
-func makeMountChecker(fsys p9.File, log ulog.Logger) checkFunc {
-	return func() (stop bool, sd shutdownDisposition, err error) {
-		var mounted bool
-		if mounted, err = hasEntries(fsys); err != nil {
-			return
+// makeIdleChecker prevents the process from lingering around
+// if a client closes all services, then disconnects.
+func makeIdleChecker(fsys fileSystem, interval time.Duration, log ulog.Logger) checkFunc {
+	var (
+		mounts    = fsys.mount.MountFile
+		listeners = fsys.listen.Listener
+	)
+	const (
+		keepRunning = false
+		stopRunning = true
+		idleMessage = "daemon has no active mounts or connections" +
+			" - idle shutdown"
+	)
+	return func() (bool, shutdownDisposition, error) {
+		mounted, err := hasEntries(mounts)
+		if mounted || err != nil {
+			return keepRunning, dontShutdown, err
 		}
-		if !mounted {
-			log.Print("no active mounts - requesting idle shutdown")
-			stop = true
-			sd = minimumShutdown
+		activeConns, err := hasActiveClients(listeners, interval)
+		if activeConns || err != nil {
+			return keepRunning, dontShutdown, err
 		}
-		return
+		log.Print(idleMessage)
+		return stopRunning, immediateShutdown, nil
 	}
 }
 
@@ -1207,28 +1274,27 @@ func hasEntries(fsys p9.File) (bool, error) {
 	return len(ents) > 0, nil
 }
 
-// makeEmptyChecker prevents the process from lingering around
-// if a client closes all services, then disconnects.
-func makeEmptyChecker(systems *daemonSystem, log ulog.Logger) checkFunc {
-	var (
-		mountSys     = systems.files.mount
-		listenersSys = systems.files.listen
-	)
-	return func() (stop bool, sd shutdownDisposition, err error) {
-		var (
-			mounted, mErr   = hasEntries(mountSys)
-			listening, lErr = hasEntries(listenersSys)
-		)
-		if err = errors.Join(mErr, lErr); err != nil {
-			return
-		}
-		if mounted || listening {
-			return
-		}
-		log.Print("daemon is idle and not reachable" +
-			" - requesting shutdown")
-		stop = true
-		sd = minimumShutdown
-		return
+func hasActiveClients(listeners p9.File, threshold time.Duration) (bool, error) {
+	infos, err := p9fs.GetConnections(listeners)
+	if err != nil {
+		return false, err
 	}
+	for _, info := range infos {
+		lastActive := lastActive(info)
+		if time.Since(lastActive) <= threshold {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func lastActive(info p9fs.ConnInfo) time.Time {
+	var (
+		read  = info.LastRead
+		write = info.LastWrite
+	)
+	if read.After(write) {
+		return read
+	}
+	return write
 }

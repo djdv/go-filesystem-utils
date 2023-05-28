@@ -20,7 +20,8 @@ type (
 )
 
 const (
-	patientShutdown shutdownDisposition = iota + 1
+	dontShutdown shutdownDisposition = iota
+	patientShutdown
 	shortShutdown
 	immediateShutdown
 	minimumShutdown = patientShutdown
