@@ -32,6 +32,7 @@ type (
 		ReaddirPlus     bool     `json:"readdirPlus,omitempty"`
 		DeleteAccess    bool     `json:"deleteAccess,omitempty"`
 		CaseInsensitive bool     `json:"caseInsensitive,omitempty"`
+		sysquirks                // Platform specific behavior.
 	}
 )
 
@@ -128,6 +129,7 @@ func (mh *Host) splitArgv(argv string) (options []string) {
 }
 
 func (mh *Host) Mount(fsys fs.FS) (io.Closer, error) {
+	mh.sysquirks.mount()
 	sysLog := ulog.Null
 	if prefix := mh.LogPrefix; prefix != "" {
 		sysLog = log.New(os.Stdout, prefix, log.Lshortfile)
@@ -162,6 +164,7 @@ func (mh *Host) Mount(fsys fs.FS) (io.Closer, error) {
 	}
 	return closer(func() error {
 		if fuseHost.Unmount() {
+			mh.sysquirks.unmount()
 			return nil
 		}
 		return fmt.Errorf(

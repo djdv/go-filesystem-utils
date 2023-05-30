@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	"github.com/hugelgupf/p9/fsimpl/templatefs"
@@ -358,14 +357,6 @@ func (mf *MountPointFile[MP]) remountLocked() error {
 		if err := unmount(); err != nil {
 			return err
 		}
-		// FIXME: [upstream]
-		// This may be a WinFSP exclusive issue, needs testing.
-		// Issuing mount();unmount();mount() will fail
-		// claiming mount point is in use.
-		// As suggested; we wait an arbitrary amount of time
-		// for the system to actually release the resource
-		// before returning.
-		time.Sleep(128 * time.Millisecond)
 	}
 	return mf.mountFileLocked()
 }
