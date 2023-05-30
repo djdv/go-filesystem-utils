@@ -268,8 +268,8 @@ func (set *daemonSettings) BindFlags(flagSet *flag.FlagSet) {
 func Daemon() command.Command {
 	const (
 		name     = daemonCommandName
-		synopsis = "Hosts the service."
-		usage    = "Placeholder text."
+		synopsis = "Host system services."
+		usage    = "File system service daemon."
 	)
 	return command.MustMakeCommand[*daemonSettings](name, synopsis, usage, daemonExecute)
 }

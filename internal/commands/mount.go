@@ -479,7 +479,7 @@ func (set *mountKeyFSFSSettings) marshal(string) ([]byte, error) {
 func Mount() command.Command {
 	const (
 		name     = "mount"
-		synopsis = "Mount a file system."
+		synopsis = "Mount file systems."
 	)
 	var (
 		executeFn   = subonlyExec[*command.HelpArg]()
