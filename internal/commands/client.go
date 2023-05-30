@@ -34,7 +34,7 @@ type (
 	defaultClientMaddr struct{ multiaddr.Multiaddr }
 )
 
-const ErrServiceNotFound = generic.ConstError("could not find service instance")
+const errServiceNotFound = generic.ConstError("could not find service instance")
 
 func (set *clientSettings) getClient(autoLaunchDaemon bool) (*Client, error) {
 	var (
@@ -104,7 +104,7 @@ func connectOrLaunchLocal(exitInterval time.Duration, options ...p9.ClientOpt) (
 	if err == nil {
 		return newClient(conn, options...)
 	}
-	if !errors.Is(err, ErrServiceNotFound) {
+	if !errors.Is(err, errServiceNotFound) {
 		return nil, err
 	}
 	return launchAndConnect(exitInterval, options...)
@@ -174,7 +174,7 @@ func newClient(conn io.ReadWriteCloser, options ...p9.ClientOpt) (*Client, error
 
 // findLocalServer searches a set of local addresses
 // and returns the first dialable maddr it finds.
-// [ErrServiceNotFound] will be returned if none are dialable.
+// [errServiceNotFound] will be returned if none are dialable.
 func findLocalServer() (manet.Conn, error) {
 	allMaddrs, err := allServiceMaddrs()
 	if err != nil {
@@ -217,7 +217,7 @@ func firstDialable(maddrs []multiaddr.Multiaddr) (manet.Conn, error) {
 		maddrStrings[i] = maddr.String()
 	}
 	var (
-		cErr      error = ErrServiceNotFound
+		cErr      error = errServiceNotFound
 		fmtString       = strings.Join(maddrStrings, ", ")
 	)
 	return nil, fmt.Errorf("%w: tried: %s", cErr, fmtString)

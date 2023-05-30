@@ -158,7 +158,7 @@ func getListenersFromProc(ipc io.ReadWriteCloser, stderr io.ReadCloser, options 
 		} else if len(maddrs) == 0 {
 			errs = append(errs, fmt.Errorf(
 				"%w: daemon didn't return any addresses",
-				ErrServiceNotFound,
+				errServiceNotFound,
 			))
 		}
 		accumulateErr(client.ipcRelease())
