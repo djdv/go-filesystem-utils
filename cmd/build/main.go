@@ -1,3 +1,4 @@
+// Command build attempts to build the fs command.
 package main
 
 import (
