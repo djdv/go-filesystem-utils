@@ -154,14 +154,16 @@ func (set *mountCmdSettings) BindFlags(flagSet *flag.FlagSet) {
 		permissionsName  = prefix + "permissions"
 		permissionsUsage = "`permissions` to use when creating service files"
 	)
-	permissionsDefaultText := modeToSymbolicPermissions(
-		fs.FileMode(mountAPIPermissionsDefault &^ p9.FileModeMask),
+	var (
+		permissions            = fs.FileMode(mountAPIPermissionsDefault &^ p9.FileModeMask)
+		permissionsDefaultText = modeToSymbolicPermissions(permissions)
 	)
 	flagSet.Func(permissionsName, permissionsUsage, func(s string) error {
-		permissions, err := parsePOSIXPermissions(0, s)
+		parsedPermissions, err := parsePOSIXPermissions(permissions, s)
 		if err != nil {
 			return err
 		}
+		permissions = parsedPermissions
 		// TODO: [2023.05.20]
 		// patch `.Permissions()` method in 9P library.
 		// For whatever reason the (unexported)
