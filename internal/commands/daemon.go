@@ -239,10 +239,12 @@ func (set *daemonSettings) BindFlags(flagSet *flag.FlagSet) {
 		return
 	})
 	const (
-		permissionsName        = apiFlagPrefix + "permissions"
-		permissionsUsage       = "`permissions` to use when creating service files"
-		permissionsDefault     = 0o751            // Skip parsing and direct assign.
-		permissionsDefaultText = "u=rwx,g=rx,o=x" // Make sure these values stay in sync.
+		permissionsName    = apiFlagPrefix + "permissions"
+		permissionsUsage   = "`permissions` to use when creating service files"
+		permissionsDefault = 0o751
+	)
+	permissionsDefaultText := modeToSymbolicPermissions(
+		fs.FileMode(permissionsDefault &^ p9.FileModeMask),
 	)
 	set.permissions = permissionsDefault
 	flagSet.Func(permissionsName, permissionsUsage, func(s string) (err error) {
