@@ -52,7 +52,7 @@ func (mh *Host) HostID() filesystem.Host { return HostID }
 func (mh *Host) ParseField(key, value string) error {
 	const (
 		pointKey           = "point"
-		logPrefixKey       = "log"
+		logPrefixKey       = "logPrefix"
 		optionsKey         = "options"
 		uidKey             = "uid"
 		gidKey             = "gid"
