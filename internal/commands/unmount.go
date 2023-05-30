@@ -57,7 +57,7 @@ func Unmount() command.Command {
 	const (
 		name     = "unmount"
 		synopsis = "Unmount file systems."
-		usage    = "Placeholder text."
+		usage    = synopsis
 	)
 	return command.MustMakeCommand[*unmountCmdSettings](name, synopsis, usage, unmountExecute)
 }

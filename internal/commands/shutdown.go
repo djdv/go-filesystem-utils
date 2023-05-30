@@ -46,8 +46,8 @@ func (level shutdownDisposition) String() string {
 func Shutdown() command.Command {
 	const (
 		name     = "shutdown"
-		synopsis = "Stop the service."
-		usage    = "Placeholder text."
+		synopsis = "Stop the system service."
+		usage    = "Request to stop the file system service."
 	)
 	return command.MustMakeCommand[*shutdownSettings](name, synopsis, usage, shutdownExecute)
 }
