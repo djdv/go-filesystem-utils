@@ -65,7 +65,8 @@ func (set *clientSettings) BindFlags(flagSet *flag.FlagSet) {
 	flagSet.DurationVar(&set.exitInterval, exitFlag, exitAfterDefault, exitUsage)
 	const (
 		sockName  = serverFlagName
-		sockUsage = "file system service `maddr`"
+		sockUsage = "file system service `maddr`" +
+			"\n\b" // Newline for default value, sans space.
 	)
 	var sockDefaultText string
 	{
