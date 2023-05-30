@@ -667,8 +667,5 @@ func newMountFile(idRoot p9.File,
 	if _, err := targetFile.WriteAt(data, 0); err != nil {
 		return errors.Join(err, targetFile.Close())
 	}
-	if err := targetFile.FSync(); err != nil {
-		return errors.Join(err, targetFile.Close())
-	}
 	return targetFile.Close()
 }
