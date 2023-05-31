@@ -138,6 +138,10 @@ func (gw *goWrapper) Open(path string, flags int) (errNo, fileDescriptor) {
 	} else {
 		defer gw.systemLock.Access(path)()
 	}
+	if path == mountedFusePath {
+		// Special case; see: [pollMountpoint].
+		return operationSuccess, errorHandle
+	}
 
 	name, err := fuseToGo(path)
 	if err != nil {

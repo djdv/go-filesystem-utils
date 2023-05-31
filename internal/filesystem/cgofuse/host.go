@@ -7,7 +7,9 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"math/rand"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +45,14 @@ const (
 
 	syscallFailedFmt = "%s returned `false` for \"%s\"" +
 		" - system log may have more information"
+	// [cgofuse] does not currently [2023.05.30] have a way
+	// to signal the caller when a system is actually ready.
+	// Our wrapper file system will respect calls to this file,
+	// and the operating system may query it.
+	// The name is an arbitrary base58 NanoID of length 9.
+	mountedFileName = "📂FK3GQ5WBB"
+	mountedFusePath = posixRoot + mountedFileName
+	mountedFilePath = string(os.PathSeparator) + mountedFileName
 )
 
 func (close closer) Close() error { return close() }
@@ -159,7 +169,7 @@ func (mh *Host) Mount(fsys fs.FS) (io.Closer, error) {
 		}
 		target, args = makeFuseArgs(fsID, mh)
 	}
-	if err := safeMount(fuseHost, target, args); err != nil {
+	if err := doMount(fuseHost, target, args); err != nil {
 		return nil, err
 	}
 	return closer(func() error {
@@ -174,46 +184,26 @@ func (mh *Host) Mount(fsys fs.FS) (io.Closer, error) {
 	}), nil
 }
 
-func safeMount(fuseSys *fuse.FileSystemHost, target string, args []string) error {
-	// TODO (anyone): if there's a way to know mount has succeeded;
-	// use that here.
-	// Note that we can't just hook `Init` since that is called before
-	// the code which actually does the mounting.
-	// And we can't poll the mountpoint, since on most systems, for most targets,
-	// it will already exist (but not be our mount).
-	// As-is we can only assume mount succeeded if it doesn't
-	// return an error after some arbitrary threshold.
-	const deadlineDuration = 128 * time.Millisecond
-	var (
-		timer = time.NewTimer(deadlineDuration)
-		errs  = make(chan error, 1)
-	)
-	defer timer.Stop()
-	go func() {
-		defer func() {
-			// TODO: We should fork the lib so it errors
-			// instead of panicking in this case.
-			if r := recover(); r != nil {
-				errs <- disambiguateCgoPanic(r)
-			}
-			close(errs)
-		}()
-		if !fuseSys.Mount(target, args) {
-			err := fmt.Errorf(
-				syscallFailedFmt,
-				"mount", target,
-			)
-			errs <- err
+func doMount(fuseSys *fuse.FileSystemHost, target string, args []string) error {
+	errs := make(chan error, 1)
+	go safeMount(fuseSys, target, args, errs)
+	statTarget := getOSTarget(target, args)
+	go pollMountpoint(statTarget, errs)
+	return <-errs
+}
+
+func safeMount(fuseSys *fuse.FileSystemHost, target string, args []string, errs chan<- error) {
+	defer func() {
+		// TODO: We should fork the lib so it errors
+		// instead of panicking in this case.
+		if r := recover(); r != nil {
+			errs <- disambiguateCgoPanic(r)
 		}
 	}()
-	select {
-	case err := <-errs:
-		return err
-	case <-timer.C:
-		// `Mount` hasn't panicked or returned an error yet
-		// assume `Mount` is blocking (as intended).
-		return nil
+	if fuseSys.Mount(target, args) {
+		return // Call succeeded.
 	}
+	errs <- fmt.Errorf(syscallFailedFmt, "mount", target)
 }
 
 func disambiguateCgoPanic(r any) error {
@@ -236,4 +226,56 @@ func idOption(option *strings.Builder, id string, leader rune) {
 	option.WriteRune(leader)
 	option.WriteString(idOptionBody)
 	option.WriteString(id)
+}
+
+func makeJitterFunc(initial time.Duration) func() time.Duration {
+	// Adapted from an inlined [net/http] closure.
+	const pollIntervalMax = 500 * time.Millisecond
+	return func() time.Duration {
+		// Add 10% jitter.
+		interval := initial +
+			time.Duration(rand.Intn(int(initial/10)))
+		// Double and clamp for next time.
+		initial *= 2
+		if initial > pollIntervalMax {
+			initial = pollIntervalMax
+		}
+		return interval
+	}
+}
+
+func pollMountpoint(target string, errs chan<- error) {
+	const deadlineDuration = 16 * time.Second // Arbitrary.
+	var (
+		specialFile  = filepath.Join(target, mountedFilePath)
+		nextInterval = makeJitterFunc(time.Microsecond)
+		deadline     = time.NewTimer(deadlineDuration)
+		timer        = time.NewTimer(nextInterval())
+	)
+	defer deadline.Stop()
+	for {
+		select {
+		case <-deadline.C:
+			timer.Stop()
+			errs <- fmt.Errorf(
+				"call to `Mount` did not respond in time (%v)",
+				deadlineDuration,
+			)
+			// NOTE: this does not mean the mount did not, or
+			// won't eventually succeed. We could try calling
+			// `Unmount`, but we just alert the operator and
+			// exit instead. They'll have more context from
+			// the operating system itself than we have here.
+			return
+		case <-timer.C:
+			// If we can access the special file,
+			// then the mount succeeded.
+			_, err := os.Lstat(specialFile)
+			if err == nil {
+				errs <- nil
+				return
+			}
+			timer.Reset(nextInterval())
+		}
+	}
 }

@@ -15,6 +15,10 @@ func (gw *goWrapper) Statfs(path string, stat *fuse.Statfs_t) errNo {
 
 func (gw *goWrapper) Getattr(path string, stat *fuse.Stat_t, fh fileDescriptor) errNo {
 	defer gw.systemLock.Access(path)()
+	if path == mountedFusePath {
+		// Special case; see: [pollMountpoint].
+		return operationSuccess
+	}
 	var (
 		info fs.FileInfo
 		err  error
