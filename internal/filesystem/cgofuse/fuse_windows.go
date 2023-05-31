@@ -3,6 +3,8 @@
 package cgofuse
 
 import (
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
@@ -15,6 +17,7 @@ const (
 
 	systemNameOpt = "FileSystemName="
 	volNameOpt    = "volname="
+	volumeOpt     = "--VolumePrefix="
 )
 
 func makeFuseArgs(fsid filesystem.ID, host *Host) (string, []string) {
@@ -74,10 +77,30 @@ func nameOption(b *strings.Builder, id filesystem.ID) {
 }
 
 func uncOption(target string) string {
-	const volumeOpt = "--VolumePrefix="
 	var option strings.Builder
 	option.Grow(len(volumeOpt) + len(target) - 1)
 	option.WriteString(volumeOpt)
 	option.WriteString(target[1:])
 	return option.String()
+}
+
+func getOSTarget(target string, args []string) string {
+	if target != "" || len(args) == 0 {
+		return target
+	}
+	var fromArg string
+	for _, arg := range args {
+		if strings.HasPrefix(arg, volumeOpt) {
+			uncPath := arg[len(volumeOpt):]
+			// The flag's parameter may be quoted but it's not required.
+			// If it is, unwrap it.
+			if raw, err := strconv.Unquote(uncPath); err == nil {
+				uncPath = raw
+			}
+			// WinFSP uses a single separator for UNC in its
+			// flag parameter; add a slash to create a valid system path.
+			fromArg = string(os.PathSeparator) + uncPath
+		}
+	}
+	return fromArg
 }

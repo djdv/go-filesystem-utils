@@ -44,3 +44,5 @@ func makeFuseArgs(fsid filesystem.ID, host *Host) (string, []string) {
 	)
 	return target, fuseArgs
 }
+
+func getOSTarget(target string, _ []string) string { return target }
