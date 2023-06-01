@@ -8,9 +8,9 @@ import (
 	"sync"
 
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
-	"github.com/hugelgupf/p9/fsimpl/templatefs"
-	"github.com/hugelgupf/p9/p9"
-	perrors "github.com/hugelgupf/p9/perrors"
+	perrors "github.com/djdv/p9/errors"
+	"github.com/djdv/p9/fsimpl/templatefs"
+	"github.com/djdv/p9/p9"
 )
 
 // This name is arbitrary, but unlikely to collide.

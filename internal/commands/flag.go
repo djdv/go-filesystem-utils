@@ -12,7 +12,7 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
-	"github.com/hugelgupf/p9/p9"
+	"github.com/djdv/p9/p9"
 	giconfig "github.com/ipfs/kubo/config"
 	"github.com/multiformats/go-multiaddr"
 )

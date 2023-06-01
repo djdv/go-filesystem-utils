@@ -3,8 +3,8 @@ package p9
 import (
 	"errors"
 
-	"github.com/hugelgupf/p9/p9"
-	"github.com/hugelgupf/p9/perrors"
+	perrors "github.com/djdv/p9/errors"
+	"github.com/djdv/p9/p9"
 )
 
 type (

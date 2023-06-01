@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
-	"github.com/hugelgupf/p9/p9"
+	"github.com/djdv/p9/p9"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
 )

@@ -12,7 +12,7 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem/cgofuse"
-	"github.com/hugelgupf/p9/p9"
+	"github.com/djdv/p9/p9"
 )
 
 type (

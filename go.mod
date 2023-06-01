@@ -4,12 +4,11 @@ go 1.20
 
 require (
 	github.com/adrg/xdg v0.4.0
+	github.com/djdv/p9 v0.2.1-0.20230601152255-7d74b92b80b0
 	github.com/hashicorp/golang-lru/v2 v2.0.2
-	github.com/hugelgupf/p9 v0.0.0-00010101000000-000000000000
 	github.com/ipfs/boxo v0.10.2-0.20230629143123-2d3edc552442
 	github.com/ipfs/go-cid v0.4.1
 	github.com/ipfs/go-ipfs-cmds v0.9.0
-	github.com/ipfs/go-ipfs-http-client v0.5.1-0.20230418133148-ae996cbe5a91
 	github.com/ipfs/go-ipld-cbor v0.0.6
 	github.com/ipfs/go-ipld-format v0.5.0
 	github.com/ipfs/kubo v0.21.0
@@ -17,10 +16,10 @@ require (
 	github.com/multiformats/go-multiaddr v0.9.0
 	github.com/multiformats/go-multiaddr-dns v0.3.1
 	github.com/multiformats/go-multibase v0.2.0
-	github.com/u-root/uio v0.0.0-20220204230159-dac05f7d2cb4
+	github.com/u-root/uio v0.0.0-20230305220412-3e8cd9d6bf63
 	github.com/winfsp/cgofuse v1.5.1-0.20230130140708-f87f5db493b5
 	golang.org/x/exp v0.0.0-20230321023759-10a507213a29
-	golang.org/x/sys v0.7.0
+	golang.org/x/sys v0.9.0
 )
 
 require (
@@ -74,13 +73,9 @@ require (
 	golang.org/x/mod v0.10.0 // indirect
 	golang.org/x/net v0.10.0 // indirect
 	golang.org/x/sync v0.2.0 // indirect
-	golang.org/x/sys v0.9.0 // indirect
 	golang.org/x/tools v0.9.1 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/protobuf v1.30.0 // indirect
+	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	lukechampine.com/blake3 v1.2.1 // indirect
 )
-
-// FIXME: Ideally we remove this replace directive when upstream merges
-// if that doesn't happen before end of review, we'll have to fork.
-replace github.com/hugelgupf/p9 => github.com/djdv/p9 v0.2.1-0.20221024045104-6b0c9ca47f00

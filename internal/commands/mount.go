@@ -17,7 +17,7 @@ import (
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem/cgofuse"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem/ipfs"
-	"github.com/hugelgupf/p9/p9"
+	"github.com/djdv/p9/p9"
 	"github.com/jaevor/go-nanoid"
 	"github.com/multiformats/go-multiaddr"
 )

@@ -25,7 +25,7 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/filesystem/ipfs"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	p9net "github.com/djdv/go-filesystem-utils/internal/net/9p"
-	"github.com/hugelgupf/p9/p9"
+	"github.com/djdv/p9/p9"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
 	"github.com/u-root/uio/ulog"
