@@ -66,7 +66,7 @@ type (
 	mountPointFile struct {
 		templatefs.NoopFile
 		metadata
-		*sync.Mutex
+		mu       *sync.Mutex
 		linkSync *linkSync
 	}
 	mountPointIO struct {
@@ -157,7 +157,7 @@ func NewMountPoint[
 		mountPointFile: mountPointFile{
 			metadata: metadata,
 			linkSync: linkSync,
-			Mutex:    new(sync.Mutex),
+			mu:       new(sync.Mutex),
 		},
 		mountPointHost: mountPointHost{
 			unmountFn: new(detachFunc),
@@ -192,8 +192,8 @@ func (mf *MountPointFile[MP]) Walk(names []string) ([]p9.QID, p9.File, error) {
 }
 
 func (mf *MountPointFile[MP]) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
-	mf.Mutex.Lock()
-	defer mf.Mutex.Unlock()
+	mf.mu.Lock()
+	defer mf.mu.Unlock()
 	if mf.opened() {
 		return p9.QID{}, noIOUnit, perrors.EBADF
 	}
@@ -202,8 +202,8 @@ func (mf *MountPointFile[MP]) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
 }
 
 func (mf *MountPointFile[MP]) WriteAt(p []byte, offset int64) (int, error) {
-	mf.Mutex.Lock()
-	defer mf.Mutex.Unlock()
+	mf.mu.Lock()
+	defer mf.mu.Unlock()
 	if !mf.canWrite() {
 		return -1, perrors.EBADF
 	}
@@ -303,8 +303,8 @@ func (mf *MountPointFile[MP]) bufferStructuredLocked(p []byte, offset int64) (in
 }
 
 func (mf *MountPointFile[MP]) FSync() error {
-	mf.Mutex.Lock()
-	defer mf.Mutex.Unlock()
+	mf.mu.Lock()
+	defer mf.mu.Unlock()
 	return mf.syncLocked()
 }
 
@@ -384,8 +384,8 @@ func (mf *MountPointFile[MP]) mountFileLocked() error {
 }
 
 func (mf *MountPointFile[MP]) ReadAt(p []byte, offset int64) (int, error) {
-	mf.Mutex.Lock()
-	defer mf.Mutex.Unlock()
+	mf.mu.Lock()
+	defer mf.mu.Unlock()
 	reader := mf.reader
 	if reader == nil {
 		if !mf.canRead() {
