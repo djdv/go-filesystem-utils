@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/internal/generic"
-	"github.com/hugelgupf/p9/p9"
+	"github.com/djdv/p9/p9"
 	manet "github.com/multiformats/go-multiaddr/net"
 	"github.com/u-root/uio/ulog"
 )

@@ -19,9 +19,9 @@ import (
 	"time"
 
 	p9net "github.com/djdv/go-filesystem-utils/internal/net/9p"
-	"github.com/hugelgupf/p9/fsimpl/templatefs"
-	"github.com/hugelgupf/p9/p9"
-	"github.com/hugelgupf/p9/perrors"
+	perrors "github.com/djdv/p9/errors"
+	"github.com/djdv/p9/fsimpl/templatefs"
+	"github.com/djdv/p9/p9"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
 )

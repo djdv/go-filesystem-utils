@@ -6,9 +6,9 @@ import (
 	"sync/atomic"
 
 	"github.com/djdv/go-filesystem-utils/internal/generic"
-	"github.com/hugelgupf/p9/fsimpl/templatefs"
-	"github.com/hugelgupf/p9/p9"
-	"github.com/hugelgupf/p9/perrors"
+	perrors "github.com/djdv/p9/errors"
+	"github.com/djdv/p9/fsimpl/templatefs"
+	"github.com/djdv/p9/p9"
 )
 
 const parentWName = ".."

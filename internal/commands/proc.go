@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hugelgupf/p9/p9"
+	"github.com/djdv/p9/p9"
 	"github.com/multiformats/go-multiaddr"
 )
 

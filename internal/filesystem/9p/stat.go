@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/internal/generic"
-	"github.com/hugelgupf/p9/p9"
+	"github.com/djdv/p9/p9"
 )
 
 // Permission mode bits.

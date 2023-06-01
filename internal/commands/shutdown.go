@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
-	"github.com/hugelgupf/p9/p9"
+	"github.com/djdv/p9/p9"
 )
 
 type (
