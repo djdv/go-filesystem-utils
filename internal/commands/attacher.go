@@ -232,6 +232,14 @@ func (ef *errorSys) FSync() error {
 	return err
 }
 
+func (ef *errorSys) Lock(pid int, locktype p9.LockType, flags p9.LockFlags, start, length uint64, client string) (p9.LockStatus, error) {
+	status, err := ef.file.Lock(pid, locktype, flags, start, length, client)
+	if err != nil {
+		ef.append(err)
+	}
+	return status, err
+}
+
 func (ef *errorSys) Create(name string, flags p9.OpenFlags, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.File, p9.QID, uint32, error) {
 	file, qid, fd, err := ef.file.Create(name, flags, permissions, uid, gid)
 	if err != nil {
