@@ -120,14 +120,31 @@ func (cmd *command[EF, S, T]) Execute(ctx context.Context, args ...string) error
 		return subcommand.Execute(ctx, subargs...)
 	}
 	var (
+		needHelp bool
 		flagSet    = flag.NewFlagSet(cmd.name, flag.ContinueOnError)
 		settings S = new(T)
 	)
 	settings.BindFlags(flagSet)
+	// Package [flag] has implicit handling for `-help` and `-h` flags.
+	// If they're not explicitly defined, but provided as arguments,
+	// [flag] will call `Usage` before returning from `Parse`.
+	// We want to temporarily disable any built-in printing, to assure
+	// our printers are used exclusively. (For both help text and errors)
+	var (
+		originalUsage  = flagSet.Usage
+		originalOutput = flagSet.Output()
+	)
+	flagSet.Usage = func() { /* NOOP */ }
+	flagSet.SetOutput(io.Discard)
 	if err := flagSet.Parse(args); err != nil {
-		return err
+		if !errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		needHelp = true
 	}
-	if settings.Help() {
+	if needHelp || settings.Help() {
+		flagSet.SetOutput(originalOutput)
+		flagSet.Usage = originalUsage
 		if printErr := cmd.printUsage(cmd.usageOutput, flagSet); printErr != nil {
 			return errors.Join(printErr, ErrUsage)
 		}
