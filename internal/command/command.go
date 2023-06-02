@@ -160,22 +160,21 @@ func (cmd *command[EF, S, T]) Execute(ctx context.Context, args ...string) error
 }
 
 func getSubcommand(command Command, arguments []string) (Command, []string) {
-	subcommands := command.Subcommands()
-	if len(subcommands) == 0 ||
-		len(arguments) == 0 {
-		return nil, arguments
+	if len(arguments) == 0 {
+		return nil, nil
 	}
 	subname := arguments[0]
-	for _, subcommand := range subcommands {
-		if subcommand.Name() == subname {
-			arguments = arguments[1:]
-			if s, a := getSubcommand(subcommand, arguments); s != nil {
-				return s, a
-			}
-			return subcommand, arguments
+	for _, subcommand := range command.Subcommands() {
+		if subcommand.Name() != subname {
+			continue
 		}
+		subarguments := arguments[1:]
+		if hypoCmd, hypoArgs := getSubcommand(subcommand, subarguments); hypoCmd != nil {
+			return hypoCmd, hypoArgs
+		}
+		return subcommand, subarguments
 	}
-	return nil, arguments
+	return nil, nil
 }
 
 func (cmd *command[EF, S, T]) printUsage(output StringWriter, flagSet *flag.FlagSet) error {
