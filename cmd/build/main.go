@@ -2,47 +2,126 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 )
 
-type envDeferFunc func() error
+//go:generate stringer -type=buildMode
+type buildMode int
+
+const (
+	regular buildMode = iota
+	release
+	debug
+)
 
 func main() {
 	log.SetFlags(log.Lshortfile)
+	buildMode := parseFlags()
 	cwd, err := os.Getwd()
 	if err != nil {
-		log.Fatal("Could not get working directory:", err)
+		log.Fatal("could not get working directory:", err)
 	}
+	const (
+		commandRoot   = "cmd"
+		targetCommand = "fs"
+	)
 	var (
-		pkgGoPath = filepath.Join("cmd", "fs")
+		pkgGoPath = filepath.Join(commandRoot, targetCommand)
 		pkgFSPath = filepath.Join(cwd, pkgGoPath)
 	)
 	if _, err := os.Stat(pkgFSPath); err != nil {
-		log.Fatal("Could not access pkg directory:", err)
+		log.Fatal("could not access pkg directory:", err)
 	}
-	restoreEnv := setupEnv()
-	defer func() {
-		if err := restoreEnv(); err != nil {
-			log.Println(err)
-		}
-	}()
-
 	const (
-		goBin       = "go"
-		goBuild     = "build"
-		linkerFlags = "-ldflags=-s -w"
+		goBin   = "go"
+		goBuild = "build"
+		maxArgs = 3
 	)
-	goArgs := []string{goBuild, linkerFlags, pkgFSPath}
-	output, err := exec.Command(goBin, goArgs...).CombinedOutput()
-	if err != nil {
-		log.Printf("failed to run build command: %s\n%s",
-			err, output,
+	goArgs := make([]string, 1, maxArgs)
+	goArgs[0] = goBuild
+	switch buildMode {
+	case debug:
+		const compilerDebugFlags = `-gcflags=all=-N -l`
+		goArgs = append(goArgs, compilerDebugFlags)
+	case release:
+		const (
+			buildTrimFlag      = `-trimpath`
+			linkerReleaseFlags = `-ldflags=-s -w`
 		)
-		os.Exit(1)
+		goArgs = append(goArgs, buildTrimFlag, linkerReleaseFlags)
 	}
-	fmt.Fprint(os.Stdout, string(output))
+	goArgs = append(goArgs, pkgFSPath)
+	cmd := exec.Command(goBin, goArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	buildEnvironment, err := setupEnvironment(cmd.Environ())
+	if err != nil {
+		log.Fatal("could not setup process environment:", err)
+	}
+	cmd.Env = buildEnvironment
+	if err := cmd.Run(); err != nil {
+		log.Fatalf("failed to run build command: %s", err)
+	}
+}
+
+func parseFlags() buildMode {
+	const (
+		regularUsage = "standard go build with no compiler or linker flags when building"
+		releaseUsage = "remove extra debugging data when building"
+		debugUsage   = "disable optimizations when building"
+		modeName     = "mode"
+	)
+	var (
+		cmdName   = commandName()
+		flagSet   = flag.NewFlagSet(cmdName, flag.ExitOnError)
+		mode      = release
+		modeUsage = fmt.Sprintf(
+			"%s\t- %s"+
+				"\n%s\t- %s"+
+				"\n%s\t- %s"+
+				"\n\b",
+			regular.String(), regularUsage,
+			release.String(), releaseUsage,
+			debug.String(), debugUsage,
+		)
+	)
+	flagSet.Func(modeName, modeUsage, func(arg string) (err error) {
+		mode, err = generic.ParseEnum(regular, debug, arg)
+		return
+	})
+	flagSet.VisitAll(func(f *flag.Flag) {
+		if f.Name == modeName {
+			f.DefValue = mode.String()
+		}
+	})
+	if err := flagSet.Parse(os.Args[1:]); err != nil {
+		log.Fatal(err)
+	}
+	if args := flagSet.Args(); len(args) != 0 {
+		var output strings.Builder
+		flagSet.SetOutput(&output)
+		flagSet.Usage()
+		log.Fatalf("unexpected arguments: %s\n%s",
+			strings.Join(args, ", "),
+			output.String(),
+		)
+	}
+	return mode
+}
+
+func commandName() string {
+	execName := filepath.Base(os.Args[0])
+	return strings.TrimSuffix(
+		execName,
+		filepath.Ext(execName),
+	)
 }
