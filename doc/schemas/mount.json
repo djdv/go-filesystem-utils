@@ -1,0 +1,44 @@
+{
+	"type": "object",
+	"properties": {
+		"data": {
+			"type": "object",
+			"properties": {
+				"host": {
+					"type": "object"
+				},
+				"guest": {
+					"type": "object"
+				}
+			}
+		},
+		"tag": {
+			"type": "object",
+			"properties": {
+				"host": {
+					"type": "string",
+					"enum": [
+						"FUSE"
+					]
+				},
+				"guest": {
+					"type": "string",
+					"enum": [
+						"IPFS",
+						"IPNS",
+						"PinFS",
+						"KeyFS"
+					]
+				}
+			},
+			"required": [
+				"host",
+				"guest"
+			]
+		}
+	},
+	"required": [
+		"data",
+		"tag"
+	]
+}

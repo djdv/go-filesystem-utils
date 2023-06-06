@@ -1,0 +1,45 @@
+direction: right
+cli: Command Line
+fs-process: |
+	1st-party client process
+	(fs mount, etc.)
+|
+fs-process.shape: rectangle
+ext-process: |
+	3rd-party client process
+	(shell extension dll, etc.)
+|
+ext-process.shape: rectangle
+fs-daemon: |
+	File system service
+	(fs daemon)
+|
+fs-daemon.shape: rectangle
+
+cli -> fs-process: Text parser
+fs-process <-> fs-daemon: 9P {
+	style.animated:true
+}
+ext-process <-> fs-daemon: 9P {
+	style.animated:true
+}
+host: |
+	Host API
+	(FUSE, 9P, et al.)
+|
+host.shape: rectangle
+guest: |
+	Guest API
+	(IPFS, PinFS, et al.)
+|
+guest.shape: rectangle
+os: Operating system
+fs-daemon <-> guest: Go API {
+	style.animated: true
+}
+fs-daemon <-> host: Go API {
+	style.animated: true
+}
+host <-> os: API|ABI {
+	style.animated: true
+}
