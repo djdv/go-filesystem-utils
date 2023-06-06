@@ -245,17 +245,17 @@ func (mf *MountPointFile[MP]) parseFieldsLocked(b []byte) error {
 				return errors.Join(perrors.EINVAL, err)
 			}
 			mf.modified = true
-			return nil
 		case keyWord:
 			key := fields[key]
 			if err := mf.parseKeyWordLocked(key); err != nil {
 				return errors.Join(perrors.EINVAL, err)
 			}
-			return nil
+		default:
+			// TODO: insert input into message? probably.
+			return fmt.Errorf("%w - unexpected input", perrors.EINVAL)
 		}
 	}
-	// TODO: insert input into message? probably.
-	return fmt.Errorf("%w - unexpected input", perrors.EINVAL)
+	return nil
 }
 
 func (mf *MountPointFile[MP]) serializeLocked() ([]byte, error) {
