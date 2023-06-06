@@ -1,0 +1,39 @@
+file system {
+	control/ {
+		shutdown: |md
+			### Shutdown file
+			name: "shutdown"  
+			write: shutdown disposition value  
+			(string or decimal; e.g. "patient" or 1)
+		|
+	}
+	listeners/ {
+		/\.\.\.$maddr-components\.\.\./ {
+			socket: |md
+				### Socket file
+				name: "listener"  
+				read: multiaddr string
+			|
+			connections/ {
+				conn: |md
+					### Connection file
+					name: ${decimal number}  
+					read: connection metadata as JSON
+				|
+				link: schemas/connection.json
+			}
+		}
+	}
+	mounts/ {
+		$host-API-name/ {
+			$guest-API-name/ {
+				mount-file: |md
+					### Mount point file
+					name: ${NanoID}.json  
+					read: mount point metadata as JSON
+				|
+				link: schemas/mountpoint.json
+			}
+		}
+	}
+}

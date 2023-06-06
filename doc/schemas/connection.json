@@ -1,0 +1,27 @@
+{
+	"type": "object",
+	"properties": {
+		"lastRead": {
+			"type": "string"
+		},
+		"lastWrite": {
+			"type": "string"
+		},
+		"local": {
+			"type": "string"
+		},
+		"remote": {
+			"type": "string"
+		},
+		"#": {
+			"type": "integer"
+		}
+	},
+	"required": [
+		"lastRead",
+		"lastWrite",
+		"local",
+		"remote",
+		"#"
+	]
+}
