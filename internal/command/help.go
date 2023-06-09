@@ -1,9 +1,6 @@
 package command
 
-import (
-	"flag"
-	"strconv"
-)
+import "flag"
 
 type (
 	// HelpArg implements [HelpFlag].
@@ -19,21 +16,10 @@ type (
 
 // Help will return true if the help flag
 // was present when parsing.
-func (b HelpArg) Help() bool      { return bool(b) }
-func (b *HelpArg) String() string { return strconv.FormatBool(bool(*b)) }
+func (b HelpArg) Help() bool { return bool(b) }
 
 // BindFlags defines a `-help` flag in the [flag.FlagSet].
 func (b *HelpArg) BindFlags(fs *flag.FlagSet) {
 	const usage = "prints out this help text"
 	fs.BoolVar((*bool)(b), "help", false, usage)
-}
-
-// Set parses boolean strings into [HelpArg].
-func (b *HelpArg) Set(str string) error {
-	val, err := strconv.ParseBool(str)
-	if err != nil {
-		return err
-	}
-	*b = HelpArg(val)
-	return nil
 }

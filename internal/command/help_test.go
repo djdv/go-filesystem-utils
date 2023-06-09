@@ -21,29 +21,15 @@ func HelpArg(t *testing.T) {
 		{true},
 		{false},
 	} {
-
 		want := test.want
 		t.Run(fmt.Sprint(want), func(t *testing.T) {
 			t.Parallel()
-			var (
-				helpArg    = new(command.HelpArg)
-				stringWant = fmt.Sprint(want)
-			)
-			if err := helpArg.Set(stringWant); err != nil {
-				t.Fatal(err)
-			}
+			helpArg := command.HelpArg(want)
 			if got := helpArg.Help(); got != want {
 				t.Errorf("helpflag mismatch"+
 					"\n\tgot: %t"+
 					"\n\twant: %t",
 					got, want,
-				)
-			}
-			if got := helpArg.String(); got != stringWant {
-				t.Errorf("helpflag format mismatch"+
-					"\n\tgot: %s"+
-					"\n\twant: %s",
-					got, stringWant,
 				)
 			}
 		})
