@@ -24,8 +24,8 @@ func HelpArg(t *testing.T) {
 		want := test.want
 		t.Run(fmt.Sprint(want), func(t *testing.T) {
 			t.Parallel()
-			helpArg := command.HelpArg(want)
-			if got := helpArg.Help(); got != want {
+			settings := command.HelpArg(want)
+			if got := settings.HelpRequested(); got != want {
 				t.Errorf("helpflag mismatch"+
 					"\n\tgot: %t"+
 					"\n\twant: %t",

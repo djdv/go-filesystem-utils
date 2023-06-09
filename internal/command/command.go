@@ -9,15 +9,47 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 )
 
 type (
-	// Settings is a constraint that permits any reference type
-	// which also implements [FlagBinder] and [HelpFlag].
+	// Command is a decorated function ready to be executed.
+	Command interface {
+		// Name returns a human friendly name of the command,
+		// which may be used to identify commands
+		// as well as decorate user facing help-text.
+		Name() string
+
+		// Synopsis returns a single-line short string describing the command.
+		Synopsis() string
+
+		// Usage returns an arbitrarily long string explaining how to use the command.
+		Usage() string
+
+		// Subcommands returns a list of subcommands (if any).
+		Subcommands() []Command
+
+		// Execute executes the command, with or without any arguments.
+		Execute(ctx context.Context, args ...string) error
+	}
+
+	// Settings is a constraint that permits
+	// any reference type
+	// that can bind its value(s) to flags
+	// and distinguish requests for help.
 	Settings[T any] interface {
 		*T
-		HelpFlag
 		FlagBinder
+		HelpRequested() bool
+	}
+
+	// A FlagBinder should call the relevant `Var` methods of the [flag.FlagSet],
+	// with each of it's flag variable references.
+	// E.g. a struct would pass pointers to each of its fields,
+	// to `FlagSet.Var(&structABC.fieldXYZ, ...)`.
+	FlagBinder interface {
+		BindFlags(*flag.FlagSet)
 	}
 
 	// ExecuteFunc may be used as a command's Execute function
@@ -58,6 +90,11 @@ type (
 		subcommands           []Command
 	}
 )
+
+// ErrUsage may be returned from Execute if the provided arguments
+// do not match the expectations of the given command.
+// E.g. arguments in the wrong format/type, too few/many arguments, etc.
+const ErrUsage = generic.ConstError("command called with unexpected arguments")
 
 // MustMakeCommand wraps MakeCommand,
 // and will panic if it encounters an error.
@@ -142,7 +179,7 @@ func (cmd *command[EF, S, T]) Execute(ctx context.Context, args ...string) error
 		}
 		needHelp = true
 	}
-	if needHelp || settings.Help() {
+	if needHelp || settings.HelpRequested() {
 		flagSet.SetOutput(originalOutput)
 		flagSet.Usage = originalUsage
 		if printErr := cmd.printUsage(cmd.usageOutput, flagSet); printErr != nil {

@@ -2,7 +2,7 @@ package command
 
 type (
 	// Option is a functional option.
-	// One can be returned by the various constructors,
+	// One can be returned by the various constructors
 	// before being passed to [MakeCommand].
 	Option func(*commandSettings) error
 
