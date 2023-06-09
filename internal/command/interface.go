@@ -35,13 +35,6 @@ type (
 	FlagBinder interface {
 		BindFlags(*flag.FlagSet)
 	}
-
-	// FlagSettings is a constraint that permits any reference type
-	// that can bind its value setter(s), to a [flag.FlagSet].
-	FlagSettings[settings any] interface {
-		*settings
-		FlagBinder
-	}
 )
 
 // ErrUsage may be returned from Execute if the provided arguments
