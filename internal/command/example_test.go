@@ -21,20 +21,20 @@ const (
 )
 
 type exampleSettings struct {
-	command.HelpArg
+	command.Help
 	someField bool
 }
 
-func (ts *exampleSettings) BindFlags(fs *flag.FlagSet) {
-	ts.HelpArg.BindFlags(fs)
-	fs.BoolVar(&ts.someField, someFlagName, false, "some flag help text")
+func (es *exampleSettings) BindFlags(fs *flag.FlagSet) {
+	es.Help.BindFlags(fs)
+	fs.BoolVar(&es.someField, someFlagName, false, "some flag help text")
 }
 
 // main function expects sub commands only.
 // This should be noted in the usage text of a real command.
 // (Which will be printed if [command.ErrUsage] or an error
 // wrapping it is returned.)
-func mainExecute(ctx context.Context, settings *command.HelpArg) error {
+func mainExecute(ctx context.Context, settings *command.Help) error {
 	return command.ErrUsage
 }
 
@@ -91,7 +91,7 @@ func ExampleMakeCommand() {
 			command.WithSubcommands(deepest),
 			command.WithUsageOutput(output),
 		)
-		main = command.MustMakeCommand[*command.HelpArg](
+		main = command.MustMakeCommand[*command.Help](
 			cmdName, cmdSynonpis, cmdUsage,
 			mainExecute,
 			command.WithSubcommands(subCommand),
