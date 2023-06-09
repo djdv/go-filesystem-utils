@@ -6,9 +6,8 @@ type (
 	// HelpArg implements [HelpFlag].
 	HelpArg bool
 
-	// HelpFlag providers a getter for a `-help` flag.
-	// Typically this is implemented by embedding
-	// [HelpArg] into a struct.
+	// HelpFlag's `Help` method will signify
+	// whether a caller requested help or not.
 	HelpFlag interface {
 		Help() bool
 	}
