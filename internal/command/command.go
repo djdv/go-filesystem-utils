@@ -135,13 +135,22 @@ func MakeCommand[
 	}, nil
 }
 
-func (cmd *command[EF, S, T]) Name() string { return cmd.name }
-func (cmd *command[EF, S, T]) Usage() string {
-	output := new(strings.Builder)
-	if err := cmd.printUsage(output, nil); err != nil {
+// SubcommandGroup returns a command that only defers to subcommands.
+// Trying to execute the command itself will return [ErrUsage].
+func SubcommandGroup(name, synopsis string, subcommands []Command, options ...Option) Command {
+	const usage = "Must be called with a subcommand."
+	command, err := MakeCommand(name, synopsis, usage,
+		func(context.Context) error {
+			// This command only holds subcommands
+			// and has no functionality on its own.
+			return ErrUsage
+		},
+		append(options, WithSubcommands(subcommands...))...,
+	)
+	if err != nil {
 		panic(err)
 	}
-	return output.String()
+	return command
 }
 func (cmd *command[EF, S, T]) Synopsis() string       { return cmd.synopsis }
 func (cmd *command[EF, S, T]) Subcommands() []Command { return cmd.subcommands }
