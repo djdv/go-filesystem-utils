@@ -77,7 +77,6 @@ type (
 )
 
 const (
-	subcommandUsage            = "Must be called with a subcommand."
 	mountAPIPermissionsDefault = p9fs.ReadUser | p9fs.WriteUser | p9fs.ExecuteUser |
 		p9fs.ReadGroup | p9fs.ExecuteGroup |
 		p9fs.ReadOther | p9fs.ExecuteOther
@@ -481,14 +480,7 @@ func Mount() command.Command {
 		name     = "mount"
 		synopsis = "Mount file systems."
 	)
-	var (
-		executeFn   = subonlyExec[*command.HelpArg]()
-		subcommands = makeMountSubcommands()
-	)
-	return command.MustMakeCommand[*command.HelpArg](name, synopsis, subcommandUsage,
-		executeFn,
-		command.WithSubcommands(subcommands...),
-	)
+	return command.SubcommandGroup(name, synopsis, makeMountSubcommands())
 }
 
 func makeMountSubcommands() []command.Command {
@@ -505,10 +497,9 @@ func makeMountSubcommands() []command.Command {
 		switch hostAPI {
 		case cgofuse.HostID:
 			guestCommands := makeGuestCommands[fuseSettings](hostAPI)
-			subCommands[i] = command.MustMakeCommand[*command.HelpArg](
-				commandName, synopsis, subcommandUsage,
-				subonlyExec[*command.HelpArg](),
-				command.WithSubcommands(guestCommands...),
+			subCommands[i] = command.SubcommandGroup(
+				commandName, synopsis,
+				guestCommands,
 			)
 		default:
 			err := fmt.Errorf("unexpected Host API: %v", hostAPI)
@@ -516,15 +507,6 @@ func makeMountSubcommands() []command.Command {
 		}
 	}
 	return subCommands
-}
-
-// TODO: move; should be part of [command] pkg.
-func subonlyExec[settings command.Settings[T], cmd command.ExecuteFunc[settings, T], T any]() cmd {
-	return func(_ context.Context, _ settings) error {
-		// This command only holds subcommands
-		// and has no functionality on its own.
-		return command.ErrUsage
-	}
 }
 
 // func makeGuestCommands[H hostCommand](host filesystem.Host) []command.Command {
@@ -568,7 +550,7 @@ func makeMountCommand[
 		synopsis        = fmt.Sprintf("Mount %s via the %s API.", guestFormalName, hostFormalName)
 	)
 	type MS = *mountPointSettings[H, G, HC, GC]
-	return command.MustMakeCommand[MS](cmdName, synopsis, usage,
+	return mustMakeCommand[MS](cmdName, synopsis, usage,
 		func(ctx context.Context, settings MS, args ...string) error {
 			if err := settings.lazyInit(); err != nil {
 				return err

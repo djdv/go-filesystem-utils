@@ -49,7 +49,7 @@ func Shutdown() command.Command {
 		synopsis = "Stop the system service."
 		usage    = "Request to stop the file system service."
 	)
-	return command.MustMakeCommand[*shutdownSettings](name, synopsis, usage, shutdownExecute)
+	return mustMakeCommand[*shutdownSettings](name, synopsis, usage, shutdownExecute)
 }
 
 func (set *shutdownSettings) BindFlags(flagSet *flag.FlagSet) {

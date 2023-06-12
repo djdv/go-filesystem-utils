@@ -19,7 +19,6 @@ import (
 
 type (
 	commonSettings struct {
-		command.HelpArg
 		verbose bool
 	}
 
@@ -123,9 +122,27 @@ func (di *defaultIPFSMaddr) get() (multiaddr.Multiaddr, error) {
 }
 
 func (set *commonSettings) BindFlags(flagSet *flag.FlagSet) {
-	set.HelpArg.BindFlags(flagSet)
-	flagSet.BoolVar(&set.verbose, "verbose",
-		false, "enable log messages")
+	const (
+		verboseName    = "verbose"
+		verboseDefault = false
+		verboseUsage   = "enable log messages"
+	)
+	flagSet.BoolVar(&set.verbose, verboseName, verboseDefault, verboseUsage)
+}
+
+func mustMakeCommand[
+	ET command.ExecuteType[T],
+	EC command.ExecuteMonadic[ET, T],
+	T any,
+](
+	name, synopsis, usage string,
+	executeFn EC, options ...command.Option,
+) command.Command {
+	cmd, err := command.MakeFixedCommand[ET](name, synopsis, usage, executeFn)
+	if err != nil {
+		panic(err)
+	}
+	return cmd
 }
 
 func parseID[id uint32 | p9.UID | p9.GID](arg string) (id, error) {

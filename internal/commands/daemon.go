@@ -271,7 +271,7 @@ func Daemon() command.Command {
 		synopsis = "Host system services."
 		usage    = "File system service daemon."
 	)
-	return command.MustMakeCommand[*daemonSettings](name, synopsis, usage, daemonExecute)
+	return mustMakeCommand[*daemonSettings](name, synopsis, usage, daemonExecute)
 }
 
 func daemonExecute(ctx context.Context, set *daemonSettings) error {
