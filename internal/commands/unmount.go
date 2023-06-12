@@ -59,7 +59,7 @@ func Unmount() command.Command {
 		synopsis = "Unmount file systems."
 		usage    = synopsis
 	)
-	return command.MustMakeCommand[*unmountCmdSettings](name, synopsis, usage, unmountExecute)
+	return mustMakeCommand[*unmountCmdSettings](name, synopsis, usage, unmountExecute)
 }
 
 func unmountExecute(ctx context.Context, set *unmountCmdSettings, args ...string) error {
