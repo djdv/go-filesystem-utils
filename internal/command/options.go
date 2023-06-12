@@ -1,5 +1,7 @@
 package command
 
+import "os"
+
 type (
 	// Option is a functional option.
 	// One can be returned by the various constructors
@@ -23,9 +25,8 @@ func WithSubcommands(subcommands ...Command) Option {
 }
 
 // WithUsageOutput sets the writer that is written
-// to when [Command.Execute] receives [HelpFlag],
-// or returns [ErrUsage].
-// Nil defaults to [os.Stderr].
+// to when [Command.Execute] receives a request for
+// help, or returns [ErrUsage].
 func WithUsageOutput(output StringWriter) Option {
 	return func(settings *commandSettings) error {
 		settings.usageOutput = output
@@ -34,11 +35,13 @@ func WithUsageOutput(output StringWriter) Option {
 }
 
 func parseOptions(options ...Option) (*commandSettings, error) {
-	set := new(commandSettings)
+	set := commandSettings{
+		usageOutput: os.Stderr,
+	}
 	for _, setFunc := range options {
-		if err := setFunc(set); err != nil {
+		if err := setFunc(&set); err != nil {
 			return nil, err
 		}
 	}
-	return set, nil
+	return &set, nil
 }
