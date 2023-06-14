@@ -96,11 +96,11 @@ func newNiladicTestCommand(t *testing.T) command.Command {
 		usage    = "Call the command with no arguments"
 	)
 	var (
-		discard  = io.Discard.(command.StringWriter)
+		output   = io.Discard
 		cmd, err = command.MakeNiladicCommand(
 			name, synopsis, usage,
 			func(context.Context) error { return nil },
-			command.WithUsageOutput(discard),
+			command.WithUsageOutput(output),
 		)
 	)
 	if err != nil {
@@ -184,14 +184,14 @@ func newFixedTestCommand(t *testing.T) (command.Command, *fixedType) {
 		fixed = &fixedType{
 			someField: flagDefault,
 		}
-		discard  = io.Discard.(command.StringWriter)
+		output   = io.Discard
 		cmd, err = command.MakeFixedCommand[*fixedType](
 			name, synopsis, usage,
 			func(_ context.Context, settings *fixedType) error {
 				*fixed = *settings
 				return nil
 			},
-			command.WithUsageOutput(discard),
+			command.WithUsageOutput(output),
 		)
 	)
 	if err != nil {
@@ -214,7 +214,7 @@ func newFixedArgsTestCommand(t *testing.T) (command.Command, *fixedType, *[]stri
 			someField: flagDefault,
 		}
 		args     = new([]string)
-		discard  = io.Discard.(command.StringWriter)
+		output   = io.Discard
 		cmd, err = command.MakeFixedCommand[*fixedType](
 			name, synopsis, usage,
 			func(_ context.Context, settings *fixedType, arguments ...string) error {
@@ -222,7 +222,7 @@ func newFixedArgsTestCommand(t *testing.T) (command.Command, *fixedType, *[]stri
 				*fixed = *settings
 				return nil
 			},
-			command.WithUsageOutput(discard),
+			command.WithUsageOutput(output),
 		)
 	)
 	if err != nil {
@@ -349,7 +349,7 @@ func newVariadicTestCommand(t *testing.T) (command.Command, *settings) {
 		settings = settings{
 			someField: variadicFlagDefault,
 		}
-		discard  = io.Discard.(command.StringWriter)
+		output   = io.Discard
 		cmd, err = command.MakeVariadicCommand[options](
 			name, synopsis, usage,
 			func(ctx context.Context, options ...option) error {
@@ -360,7 +360,7 @@ func newVariadicTestCommand(t *testing.T) (command.Command, *settings) {
 				}
 				return nil
 			},
-			command.WithUsageOutput(discard),
+			command.WithUsageOutput(output),
 		)
 	)
 	if err != nil {
@@ -381,7 +381,7 @@ func newVariadicArgsTestCommand(t *testing.T) (command.Command, *settings, *[]st
 		settings = settings{
 			someField: variadicFlagDefault,
 		}
-		discard  = io.Discard.(command.StringWriter)
+		output   = io.Discard
 		cmd, err = command.MakeVariadicCommand[options](
 			name, synopsis, usage,
 			func(ctx context.Context, arguments []string, options ...option) error {
@@ -393,7 +393,7 @@ func newVariadicArgsTestCommand(t *testing.T) (command.Command, *settings, *[]st
 				*args = arguments
 				return nil
 			},
-			command.WithUsageOutput(discard),
+			command.WithUsageOutput(output),
 		)
 	)
 	if err != nil {
@@ -515,9 +515,9 @@ func newTestSubcommands(t *testing.T) command.Command {
 			}
 			return cmd
 		}
-		discard    = io.Discard.(command.StringWriter)
+		output     = io.Discard
 		cmdOptions = []command.Option{
-			command.WithUsageOutput(discard),
+			command.WithUsageOutput(output),
 		}
 		cmd = command.SubcommandGroup(
 			"top", "Top level group",
@@ -553,7 +553,7 @@ func subcommandValid(t *testing.T) {
 	t.Parallel()
 	var (
 		ctx      = context.Background()
-		discard  = io.Discard.(command.StringWriter)
+		output   = io.Discard
 		groupCmd = newTestSubcommands(t)
 	)
 	const (
@@ -566,7 +566,7 @@ func subcommandValid(t *testing.T) {
 	nilCmd, err := command.MakeNiladicCommand(
 		niladicName, synopsis, usage,
 		func(context.Context) error { return nil },
-		command.WithUsageOutput(discard),
+		command.WithUsageOutput(output),
 		command.WithSubcommands(groupCmd),
 	)
 	if err != nil {
@@ -575,13 +575,13 @@ func subcommandValid(t *testing.T) {
 	fixedCmd, err := command.MakeFixedCommand[*fixedType](
 		fixedName, synopsis, usage,
 		func(context.Context, *fixedType) error { return nil },
-		command.WithUsageOutput(discard),
+		command.WithUsageOutput(output),
 		command.WithSubcommands(groupCmd),
 	)
 	variadicCmd, err := command.MakeVariadicCommand[options](
 		variadicName, synopsis, usage,
 		func(context.Context, ...option) error { return nil },
-		command.WithUsageOutput(discard),
+		command.WithUsageOutput(output),
 		command.WithSubcommands(groupCmd),
 	)
 	if err != nil {

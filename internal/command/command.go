@@ -31,14 +31,12 @@ type (
 		// Execute executes the command, with or without any arguments.
 		Execute(ctx context.Context, args ...string) error
 	}
-
 	// ExecuteType is a constraint that permits any reference
 	// type that can bind its value(s) to flags.
 	ExecuteType[T any] interface {
 		*T
 		FlagBinder
 	}
-
 	// A FlagBinder should call relevant [flag.FlagSet] methods
 	// to bind each of it's variable references with the FlagSet.
 	// E.g. a struct would pass references of its fields
@@ -46,19 +44,9 @@ type (
 	FlagBinder interface {
 		BindFlags(*flag.FlagSet)
 	}
-
-	// StringWriter is a composite interface,
-	// used when printing user facing text.
-	// (We require [io.Writer] to interface with the Go
-	// standard library's [flag] package, but otherwise use
-	// [io.StringWriter] internally.)
-	StringWriter interface {
-		io.Writer
-		io.StringWriter
-	}
 	commandCommon struct {
 		name, synopsis, usage string
-		usageOutput           StringWriter
+		usageOutput           io.Writer
 		subcommands           []Command
 	}
 )
@@ -142,7 +130,7 @@ func getSubcommand(command Command, arguments []string) (Command, []string) {
 	return nil, nil
 }
 
-func (cmd *commandCommon) printUsage(output StringWriter, acceptsArgs bool, flagSet *flag.FlagSet) error {
+func (cmd *commandCommon) printUsage(output io.Writer, acceptsArgs bool, flagSet *flag.FlagSet) error {
 	if output == nil {
 		return nil
 	}
@@ -153,7 +141,7 @@ func (cmd *commandCommon) printUsage(output StringWriter, acceptsArgs bool, flag
 			if wErr != nil {
 				return
 			}
-			_, wErr = output.WriteString(s)
+			_, wErr = io.WriteString(output, s)
 		}
 		subcommands = cmd.subcommands
 		haveSubs    = len(subcommands) > 0
