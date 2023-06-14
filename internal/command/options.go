@@ -1,6 +1,9 @@
 package command
 
-import "os"
+import (
+	"io"
+	"os"
+)
 
 type (
 	// Option is a functional option.
@@ -9,7 +12,7 @@ type (
 	Option func(*commandSettings) error
 
 	commandSettings struct {
-		usageOutput StringWriter
+		usageOutput io.Writer
 		subcommands []Command
 	}
 )
@@ -27,7 +30,7 @@ func WithSubcommands(subcommands ...Command) Option {
 // WithUsageOutput sets the writer that is written
 // to when [Command.Execute] receives a request for
 // help, or returns [ErrUsage].
-func WithUsageOutput(output StringWriter) Option {
+func WithUsageOutput(output io.Writer) Option {
 	return func(settings *commandSettings) error {
 		settings.usageOutput = output
 		return nil
