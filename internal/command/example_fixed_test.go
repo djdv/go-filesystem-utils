@@ -70,14 +70,10 @@ func newFixedCommand() command.Command {
 		usage    = "Call the command with or" +
 			" without flags"
 	)
-	cmd, err := command.MakeFixedCommand[*fixedType](
+	return command.MakeFixedCommand[*fixedType](
 		name, synopsis, usage,
 		fixedExecute,
 	)
-	if err != nil {
-		panic(err)
-	}
-	return cmd
 }
 
 func fixedExecute(ctx context.Context, settings *fixedType) error {
@@ -92,14 +88,10 @@ func newFixedArgsCommand() command.Command {
 		usage    = "Call the command with or" +
 			" without flags or arguments"
 	)
-	cmd, err := command.MakeFixedCommand[*fixedType](
+	return command.MakeFixedCommand[*fixedType](
 		name, synopsis, usage,
 		fixedExecuteArgs,
 	)
-	if err != nil {
-		panic(err)
-	}
-	return cmd
 }
 
 func fixedExecuteArgs(ctx context.Context, settings *fixedType, arguments ...string) error {

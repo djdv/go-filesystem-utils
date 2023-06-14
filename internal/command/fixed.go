@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"os"
 	"strings"
 )
 
@@ -56,21 +57,18 @@ func MakeFixedCommand[
 ](
 	name, synopsis, usage string,
 	executeFn EC, options ...Option,
-) (Command, error) {
-	settings, err := parseOptions(options...)
-	if err != nil {
-		return nil, err
-	}
-	return &fixedCommand[ET, T, EC]{
+) Command {
+	cmd := fixedCommand[ET, T, EC]{
 		commandCommon: commandCommon{
 			name:        name,
 			synopsis:    synopsis,
 			usage:       usage,
-			usageOutput: settings.usageOutput,
-			subcommands: settings.subcommands,
+			usageOutput: os.Stderr,
 		},
 		executeFn: executeFn,
-	}, nil
+	}
+	applyOptions(&cmd.commandCommon, options...)
+	return &cmd
 }
 
 func (cmd *fixedCommand[ET, T, EC]) Usage() string {

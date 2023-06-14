@@ -85,14 +85,10 @@ func newVariadicCommand() command.Command {
 		usage    = "Call the command with or" +
 			" without flags"
 	)
-	cmd, err := command.MakeVariadicCommand[options](
+	return command.MakeVariadicCommand[options](
 		name, synopsis, usage,
 		variadicExecute,
 	)
-	if err != nil {
-		panic(err)
-	}
-	return cmd
 }
 
 func variadicExecute(ctx context.Context, options ...option) error {
@@ -115,14 +111,10 @@ func newVariadicArgsCommand() command.Command {
 		usage    = "Call the command with or" +
 			" without flags or arguments"
 	)
-	cmd, err := command.MakeVariadicCommand[options](
+	return command.MakeVariadicCommand[options](
 		name, synopsis, usage,
 		variadicExecuteArgs,
 	)
-	if err != nil {
-		panic(err)
-	}
-	return cmd
 }
 
 func variadicExecuteArgs(ctx context.Context, arguments []string, options ...option) error {

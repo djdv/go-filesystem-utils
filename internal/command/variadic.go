@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"os"
 	"strings"
 )
 
@@ -62,21 +63,18 @@ func MakeVariadicCommand[
 ](
 	name, synopsis, usage string,
 	executeFn EC, options ...Option,
-) (Command, error) {
-	settings, err := parseOptions(options...)
-	if err != nil {
-		return nil, err
-	}
-	return &variadicCommand[TS, T, ET, EC]{
+) Command {
+	cmd := variadicCommand[TS, T, ET, EC]{
 		commandCommon: commandCommon{
 			name:        name,
 			synopsis:    synopsis,
 			usage:       usage,
-			usageOutput: settings.usageOutput,
-			subcommands: settings.subcommands,
+			usageOutput: os.Stderr,
 		},
 		executeFn: executeFn,
-	}, nil
+	}
+	applyOptions(&cmd.commandCommon, options...)
+	return &cmd
 }
 
 func (cmd *variadicCommand[TS, T, ET, EC]) Usage() string {

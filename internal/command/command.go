@@ -44,6 +44,10 @@ type (
 	FlagBinder interface {
 		BindFlags(*flag.FlagSet)
 	}
+	// Option is a functional option.
+	// One can be returned by the various constructors
+	// before being passed to [MakeCommand].
+	Option        func(*commandCommon)
 	commandCommon struct {
 		name, synopsis, usage string
 		usageOutput           io.Writer
@@ -56,11 +60,29 @@ type (
 // E.g. too few/many arguments, invalid value/formats, etc.
 const ErrUsage = generic.ConstError("command called with unexpected arguments")
 
+// WithSubcommands provides a command with subcommands.
+// Subcommands will be called if the supercommand receives
+// arguments that match the subcommand name.
+func WithSubcommands(subcommands ...Command) Option {
+	return func(settings *commandCommon) {
+		settings.subcommands = subcommands
+	}
+}
+
+// WithUsageOutput sets the writer that is written
+// to when [Command.Execute] receives a request for
+// help, or returns [ErrUsage].
+func WithUsageOutput(output io.Writer) Option {
+	return func(settings *commandCommon) {
+		settings.usageOutput = output
+	}
+}
+
 // SubcommandGroup returns a command that only defers to subcommands.
 // Trying to execute the command itself will return [ErrUsage].
 func SubcommandGroup(name, synopsis string, subcommands []Command, options ...Option) Command {
 	const usage = "Must be called with a subcommand."
-	command, err := MakeNiladicCommand(name, synopsis, usage,
+	return MakeNiladicCommand(name, synopsis, usage,
 		func(context.Context) error {
 			// This command only holds subcommands
 			// and has no functionality on its own.
@@ -68,10 +90,6 @@ func SubcommandGroup(name, synopsis string, subcommands []Command, options ...Op
 		},
 		append(options, WithSubcommands(subcommands...))...,
 	)
-	if err != nil {
-		panic(err)
-	}
-	return command
 }
 
 func (cmd *commandCommon) Name() string           { return cmd.name }
@@ -191,4 +209,10 @@ func printCommandsTable(output io.Writer, subcommands []Command) error {
 		return err
 	}
 	return tabWriter.Flush()
+}
+
+func applyOptions(settings *commandCommon, options ...Option) {
+	for _, apply := range options {
+		apply(settings)
+	}
 }
