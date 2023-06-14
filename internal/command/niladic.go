@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"os"
 	"strings"
 )
 
@@ -23,21 +24,18 @@ func MakeNiladicCommand(
 	name, synopsis, usage string,
 	executeFn ExecuteNiladicFunc,
 	options ...Option,
-) (Command, error) {
-	settings, err := parseOptions(options...)
-	if err != nil {
-		return nil, err
-	}
-	return &niladicCommand{
+) Command {
+	cmd := niladicCommand{
 		commandCommon: commandCommon{
 			name:        name,
 			synopsis:    synopsis,
 			usage:       usage,
-			usageOutput: settings.usageOutput,
-			subcommands: settings.subcommands,
+			usageOutput: os.Stderr,
 		},
 		executeFn: executeFn,
-	}, nil
+	}
+	applyOptions(&cmd.commandCommon, options...)
+	return &cmd
 }
 
 func (nc *niladicCommand) Usage() string {

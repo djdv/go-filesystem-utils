@@ -63,19 +63,15 @@ func ExampleSubcommandGroup() {
 
 func newSubcommands() command.Command {
 	var (
-		noopFn          = func(context.Context) error { return nil }
-		mustMakeCommand = func(name string) command.Command {
+		noopFn      = func(context.Context) error { return nil }
+		makeCommand = func(name string) command.Command {
 			var (
 				synopsis = name + " synopsis"
 				usage    = name + " usage"
-				cmd, err = command.MakeNiladicCommand(
-					name, synopsis, usage, noopFn,
-				)
 			)
-			if err != nil {
-				panic(err)
-			}
-			return cmd
+			return command.MakeNiladicCommand(
+				name, synopsis, usage, noopFn,
+			)
 		}
 		// Printer output defaults to [os.Stderr].
 		// We set it here only because `go test`
@@ -84,30 +80,29 @@ func newSubcommands() command.Command {
 		cmdOptions = []command.Option{
 			command.WithUsageOutput(output),
 		}
-		cmd = command.SubcommandGroup(
-			"main", "Top level group",
-			[]command.Command{
-				command.SubcommandGroup(
-					"alphabets", "Letter group.",
-					[]command.Command{
-						mustMakeCommand("a"),
-						mustMakeCommand("b"),
-						mustMakeCommand("c"),
-					},
-					cmdOptions...,
-				),
-				command.SubcommandGroup(
-					"numerals", "Number group.",
-					[]command.Command{
-						mustMakeCommand("1"),
-						mustMakeCommand("2"),
-						mustMakeCommand("3"),
-					},
-					cmdOptions...,
-				),
-			},
-			cmdOptions...,
-		)
 	)
-	return cmd
+	return command.SubcommandGroup(
+		"main", "Top level group",
+		[]command.Command{
+			command.SubcommandGroup(
+				"alphabets", "Letter group.",
+				[]command.Command{
+					makeCommand("a"),
+					makeCommand("b"),
+					makeCommand("c"),
+				},
+				cmdOptions...,
+			),
+			command.SubcommandGroup(
+				"numerals", "Number group.",
+				[]command.Command{
+					makeCommand("1"),
+					makeCommand("2"),
+					makeCommand("3"),
+				},
+				cmdOptions...,
+			),
+		},
+		cmdOptions...,
+	)
 }

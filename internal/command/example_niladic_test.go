@@ -30,14 +30,10 @@ func newNiladicCommand() command.Command {
 		synopsis = "Prints a message."
 		usage    = "Call the command with no arguments"
 	)
-	cmd, err := command.MakeNiladicCommand(
+	return command.MakeNiladicCommand(
 		name, synopsis, usage,
 		niladicExecute,
 	)
-	if err != nil {
-		panic(err)
-	}
-	return cmd
 }
 
 func niladicExecute(context.Context) error {
