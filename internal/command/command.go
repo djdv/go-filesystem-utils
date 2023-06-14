@@ -88,7 +88,7 @@ func SubcommandGroup(name, synopsis string, subcommands []Command, options ...Op
 
 func (cmd *commandCommon) Name() string           { return cmd.name }
 func (cmd *commandCommon) Synopsis() string       { return cmd.synopsis }
-func (cmd *commandCommon) Subcommands() []Command { return cmd.subcommands }
+func (cmd *commandCommon) Subcommands() []Command { return generic.CloneSlice(cmd.subcommands) }
 func (cmd *commandCommon) parseFlags(flagSet *flag.FlagSet, arguments ...string) (bool, error) {
 	var needHelp bool
 	bindHelpFlag(&needHelp, flagSet)
