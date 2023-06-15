@@ -146,6 +146,19 @@ func mustMakeCommand[
 }
 
 func parseID[id uint32 | p9.UID | p9.GID](arg string) (id, error) {
+	const nobody = "nobody"
+	if arg == nobody {
+		var value id
+		switch any(value).(type) {
+		case p9.UID:
+			value = id(p9.NoUID)
+		case p9.GID:
+			value = id(p9.NoGID)
+		case uint32:
+			value = id(math.MaxInt32)
+		}
+		return value, nil
+	}
 	const idSize = 32
 	num, err := strconv.ParseUint(arg, 0, idSize)
 	if err != nil {
