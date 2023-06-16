@@ -15,19 +15,27 @@ func ExampleSubcommandGroup() {
 		cmd = newSubcommands()
 		ctx = context.TODO()
 	)
-	cmd.Execute(ctx, "-help")
-	cmd.Execute(ctx, "alphabets", "-help")
-	cmd.Execute(ctx, "numerals", "-help")
+	// NOTE: text rendering is disabled
+	// for `go test`'s output comparison.
+	// Normally this can be omitted.
+	const (
+		helpFlag   = "-help"
+		renderFlag = "-video-terminal=false"
+	)
+	cmd.Execute(ctx, helpFlag, renderFlag)
+	cmd.Execute(ctx, "alphabets", helpFlag, renderFlag)
+	cmd.Execute(ctx, "numerals", helpFlag, renderFlag)
 	// Output:
 	// Must be called with a subcommand.
 	//
 	// Usage:
 	// 	main subcommand [flags]
-	//
 	// Flags:
 	//   -help
 	//     	prints out this help text
-	//
+	//   -video-terminal
+	//     	render text for video terminals
+	//     	(default: true)
 	// Subcommands:
 	//   alphabets - Letter group.
 	//   numerals  - Number group.
@@ -36,11 +44,12 @@ func ExampleSubcommandGroup() {
 	//
 	// Usage:
 	// 	alphabets subcommand [flags]
-	//
 	// Flags:
 	//   -help
 	//     	prints out this help text
-	//
+	//   -video-terminal
+	//     	render text for video terminals
+	//     	(default: true)
 	// Subcommands:
 	//   a - a synopsis
 	//   b - b synopsis
@@ -50,11 +59,12 @@ func ExampleSubcommandGroup() {
 	//
 	// Usage:
 	// 	numerals subcommand [flags]
-	//
 	// Flags:
 	//   -help
 	//     	prints out this help text
-	//
+	//   -video-terminal
+	//     	render text for video terminals
+	//     	(default: true)
 	// Subcommands:
 	//   1 - 1 synopsis
 	//   2 - 2 synopsis

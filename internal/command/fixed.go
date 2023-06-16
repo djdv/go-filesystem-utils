@@ -2,10 +2,7 @@ package command
 
 import (
 	"context"
-	"errors"
 	"flag"
-	"os"
-	"strings"
 )
 
 type (
@@ -60,10 +57,9 @@ func MakeFixedCommand[
 ) Command {
 	cmd := fixedCommand[ET, T, EC]{
 		commandCommon: commandCommon{
-			name:        name,
-			synopsis:    synopsis,
-			usage:       usage,
-			usageOutput: os.Stderr,
+			name:     name,
+			synopsis: synopsis,
+			usage:    usage,
 		},
 		executeFn: executeFn,
 	}
@@ -71,76 +67,46 @@ func MakeFixedCommand[
 	return &cmd
 }
 
-func (cmd *fixedCommand[ET, T, EC]) Usage() string {
-	var (
-		output      = new(strings.Builder)
-		flagSet     = flag.NewFlagSet(cmd.name, flag.ContinueOnError)
-		acceptsArgs = cmd.acceptsArgs()
-		unused      bool
-	)
-	bindHelpFlag(&unused, flagSet)
-	(ET)(new(T)).BindFlags(flagSet)
-	if err := cmd.printUsage(output, acceptsArgs, flagSet); err != nil {
-		panic(err)
-	}
-	return output.String()
-}
-
-func (cmd *fixedCommand[ET, T, EC]) acceptsArgs() bool {
-	_, haveArgs := any(cmd.executeFn).(func(context.Context, ET, ...string) error)
+func (fc *fixedCommand[ET, T, EC]) acceptsArgs() bool {
+	_, haveArgs := any(fc.executeFn).(func(context.Context, ET, ...string) error)
 	return haveArgs
 }
 
-func (cmd *fixedCommand[ET, T, EC]) Execute(ctx context.Context, args ...string) error {
-	if subcommand, subargs := getSubcommand(cmd, args); subcommand != nil {
+func (fc *fixedCommand[ET, T, EC]) Execute(ctx context.Context, args ...string) error {
+	if subcommand, subargs := getSubcommand(fc, args); subcommand != nil {
 		return subcommand.Execute(ctx, subargs...)
 	}
 	var (
-		needHelp bool
-		flagSet  = flag.NewFlagSet(cmd.name, flag.ContinueOnError)
+		flagSet  = newFlagSet(fc.name)
 		settings T
 	)
 	ET(&settings).BindFlags(flagSet)
-	needHelp, err := cmd.parseFlags(flagSet, args...)
+	needHelp, err := fc.parseFlags(flagSet, args...)
 	if err != nil {
 		return err
 	}
 	if needHelp {
-		var (
-			output      = cmd.usageOutput
-			acceptsArgs = cmd.acceptsArgs()
-		)
-		if printErr := cmd.printUsage(output, acceptsArgs, flagSet); printErr != nil {
-			return errors.Join(printErr, ErrUsage)
-		}
-		return ErrUsage
+		err = flag.ErrHelp
+	} else {
+		err = fc.execute(ctx, flagSet, &settings)
 	}
-	execErr := cmd.execute(ctx, flagSet, &settings)
-	if execErr == nil {
-		return nil
+	if err != nil {
+		acceptsArgs := fc.acceptsArgs()
+		return fc.maybePrintUsage(err, acceptsArgs, flagSet)
 	}
-	if errors.Is(execErr, ErrUsage) {
-		var (
-			output      = cmd.usageOutput
-			acceptsArgs = cmd.acceptsArgs()
-		)
-		if printErr := cmd.printUsage(output, acceptsArgs, flagSet); printErr != nil {
-			return errors.Join(printErr, execErr)
-		}
-	}
-	return execErr
+	return nil
 }
 
-func (cmd *fixedCommand[ET, T, EC]) execute(ctx context.Context, flagSet *flag.FlagSet, settings ET) error {
+func (fc *fixedCommand[ET, T, EC]) execute(ctx context.Context, flagSet *flag.FlagSet, settings ET) error {
 	var (
 		arguments = flagSet.Args()
 		haveArgs  = len(arguments) > 0
 		execErr   error
 	)
-	switch execFn := any(cmd.executeFn).(type) {
+	switch execFn := any(fc.executeFn).(type) {
 	case func(context.Context, ET) error:
 		if haveArgs {
-			execErr = ErrUsage
+			execErr = unexpectedArguments(fc.name, arguments)
 			break
 		}
 		execErr = execFn(ctx, settings)

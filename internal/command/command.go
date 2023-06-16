@@ -6,9 +6,15 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"reflect"
+	"strings"
 	"text/tabwriter"
 
+	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/glamour/ansi"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
+	"golang.org/x/term"
 )
 
 type (
@@ -52,13 +58,31 @@ type (
 		name, synopsis, usage string
 		usageOutput           io.Writer
 		subcommands           []Command
+		glamour               bool
 	}
+
+	// UsageError may be returned by commands
+	// to signal that its usage string should
+	// be presented to the caller.
+	UsageError struct{ Err error }
+
+	writeStringFunc   func(string)
+	stringModiferFunc func(string) string
 )
 
-// ErrUsage may be returned from [command.Execute] if the provided arguments
-// do not match the expectations of the given command.
-// E.g. too few/many arguments, invalid value/formats, etc.
-const ErrUsage = generic.ConstError("command called with unexpected arguments")
+func (ue UsageError) Error() string { return ue.Err.Error() }
+
+// Unwrap implements the [errors.Unwrap] interface.
+func (ue UsageError) Unwrap() error { return ue.Err }
+
+func unexpectedArguments(name string, args []string) UsageError {
+	return UsageError{
+		Err: fmt.Errorf(
+			"`%s` does not take arguments but was provided: %s",
+			name, strings.Join(args, ","),
+		),
+	}
+}
 
 // WithSubcommands provides a command with subcommands.
 // Subcommands will be called if the supercommand receives
@@ -71,7 +95,7 @@ func WithSubcommands(subcommands ...Command) Option {
 
 // WithUsageOutput sets the writer that is written
 // to when [Command.Execute] receives a request for
-// help, or returns [ErrUsage].
+// help, or returns [UsageError].
 func WithUsageOutput(output io.Writer) Option {
 	return func(settings *commandCommon) {
 		settings.usageOutput = output
@@ -79,14 +103,16 @@ func WithUsageOutput(output io.Writer) Option {
 }
 
 // SubcommandGroup returns a command that only defers to subcommands.
-// Trying to execute the command itself will return [ErrUsage].
+// Trying to execute the command itself will return [UsageError].
 func SubcommandGroup(name, synopsis string, subcommands []Command, options ...Option) Command {
 	const usage = "Must be called with a subcommand."
 	return MakeNiladicCommand(name, synopsis, usage,
 		func(context.Context) error {
-			// This command only holds subcommands
-			// and has no functionality on its own.
-			return ErrUsage
+			return UsageError{
+				Err: fmt.Errorf(
+					"`%s` only accepts subcommands", name,
+				),
+			}
 		},
 		append(options, WithSubcommands(subcommands...))...,
 	)
@@ -94,24 +120,25 @@ func SubcommandGroup(name, synopsis string, subcommands []Command, options ...Op
 
 func (cmd *commandCommon) Name() string           { return cmd.name }
 func (cmd *commandCommon) Synopsis() string       { return cmd.synopsis }
+func (cmd *commandCommon) Usage() string          { return cmd.usage }
 func (cmd *commandCommon) Subcommands() []Command { return generic.CloneSlice(cmd.subcommands) }
+
+func newFlagSet(name string) *flag.FlagSet {
+	return flag.NewFlagSet(name, flag.ContinueOnError)
+}
+
 func (cmd *commandCommon) parseFlags(flagSet *flag.FlagSet, arguments ...string) (bool, error) {
 	var needHelp bool
 	bindHelpFlag(&needHelp, flagSet)
+	bindRenderFlag(&cmd.glamour, flagSet)
 	// Package [flag] has implicit handling for `-help` and `-h` flags.
 	// If they're not explicitly defined, but provided as arguments,
 	// [flag] will call `Usage` before returning from `Parse`.
-	// We want to temporarily disable any built-in printing, to assure
+	// We want to disable any built-in printing, to assure
 	// our printers are used exclusively. (For both help text and errors)
-	var (
-		originalUsage  = flagSet.Usage
-		originalOutput = flagSet.Output()
-	)
 	flagSet.Usage = func() { /* NOOP */ }
 	flagSet.SetOutput(io.Discard)
 	err := flagSet.Parse(arguments)
-	flagSet.SetOutput(originalOutput)
-	flagSet.Usage = originalUsage
 	if err == nil {
 		return needHelp, nil
 	}
@@ -119,15 +146,25 @@ func (cmd *commandCommon) parseFlags(flagSet *flag.FlagSet, arguments ...string)
 		needHelp = true
 		return needHelp, nil
 	}
-	return needHelp, err
+	return needHelp, UsageError{Err: err}
 }
 
 func bindHelpFlag(value *bool, flagSet *flag.FlagSet) {
 	const (
-		helpName  = "help"
-		helpUsage = "prints out this help text"
+		helpName    = "help"
+		helpUsage   = "prints out this help text"
+		helpDefault = false
 	)
-	flagSet.BoolVar(value, helpName, false, helpUsage)
+	flagSet.BoolVar(value, helpName, helpDefault, helpUsage)
+}
+
+func bindRenderFlag(value *bool, flagSet *flag.FlagSet) {
+	const (
+		renderName    = "video-terminal"
+		renderUsage   = "render text for video terminals"
+		renderDefault = true
+	)
+	flagSet.BoolVar(value, renderName, renderDefault, renderUsage)
 }
 
 func getSubcommand(command Command, arguments []string) (Command, []string) {
@@ -148,67 +185,298 @@ func getSubcommand(command Command, arguments []string) (Command, []string) {
 	return nil, nil
 }
 
-func (cmd *commandCommon) printUsage(output io.Writer, acceptsArgs bool, flagSet *flag.FlagSet) error {
+func (cmd *commandCommon) maybePrintUsage(err error, acceptsArgs bool, flagSet *flag.FlagSet) error {
+	var usageErr UsageError
+	if !errors.Is(err, flag.ErrHelp) &&
+		!errors.As(err, &usageErr) {
+		return err
+	}
+	if printErr := cmd.printUsage(acceptsArgs, flagSet); printErr != nil {
+		return printErr
+	}
+	return err
+}
+
+func (cmd *commandCommon) printUsage(acceptsArgs bool, flagSet *flag.FlagSet) error {
+	var (
+		output     = cmd.usageOutput
+		wantStyled = cmd.glamour
+		renderer   *glamour.TermRenderer
+	)
 	if output == nil {
-		return nil
+		output, wantStyled = newDefaultOutput(wantStyled)
+	}
+	if wantStyled {
+		var err error
+		if renderer, err = newRenderer(); err != nil {
+			return err
+		}
 	}
 	var (
-		wErr  error
-		name  = cmd.name
-		write = func(s string) {
+		wErr    error
+		writeFn = func(text string) {
 			if wErr != nil {
 				return
 			}
-			_, wErr = io.WriteString(output, s)
+			_, wErr = io.WriteString(output, text)
 		}
+		name        = cmd.name
+		usage       = cmd.usage
 		subcommands = cmd.subcommands
-		haveSubs    = len(subcommands) > 0
-		haveFlags   bool
+		hasSubs     = len(subcommands) > 0
+		hasFlags    bool
 	)
-	flagSet.VisitAll(func(*flag.Flag) { haveFlags = true })
-	write(cmd.usage + "\n\n")
-
-	write("Usage:\n\t" + name)
-	if haveSubs {
-		write(" subcommand")
+	flagSet.VisitAll(func(*flag.Flag) { hasFlags = true })
+	printUsage(writeFn, usage, renderer)
+	printCommandLine(writeFn, name, hasSubs, hasFlags, acceptsArgs, renderer)
+	if hasFlags {
+		printFlags(writeFn, flagSet, renderer)
 	}
-	if haveFlags {
-		write(" [flags]")
-	}
-	if acceptsArgs {
-		write(" ...arguments")
-	}
-	write("\n\n")
-
-	write("Flags:\n")
-	flagSetOutput := flagSet.Output()
-	flagSet.SetOutput(output)
-	flagSet.PrintDefaults()
-	flagSet.SetOutput(flagSetOutput)
-	write("\n")
-	if haveSubs {
-		write("Subcommands:\n")
-		if err := printCommandsTable(output, subcommands); err != nil {
-			return err
-		}
+	if hasSubs {
+		printSubcommands(writeFn, subcommands, renderer)
 	}
 	return wErr
 }
 
-func printCommandsTable(output io.Writer, subcommands []Command) error {
-	tabWriter := tabwriter.NewWriter(output, 0, 0, 0, ' ', 0)
-	for _, subcommand := range subcommands {
-		if _, pErr := fmt.Fprintf(tabWriter,
-			"  %s\t - %s\n", // 2 leading spaces to match [flag] behaviour.
-			subcommand.Name(), subcommand.Synopsis(),
-		); pErr != nil {
-			return pErr
+func newDefaultOutput(withStyle bool) (_ io.Writer, supportsANSI bool) {
+	stderr := os.Stderr
+	if withStyle {
+		if term.IsTerminal(int(stderr.Fd())) {
+			return ansiStderr(), true
 		}
 	}
-	if _, err := fmt.Fprintln(tabWriter); err != nil {
-		return err
+	return stderr, false
+}
+
+func mustRender(renderer *glamour.TermRenderer, text string) string {
+	render, err := renderer.Render(text)
+	if err != nil {
+		panic(err)
 	}
-	return tabWriter.Flush()
+	return strings.TrimSpace(render)
+}
+
+func printUsage(
+	writeFn writeStringFunc,
+	usage string, renderer *glamour.TermRenderer,
+) {
+	if renderer != nil {
+		usage = mustRender(renderer, usage)
+	}
+	writeFn(usage + "\n\n")
+}
+
+func printCommandLine(
+	writeFn writeStringFunc,
+	name string,
+	hasSubcommands, hasFlags, acceptsArgs bool,
+	renderer *glamour.TermRenderer,
+) {
+	var (
+		usageText string
+		styled    = renderer != nil
+		render    stringModiferFunc
+	)
+	if styled {
+		render = func(text string) string {
+			return mustRender(renderer, text)
+		}
+		usageText = render("Usage:") +
+			"\n\t" + render(bold(name))
+	} else {
+		usageText = "Usage:\n\t" + name
+	}
+	writeFn(usageText)
+	if hasSubcommands {
+		subcommandText := "subcommand"
+		if styled {
+			subcommandText = render(subcommandText)
+		}
+		writeFn(" " + subcommandText)
+	}
+	if hasFlags {
+		var flagsText string
+		if styled {
+			// NOTE: this could be done in a single pass
+			// but "**[**flags***]**" confuses glamour,
+			// and using underscores is discouraged.
+			flagsText = render(bold("[")) +
+				render(italic("flags")) +
+				render(bold("]"))
+		} else {
+			flagsText = "[flags]"
+		}
+		writeFn(" " + flagsText)
+	}
+	if acceptsArgs {
+		argumentsText := "...arguments"
+		if styled {
+			argumentsText = render(italic(argumentsText))
+		}
+		writeFn(" " + argumentsText)
+	}
+	writeFn("\n")
+}
+
+// *modification of standard [flag]'s implementation.
+func printFlags(
+	writeFn writeStringFunc,
+	flagSet *flag.FlagSet,
+	renderer *glamour.TermRenderer,
+) {
+	var (
+		flagText                = "Flags:"
+		styled                  = renderer != nil
+		render, italicUnderline stringModiferFunc
+	)
+	if styled {
+		render = func(text string) string {
+			return mustRender(renderer, text)
+		}
+		italicUnderline = newItalicUnderlineRenderer(renderer)
+		flagText = render("Flags:")
+	}
+	writeFn(flagText + "\n")
+	flagSet.VisitAll(func(flg *flag.Flag) {
+		const singleCharName = 2
+		var (
+			flagName  = "-" + flg.Name
+			shortFlag = len(flagName) == singleCharName
+		)
+		if styled {
+			flagName = render(bold(flagName))
+		}
+		writeFn("  " + flagName)
+		valueType, usage := flag.UnquoteUsage(flg)
+		if len(valueType) > 0 {
+			if styled {
+				valueType = italicUnderline(valueType)
+			}
+			writeFn(" " + valueType)
+		}
+		if shortFlag {
+			writeFn("\t")
+		} else {
+			writeFn("\n    \t")
+		}
+		if styled {
+			usage = render(usage)
+		}
+		writeFn(strings.ReplaceAll(usage, "\n", "\n    \t"))
+		if defaultText := flg.DefValue; !isZeroValue(flg, defaultText) {
+			const prefix, suffix = "(default: ", ")"
+			if styled {
+				if !strings.Contains(defaultText, "`") {
+					defaultText = "`" + defaultText + "`"
+				}
+				defaultText = render(prefix + defaultText + suffix)
+			} else {
+				defaultText = prefix + defaultText + suffix
+			}
+			writeFn("\n    \t" + defaultText)
+		}
+		writeFn("\n")
+	})
+}
+
+// HACK: Markdown doesn't have syntax for underline,
+// but we can render it manually since ANSI supports it.
+func newItalicUnderlineRenderer(renderer *glamour.TermRenderer) stringModiferFunc {
+	var (
+		style = _extractStyle(renderer)
+		ctx   = ansi.NewRenderContext(ansi.Options{})
+		verum = true
+		color *string
+	)
+	if textColor := style.Text.Color; textColor != nil {
+		color = textColor
+	} else if documentColor := style.Document.Color; documentColor != nil {
+		color = documentColor
+	}
+	var (
+		builder strings.Builder
+		element = &ansi.BaseElement{
+			Style: ansi.StylePrimitive{
+				Color:     color,
+				Italic:    &verum,
+				Underline: &verum,
+			},
+		}
+	)
+	return func(text string) string {
+		element.Token = text
+		if err := element.Render(&builder, ctx); err != nil {
+			panic(err)
+		}
+		render := builder.String()
+		builder.Reset()
+		return render
+	}
+}
+
+// isZeroValue determines whether the string represents the zero
+// value for a flag.
+// *Borrowed from standard library.
+func isZeroValue(flg *flag.Flag, value string) bool {
+	// Build a zero value of the flag's Value type, and see if the
+	// result of calling its String method equals the value passed in.
+	// This works unless the Value type is itself an interface type.
+	typ := reflect.TypeOf(flg.Value)
+	var zero reflect.Value
+	if typ.Kind() == reflect.Pointer {
+		zero = reflect.New(typ.Elem())
+	} else {
+		zero = reflect.Zero(typ)
+	}
+	// Deviation from standard; if the code is wrong
+	// let this panic. Package [flag] explicitly requires
+	// [flag.Value] to have a `String` method that is
+	// callable with a `nil` receiver.
+	return value == zero.Interface().(flag.Value).String()
+}
+
+func printSubcommands(writeFn writeStringFunc, subcommands []Command, renderer *glamour.TermRenderer) {
+	var (
+		subcommandsText = "Subcommands:"
+		styled          = renderer != nil
+		render          stringModiferFunc
+	)
+	if styled {
+		render = func(text string) string {
+			return mustRender(renderer, text)
+		}
+		subcommandsText = render(subcommandsText)
+	}
+	writeFn(subcommandsText + "\n")
+	const (
+		minWidth = 0
+		tabWidth = 0
+		padding  = 0
+		padChar  = ' '
+		flags    = 0
+	)
+	var (
+		subcommandsBuffer strings.Builder
+		tabWriter         = tabwriter.NewWriter(
+			&subcommandsBuffer, minWidth, tabWidth, padding, padChar, flags,
+		)
+	)
+	for _, subcommand := range subcommands {
+		if _, err := fmt.Fprintf(tabWriter,
+			"  %s\t - %s\n", // 2 leading spaces to match [flag] behaviour.
+			subcommand.Name(), subcommand.Synopsis(),
+		); err != nil {
+			panic(err)
+		}
+	}
+	if err := tabWriter.Flush(); err != nil {
+		panic(err)
+	}
+	subcommandsTable := subcommandsBuffer.String()
+	if styled {
+		subcommandsTable = render(subcommandsTable)
+	}
+	writeFn(subcommandsTable + "\n")
 }
 
 func applyOptions(settings *commandCommon, options ...Option) {

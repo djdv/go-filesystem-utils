@@ -2,10 +2,7 @@ package command
 
 import (
 	"context"
-	"errors"
 	"flag"
-	"os"
-	"strings"
 )
 
 type (
@@ -66,10 +63,9 @@ func MakeVariadicCommand[
 ) Command {
 	cmd := variadicCommand[TS, T, ET, EC]{
 		commandCommon: commandCommon{
-			name:        name,
-			synopsis:    synopsis,
-			usage:       usage,
-			usageOutput: os.Stderr,
+			name:     name,
+			synopsis: synopsis,
+			usage:    usage,
 		},
 		executeFn: executeFn,
 	}
@@ -77,76 +73,46 @@ func MakeVariadicCommand[
 	return &cmd
 }
 
-func (cmd *variadicCommand[TS, T, ET, EC]) Usage() string {
-	var (
-		output      = new(strings.Builder)
-		flagSet     = flag.NewFlagSet(cmd.name, flag.ContinueOnError)
-		acceptsArgs = cmd.acceptsArgs()
-		unused      bool
-	)
-	bindHelpFlag(&unused, flagSet)
-	(ET)(new(TS)).BindFlags(flagSet)
-	if err := cmd.printUsage(output, acceptsArgs, flagSet); err != nil {
-		panic(err)
-	}
-	return output.String()
-}
-
-func (cmd *variadicCommand[TS, T, ET, EC]) acceptsArgs() bool {
-	_, haveArgs := any(cmd.executeFn).(func(context.Context, []string, ...T) error)
+func (vc *variadicCommand[TS, T, ET, EC]) acceptsArgs() bool {
+	_, haveArgs := any(vc.executeFn).(func(context.Context, []string, ...T) error)
 	return haveArgs
 }
 
-func (cmd *variadicCommand[TS, T, ET, EC]) Execute(ctx context.Context, args ...string) error {
-	if subcommand, subargs := getSubcommand(cmd, args); subcommand != nil {
+func (vc *variadicCommand[TS, T, ET, EC]) Execute(ctx context.Context, args ...string) error {
+	if subcommand, subargs := getSubcommand(vc, args); subcommand != nil {
 		return subcommand.Execute(ctx, subargs...)
 	}
 	var (
-		needHelp bool
-		flagSet  = flag.NewFlagSet(cmd.name, flag.ContinueOnError)
-		options  TS
+		flagSet = newFlagSet(vc.name)
+		options TS
 	)
 	ET(&options).BindFlags(flagSet)
-	needHelp, err := cmd.parseFlags(flagSet, args...)
+	needHelp, err := vc.parseFlags(flagSet, args...)
 	if err != nil {
 		return err
 	}
 	if needHelp {
-		var (
-			output      = cmd.usageOutput
-			acceptsArgs = cmd.acceptsArgs()
-		)
-		if printErr := cmd.printUsage(output, acceptsArgs, flagSet); printErr != nil {
-			return errors.Join(printErr, ErrUsage)
-		}
-		return ErrUsage
+		err = flag.ErrHelp
+	} else {
+		err = vc.execute(ctx, flagSet, options...)
 	}
-	execErr := cmd.execute(ctx, flagSet, options...)
-	if execErr == nil {
-		return nil
+	if err != nil {
+		acceptsArgs := vc.acceptsArgs()
+		return vc.maybePrintUsage(err, acceptsArgs, flagSet)
 	}
-	if errors.Is(execErr, ErrUsage) {
-		var (
-			output      = cmd.usageOutput
-			acceptsArgs = cmd.acceptsArgs()
-		)
-		if printErr := cmd.printUsage(output, acceptsArgs, flagSet); printErr != nil {
-			return errors.Join(printErr, execErr)
-		}
-	}
-	return execErr
+	return nil
 }
 
-func (cmd *variadicCommand[TS, T, ET, EC]) execute(ctx context.Context, flagSet *flag.FlagSet, options ...T) error {
+func (vc *variadicCommand[TS, T, ET, EC]) execute(ctx context.Context, flagSet *flag.FlagSet, options ...T) error {
 	var (
 		arguments = flagSet.Args()
 		haveArgs  = len(arguments) > 0
 		execErr   error
 	)
-	switch execFn := any(cmd.executeFn).(type) {
+	switch execFn := any(vc.executeFn).(type) {
 	case func(context.Context, ...T) error:
 		if haveArgs {
-			execErr = ErrUsage
+			execErr = unexpectedArguments(vc.name, arguments)
 			break
 		}
 		execErr = execFn(ctx, options...)
