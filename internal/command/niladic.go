@@ -2,10 +2,7 @@ package command
 
 import (
 	"context"
-	"errors"
 	"flag"
-	"os"
-	"strings"
 )
 
 type (
@@ -27,10 +24,9 @@ func MakeNiladicCommand(
 ) Command {
 	cmd := niladicCommand{
 		commandCommon: commandCommon{
-			name:        name,
-			synopsis:    synopsis,
-			usage:       usage,
-			usageOutput: os.Stderr,
+			name:     name,
+			synopsis: synopsis,
+			usage:    usage,
 		},
 		executeFn: executeFn,
 	}
@@ -38,46 +34,27 @@ func MakeNiladicCommand(
 	return &cmd
 }
 
-func (nc *niladicCommand) Usage() string {
-	var (
-		output  = new(strings.Builder)
-		flagSet = flag.NewFlagSet(nc.name, flag.ContinueOnError)
-		unused  bool
-	)
-	bindHelpFlag(&unused, flagSet)
-	const acceptsArgs = false
-	if err := nc.printUsage(output, acceptsArgs, flagSet); err != nil {
-		panic(err)
-	}
-	return output.String()
-}
-
 func (nc *niladicCommand) Execute(ctx context.Context, args ...string) error {
 	if subcommand, subargs := getSubcommand(nc, args); subcommand != nil {
 		return subcommand.Execute(ctx, subargs...)
 	}
-	flagSet := flag.NewFlagSet(nc.name, flag.ContinueOnError)
-	needHelp, err := nc.parseFlags(flagSet, args...)
+	var (
+		flagSet       = newFlagSet(nc.name)
+		needHelp, err = nc.parseFlags(flagSet, args...)
+	)
 	if err != nil {
 		return err
 	}
 	if needHelp {
-		output := nc.usageOutput
-		const acceptsArgs = false
-		if printErr := nc.printUsage(output, acceptsArgs, flagSet); printErr != nil {
-			return errors.Join(printErr, ErrUsage)
-		}
-		return ErrUsage
+		err = flag.ErrHelp
+	} else {
+		err = nc.execute(ctx, flagSet)
 	}
-	execErr := nc.execute(ctx, flagSet)
-	if errors.Is(execErr, ErrUsage) {
-		output := nc.usageOutput
+	if err != nil {
 		const acceptsArgs = false
-		if printErr := nc.printUsage(output, acceptsArgs, flagSet); printErr != nil {
-			return errors.Join(printErr, execErr)
-		}
+		return nc.maybePrintUsage(err, acceptsArgs, flagSet)
 	}
-	return execErr
+	return nil
 }
 
 func (nc *niladicCommand) execute(ctx context.Context, flagSet *flag.FlagSet) error {
@@ -86,7 +63,7 @@ func (nc *niladicCommand) execute(ctx context.Context, flagSet *flag.FlagSet) er
 		haveArgs  = len(arguments) > 0
 	)
 	if haveArgs {
-		return ErrUsage
+		return unexpectedArguments(nc.name, arguments)
 	}
 	return nc.executeFn(ctx)
 }

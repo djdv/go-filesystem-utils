@@ -3,7 +3,9 @@ package command_test
 import (
 	"context"
 	"errors"
+	"flag"
 	"io"
+	"os"
 	"reflect"
 	"testing"
 
@@ -16,7 +18,7 @@ func TestCommand(t *testing.T) {
 	t.Run("fixed", cmdFixed)
 	t.Run("variadic", cmdVariadic)
 	t.Run("subcommands", cmdSubcommands)
-	t.Run("options", cmdOptions)
+	t.Run("renderer", rendererTest)
 }
 
 func testHelpText(t *testing.T, cmd command.Command) {
@@ -46,7 +48,7 @@ func testHelpText(t *testing.T, cmd command.Command) {
 
 func testErrorParameters(t *testing.T, cmd command.Command) {
 	t.Helper()
-	const usageMessage = "expected `ErrUsage`"
+	const usageMessage = "expected `UsageError`"
 	ctx := context.Background()
 	for _, test := range []struct {
 		arguments []string
@@ -120,7 +122,7 @@ func nilInvalid(t *testing.T) {
 		cmd = newNiladicTestCommand(t)
 		ctx = context.Background()
 	)
-	const usageMessage = "expected ErrUsage"
+	const usageMessage = "expected UsageError"
 	for _, test := range []struct {
 		arguments []string
 		message   string
@@ -589,36 +591,45 @@ func subcommandInvalid(t *testing.T) {
 	)
 	if err := cmd.Execute(ctx); err == nil {
 		t.Error(
-			"subcommand group is expected to return `ErrUsage`" +
+			"subcommand group is expected to return `UsageError`" +
 				"when called directly, but returned nil",
 		)
 	}
 	testErrorParameters(t, cmd)
 }
 
-func cmdOptions(t *testing.T) {
-	t.Parallel()
+func rendererTest(t *testing.T) {
 	const (
-		name     = "ghost"
-		synopsis = "can't print."
-		usage    = "Call the command with no arguments"
+		glamourStyleKey = `GLAMOUR_STYLE`
+		helpFlag        = "-help"
+		renderFlag      = "-video-terminal=true"
 	)
 	var (
-		ctx = context.Background()
-		cmd = command.MakeNiladicCommand(
-			name, synopsis, usage,
-			func(context.Context) error { return nil },
-			command.WithUsageOutput(nil),
-		)
+		ctx   = context.Background()
+		cmd   = newNiladicTestCommand(t)
+		flags = []string{helpFlag, renderFlag}
 	)
-	testHelpText(t, cmd)
-	want := command.ErrUsage
-	if err := cmd.Execute(ctx, "-help"); !errors.Is(err, want) {
-		t.Errorf(
-			`command "%s" returned unexpected error`+
-				"\n\tgot: %v"+
-				"\n\twant: %v",
-			name, err, want,
-		)
+	t.Run("valid", func(t *testing.T) {
+		const style = "dark"
+		if err := os.Setenv(glamourStyleKey, style); err != nil {
+			t.Error(err)
+		}
+		if err := cmd.Execute(ctx, flags...); err != nil &&
+			!errors.Is(err, flag.ErrHelp) {
+			t.Error(err)
+		}
+	})
+	t.Run("invalid", func(t *testing.T) {
+		const style = "invalid-style-path.json"
+		if err := os.Setenv(glamourStyleKey, style); err != nil {
+			t.Error(err)
+		}
+		if err := cmd.Execute(ctx, flags...); err == nil {
+			t.Error("expected error but received none - " +
+				"invalid theme used with renderer")
+		}
+	})
+	if err := os.Unsetenv(glamourStyleKey); err != nil {
+		t.Error(err)
 	}
 }
