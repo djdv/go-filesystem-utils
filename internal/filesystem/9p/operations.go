@@ -164,7 +164,7 @@ func MkdirAll(root p9.File, names []string,
 	}
 	for _, name := range names {
 		var (
-			next, err = getOrMkdir(current, name, permissions, uid, gid)
+			next, err = mkdirAndWalk(current, name, permissions, uid, gid)
 			cErr      = current.Close()
 		)
 		if err != nil {
@@ -178,19 +178,13 @@ func MkdirAll(root p9.File, names []string,
 	return current, nil
 }
 
-func getOrMkdir(fsys p9.File, name string, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.File, error) {
+func mkdirAndWalk(fsys p9.File, name string, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.File, error) {
 	wnames := []string{name}
+	if _, err := fsys.Mkdir(name, permissions, uid, gid); err != nil &&
+		!errors.Is(err, perrors.EEXIST) {
+		return nil, err
+	}
 	_, dir, err := fsys.Walk(wnames)
-	if err == nil {
-		return dir, nil
-	}
-	if !errors.Is(err, perrors.ENOENT) {
-		return nil, err
-	}
-	if _, err = fsys.Mkdir(name, permissions, uid, gid); err != nil {
-		return nil, err
-	}
-	_, dir, err = fsys.Walk(wnames)
 	return dir, err
 }
 
