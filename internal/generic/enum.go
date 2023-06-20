@@ -12,8 +12,6 @@ type Enum interface {
 	fmt.Stringer
 }
 
-// TODO: this should be a constructor+method
-// makeEnum(start, end) Enum; Enum.Parse(s)
 func ParseEnum[e Enum](start, end e, s string) (e, error) {
 	normalized := strings.ToLower(s)
 	for enum := start; enum <= end; enum++ {
@@ -22,5 +20,12 @@ func ParseEnum[e Enum](start, end e, s string) (e, error) {
 			return enum, nil
 		}
 	}
-	return start, fmt.Errorf("invalid Enum: \"%s\"", s)
+	valids := make([]string, end)
+	for i, sl := 0, start; sl <= end; i, sl = i+1, sl+1 {
+		valids[i] = fmt.Sprintf(`"%s"`, sl.String())
+	}
+	return start, fmt.Errorf(
+		`invalid Enum: "%s", want one of: %s`,
+		s, strings.Join(valids, ", "),
+	)
 }
