@@ -29,8 +29,8 @@ type (
 		Point           string   `json:"point,omitempty"`
 		LogPrefix       string   `json:"logPrefix,omitempty"`
 		Options         []string `json:"options,omitempty"`
-		UID             id       `json:"uid,omitempty"`
-		GID             id       `json:"gid,omitempty"`
+		UID             uint32   `json:"uid,omitempty"`
+		GID             uint32   `json:"gid,omitempty"`
 		ReaddirPlus     bool     `json:"readdirPlus,omitempty"`
 		DeleteAccess    bool     `json:"deleteAccess,omitempty"`
 		CaseInsensitive bool     `json:"caseInsensitive,omitempty"`
