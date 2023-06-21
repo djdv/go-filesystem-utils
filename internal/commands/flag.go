@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 	"unsafe"
 
 	"github.com/djdv/go-filesystem-utils/internal/generic"
@@ -267,7 +268,7 @@ func evalOp(operation string, mode fs.FileMode) (string, rune, fs.FileMode, erro
 }
 
 func parseOp(clauseOp string) (rune, string, error) {
-	switch op := []rune(clauseOp)[0]; op {
+	switch op, _ := utf8.DecodeRuneInString(clauseOp); op {
 	case permOpAdd, permOpSub, permOpSet:
 		const opOffset = 1 // WARN: ASCII-ism.
 		return op, clauseOp[opOffset:], nil
@@ -322,7 +323,7 @@ func parsePermcopy(mode fs.FileMode, clauseFragment string) (string, bool, fs.Fi
 		userShift  = 6
 	)
 	var permissions fs.FileMode
-	switch who := []rune(clauseFragment)[0]; who {
+	switch who, _ := utf8.DecodeRuneInString(clauseFragment); who {
 	case permWhoUser:
 		permissions = (mode & permUserBits) >> userShift
 	case permWhoGroup:
@@ -437,7 +438,7 @@ func modeToSymbolicPermissions(mode fs.FileMode) string {
 	for i, pair := range pairs {
 		writePermSymbols(&sb, mode, pair.whoMask, pair.specMask, pair.whoSymbol, pair.specSymbol)
 		if i != len(pairs)-1 && sb.Len() != previousLen {
-			sb.WriteRune(',')
+			sb.WriteByte(',')
 		}
 		previousLen = sb.Len() // No writes, no separator.
 	}
@@ -476,7 +477,7 @@ func writePermSymbols(sb *strings.Builder, mode, who, special fs.FileMode, whoSy
 		return
 	}
 	sb.WriteRune(whoSym)
-	sb.WriteRune('=')
+	sb.WriteByte('=')
 	for _, r := range runes {
 		sb.WriteRune(r)
 	}
