@@ -247,7 +247,7 @@ func daemonExecute(ctx context.Context, options ...daemonOption) error {
 		serviceWg, errs,
 	)
 	idleCheckInterval := settings.exitInterval
-	setupExtraStopWriters(idleCheckInterval, fsys,
+	setupExtraStopWriters(idleCheckInterval, &fsys,
 		stopSend, errs,
 		log,
 	)
@@ -404,7 +404,7 @@ func setupIPCHandler(ctx context.Context, procExitCh <-chan bool,
 }
 
 func setupExtraStopWriters(
-	idleCheck time.Duration, fsys fileSystem,
+	idleCheck time.Duration, fsys *fileSystem,
 	stopper wgShutdown,
 	errs wgErrs, log ulog.Logger,
 ) {
@@ -510,7 +510,7 @@ func newFileSystem(ctx context.Context, uid p9.UID, gid p9.GID) (fileSystem, err
 		listen:  listen,
 		control: control,
 	}
-	return system, linkSystems(system)
+	return system, linkSystems(&system)
 }
 
 func newListener(ctx context.Context, parent p9.File, path ninePath,
@@ -583,7 +583,7 @@ func newControl(ctx context.Context,
 	}, nil
 }
 
-func linkSystems(system fileSystem) error {
+func linkSystems(system *fileSystem) error {
 	root := system.root
 	for _, file := range []struct {
 		p9.File
@@ -854,7 +854,7 @@ func stopOnDone(ctx context.Context, stopCh wgShutdown) {
 	}
 }
 
-func stopOnUnreachable(fsys fileSystem, stopper wgShutdown,
+func stopOnUnreachable(fsys *fileSystem, stopper wgShutdown,
 	errs wgErrs, log ulog.Logger,
 ) {
 	const (
@@ -1033,7 +1033,7 @@ func stopWhen(checkFn checkFunc, interval time.Duration,
 
 // makeIdleChecker prevents the process from lingering around
 // if a client closes all services, then disconnects.
-func makeIdleChecker(fsys fileSystem, interval time.Duration, log ulog.Logger) checkFunc {
+func makeIdleChecker(fsys *fileSystem, interval time.Duration, log ulog.Logger) checkFunc {
 	var (
 		mounts    = fsys.mount.MountFile
 		listeners = fsys.listen.Listener
@@ -1072,7 +1072,7 @@ func hasActiveClients(listeners p9.File, threshold time.Duration) (bool, error) 
 		return false, err
 	}
 	for _, info := range infos {
-		lastActive := lastActive(info)
+		lastActive := lastActive(&info)
 		if time.Since(lastActive) <= threshold {
 			return true, nil
 		}
@@ -1080,7 +1080,7 @@ func hasActiveClients(listeners p9.File, threshold time.Duration) (bool, error) 
 	return false, nil
 }
 
-func lastActive(info p9fs.ConnInfo) time.Time {
+func lastActive(info *p9fs.ConnInfo) time.Time {
 	var (
 		read  = info.LastRead
 		write = info.LastWrite
