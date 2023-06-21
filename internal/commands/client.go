@@ -24,8 +24,10 @@ type (
 	clientSettings struct {
 		serviceMaddr multiaddr.Multiaddr
 		exitInterval time.Duration
-		commonSettings
+		sharedSettings
 	}
+	clientOption  func(*clientSettings) error
+	clientOptions []clientOption
 	// defaultClientMaddr distinguishes
 	// the default maddr value, from an arbitrary maddr value.
 	// I.e. even if the underlying multiaddrs are the same
@@ -34,57 +36,80 @@ type (
 	defaultClientMaddr struct{ multiaddr.Multiaddr }
 )
 
-const errServiceNotFound = generic.ConstError("could not find service instance")
+const (
+	exitIntervalDefault = 30 * time.Second
+	errServiceNotFound  = generic.ConstError("could not find service instance")
+)
 
-func (set *clientSettings) getClient(autoLaunchDaemon bool) (*Client, error) {
+func (cs *clientSettings) getClient(autoLaunchDaemon bool) (*Client, error) {
 	var (
-		serviceMaddr = set.serviceMaddr
+		serviceMaddr = cs.serviceMaddr
 		clientOpts   []p9.ClientOpt
 	)
-	if set.verbose {
+	if cs.verbose {
 		// TODO: less fancy prefix and/or out+prefix from CLI flags
 		clientLog := log.New(os.Stdout, "⬇️ client - ", log.Lshortfile)
 		clientOpts = append(clientOpts, p9.WithClientLogger(clientLog))
 	}
 	if autoLaunchDaemon {
 		if _, wasUnset := serviceMaddr.(defaultClientMaddr); wasUnset {
-			return connectOrLaunchLocal(set.exitInterval, clientOpts...)
+			return connectOrLaunchLocal(cs.exitInterval, clientOpts...)
 		}
 	}
 	return Connect(serviceMaddr, clientOpts...)
 }
 
-func (set *clientSettings) BindFlags(flagSet *flag.FlagSet) {
-	set.commonSettings.BindFlags(flagSet)
+func (co *clientOptions) BindFlags(flagSet *flag.FlagSet) {
+	var sharedOptions sharedOptions
+	(&sharedOptions).BindFlags(flagSet)
+	*co = append(*co, func(cs *clientSettings) error {
+		subset, err := sharedOptions.make()
+		if err != nil {
+			return err
+		}
+		cs.sharedSettings = subset
+		return nil
+	})
 	const (
-		exitFlag  = exitAfterFlagName
+		exitName  = exitAfterFlagName
 		exitUsage = "passed to the daemon command if we launch it" +
 			"\n(refer to daemon's helptext)"
-		exitAfterDefault = 30 * time.Second
 	)
-	flagSet.DurationVar(&set.exitInterval, exitFlag, exitAfterDefault, exitUsage)
-	const (
-		sockName  = serverFlagName
-		sockUsage = "file system service `maddr`" +
-			"\n\b" // Newline for default value, sans space.
-	)
-	var sockDefaultText string
-	{
-		maddrs, err := userServiceMaddrs()
-		if err != nil {
-			panic(err)
-		}
-		sockDefault := maddrs[0]
-		sockDefaultText = sockDefault.String()
-		set.serviceMaddr = defaultClientMaddr{sockDefault}
+	flagSetFunc(flagSet, exitName, exitUsage, co,
+		func(value time.Duration, settings *clientSettings) error {
+			settings.exitInterval = value
+			return nil
+		})
+	flagSet.Lookup(exitName).
+		DefValue = exitIntervalDefault.String()
+	const serverUsage = "file system service `maddr`"
+	flagSetFunc(flagSet, serverFlagName, serverUsage, co,
+		func(value multiaddr.Multiaddr, settings *clientSettings) error {
+			settings.serviceMaddr = value
+			return nil
+		})
+	flagSet.Lookup(serverFlagName).
+		DefValue = defaultServerMaddr().String()
+}
+
+func (co clientOptions) make() (clientSettings, error) {
+	settings := clientSettings{
+		exitInterval: exitIntervalDefault,
 	}
-	flagSet.Func(sockName, sockUsage, func(s string) (err error) {
-		set.serviceMaddr, err = multiaddr.NewMultiaddr(s)
-		return
-	})
-	setDefaultValueText(flagSet, flagDefaultText{
-		sockName: sockDefaultText,
-	})
+	if err := applyOptions(&settings, co...); err != nil {
+		return clientSettings{}, err
+	}
+	if err := settings.fillDefaults(); err != nil {
+		return clientSettings{}, err
+	}
+	return settings, nil
+}
+
+func (cs *clientSettings) fillDefaults() error {
+	if cs.serviceMaddr == nil {
+		cs.serviceMaddr = defaultServerMaddr()
+	}
+	return nil
 }
 
 func (c *Client) getListeners() ([]multiaddr.Multiaddr, error) {

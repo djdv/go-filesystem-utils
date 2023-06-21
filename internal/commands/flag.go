@@ -1,71 +1,41 @@
 package commands
 
 import (
+	"encoding/csv"
 	"flag"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unsafe"
 
-	"github.com/djdv/go-filesystem-utils/internal/command"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/p9/p9"
-	giconfig "github.com/ipfs/kubo/config"
 	"github.com/multiformats/go-multiaddr"
 )
 
 type (
-	commonSettings struct {
+	optionsReference[
+		OS optionSlice[OT, T],
+		OT optionFunc[T],
+		T any,
+	] interface {
+		*OS
+	}
+	optionSlice[OT optionFunc[T], T any] interface {
+		~[]OT
+	}
+	optionFunc[T any] interface {
+		~func(*T) error
+	}
+	sharedSettings struct {
 		verbose bool
 	}
-
-	// flagDefaultText is a map of flag names and the text
-	// for their default values.
-	// This may be provided explicitly when the
-	// [fmt.Stringer] output of a flag's default value,
-	// isn't as appropriate for a command's "help" text.
-	// E.g. you may want to display "none" instead of "0",
-	// or a literal `$ENV/filename` rather than
-	// `*fully-resolved-path*/filename`, etc.
-	flagDefaultText map[string]string
-
-	// lazyFlag may be implemented, to allow
-	// flags to initialize default values at command
-	// invocation time, rather than at process
-	// initialization time.
-	// This helps reduce process startup time, by delaying
-	// expansion of flags that perform slow operations
-	// (disk/net I/O, etc.), for values
-	// that might not even be needed if the caller has
-	// set it explicitly, or for values that belong
-	// to another command than the one being invoked.
-	lazyFlag[T any] interface{ get() (T, error) }
-
-	// lazyInitializer may be implemented by a guest or host
-	// settings structure, typically to cascade
-	// initialization of lazy flags.
-	// Such as by type checking each field
-	// and initializing its value if it is of type [lazyFlag].
-	lazyInitializer interface {
-		lazyInit() error
-	}
-
-	// defaultIPFSMaddr distinguishes
-	// the default maddr value, from an arbitrary maddr value.
-	// I.e. even if the underlying multiaddrs are the same
-	// only the flag's default value should be of this type.
-	// Implying the flag was not provided/set explicitly.
-	//
-	// It also implements the lazyFlag interface,
-	// since it needs to perform I/O to find
-	// a dynamic/system local value.
-	defaultIPFSMaddr struct {
-		multiaddr.Multiaddr
-		flagName string
-	}
+	sharedOption  func(*sharedSettings) error
+	sharedOptions []sharedOption
 )
 
 const (
@@ -91,61 +61,40 @@ const (
 	permSymSearch  = 'X'
 	permSymSetID   = 's'
 	permSymText    = 't'
-
-	ipfsAPIFileName      = "api"
-	ipfsConfigEnv        = giconfig.EnvDir
-	ipfsConfigDefaultDir = giconfig.DefaultPathRoot
 )
 
-func setDefaultValueText(flagSet *flag.FlagSet, defaultText flagDefaultText) {
-	flagSet.VisitAll(func(f *flag.Flag) {
-		if text, ok := defaultText[f.Name]; ok {
-			f.DefValue = text
-		}
-	})
+func makeWithOptions[OT optionFunc[T], T any](options ...OT) (T, error) {
+	var settings T
+	return settings, applyOptions(&settings, options...)
 }
 
-func (di *defaultIPFSMaddr) get() (multiaddr.Multiaddr, error) {
-	maddr := di.Multiaddr
-	if maddr == nil {
-		maddrs, err := getIPFSAPI()
-		if err != nil {
-			return nil, fmt.Errorf(
-				"could not get default value for `-%s` flag: %w",
-				di.flagName, err,
-			)
+func applyOptions[OT optionFunc[T], T any](settings *T, options ...OT) error {
+	for _, apply := range options {
+		if err := apply(settings); err != nil {
+			return err
 		}
-		maddr = maddrs[0]
-		di.Multiaddr = maddr
 	}
-	return maddr, nil
+	return nil
 }
 
-func (set *commonSettings) BindFlags(flagSet *flag.FlagSet) {
+func (so *sharedOptions) BindFlags(flagSet *flag.FlagSet) {
 	const (
 		verboseName    = "verbose"
 		verboseDefault = false
 		verboseUsage   = "enable log messages"
 	)
-	flagSet.BoolVar(&set.verbose, verboseName, verboseDefault, verboseUsage)
+	flagSetFunc(flagSet, verboseName, verboseUsage, so,
+		func(value bool, settings *sharedSettings) error {
+			settings.verbose = value
+			return nil
+		})
 }
 
-func mustMakeCommand[
-	ET command.ExecuteType[T],
-	EC command.ExecuteMonadic[ET, T],
-	T any,
-](
-	name, synopsis, usage string,
-	executeFn EC, options ...command.Option,
-) command.Command {
-	cmd, err := command.MakeFixedCommand[ET](name, synopsis, usage, executeFn)
-	if err != nil {
-		panic(err)
-	}
-	return cmd
+func (so sharedOptions) make() (sharedSettings, error) {
+	return makeWithOptions(so...)
 }
 
-func parseID[id uint32 | p9.UID | p9.GID](arg string) (id, error) {
+func parseID[id fuseID | p9.UID | p9.GID](arg string) (id, error) {
 	const nobody = "nobody"
 	if arg == nobody {
 		var value id
@@ -154,7 +103,7 @@ func parseID[id uint32 | p9.UID | p9.GID](arg string) (id, error) {
 			value = id(p9.NoUID)
 		case p9.GID:
 			value = id(p9.NoGID)
-		case uint32:
+		case fuseID:
 			value = id(math.MaxInt32)
 		}
 		return value, nil
@@ -180,58 +129,6 @@ func idString[id uint32 | p9.UID | p9.GID](who id) string {
 		}
 	}
 	return strconv.Itoa(int(who))
-}
-
-func getIPFSAPI() ([]multiaddr.Multiaddr, error) {
-	location, err := getIPFSAPIPath()
-	if err != nil {
-		return nil, err
-	}
-	if !apiFileExists(location) {
-		return nil, generic.ConstError("IPFS API file not found")
-	}
-	return parseIPFSAPI(location)
-}
-
-func getIPFSAPIPath() (string, error) {
-	var target string
-	if ipfsPath, set := os.LookupEnv(ipfsConfigEnv); set {
-		target = filepath.Join(ipfsPath, ipfsAPIFileName)
-	} else {
-		target = filepath.Join(ipfsConfigDefaultDir, ipfsAPIFileName)
-	}
-	return expandHomeShorthand(target)
-}
-
-func expandHomeShorthand(name string) (string, error) {
-	if !strings.HasPrefix(name, "~") {
-		return name, nil
-	}
-	homeName, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(homeName, name[1:]), nil
-}
-
-func apiFileExists(name string) bool {
-	_, err := os.Stat(name)
-	return err == nil
-}
-
-func parseIPFSAPI(name string) ([]multiaddr.Multiaddr, error) {
-	// NOTE: [upstream problem]
-	// If the config file has multiple API maddrs defined,
-	// only the first one will be contained in the API file.
-	maddrString, err := os.ReadFile(name)
-	if err != nil {
-		return nil, err
-	}
-	maddr, err := multiaddr.NewMultiaddr(string(maddrString))
-	if err != nil {
-		return nil, err
-	}
-	return []multiaddr.Multiaddr{maddr}, nil
 }
 
 func parseShutdownLevel(level string) (shutdownDisposition, error) {
@@ -586,4 +483,108 @@ func writePermSymbols(sb *strings.Builder, mode, who, special fs.FileMode, whoSy
 	if haveSpecial {
 		sb.WriteRune(specSym)
 	}
+}
+
+func header(text string) string {
+	return "# " + text
+}
+
+func underline(text string) string {
+	return fmt.Sprintf(
+		"%s\n%s",
+		text,
+		strings.Repeat("-", len(text)),
+	)
+}
+
+func flagSetFunc[
+	OSR optionsReference[OS, OT, ST],
+	OS optionSlice[OT, ST],
+	OT optionFunc[ST],
+	setterFn func(VT, *ST) error,
+	ST, VT any,
+](flagSet *flag.FlagSet, name, usage string,
+	options OSR, setter setterFn,
+) {
+	// `bool` flags don't require a value and this
+	// must be conveyed to the [flag] package.
+	if _, ok := any(setter).(func(bool, *ST) error); ok {
+		boolFunc(flagSet, name, usage, func(parameter string) error {
+			return parseAndSet(parameter, options, setter)
+		})
+		return
+	}
+	flagSet.Func(name, usage, func(parameter string) error {
+		return parseAndSet(parameter, options, setter)
+	})
+}
+
+func parseAndSet[
+	OSR optionsReference[OS, OT, ST],
+	OS optionSlice[OT, ST],
+	OT optionFunc[ST],
+	setterFn func(VT, *ST) error,
+	ST, VT any,
+](parameter string, options OSR, setter setterFn,
+) error {
+	value, err := parseFlag[VT](parameter)
+	if err != nil {
+		return err
+	}
+	*options = append(*options, func(settings *ST) error {
+		return setter(value, settings)
+	})
+	return nil
+}
+
+func parseFlag[V any](parameter string) (value V, err error) {
+	switch typed := any(&value).(type) {
+	case *string:
+		*typed = parameter
+	case *bool:
+		*typed, err = strconv.ParseBool(parameter)
+	case *time.Duration:
+		*typed, err = time.ParseDuration(parameter)
+	case *[]multiaddr.Multiaddr:
+		*typed, err = parseMultiaddrList(parameter)
+	case *multiaddr.Multiaddr:
+		*typed, err = multiaddr.NewMultiaddr(parameter)
+	case *shutdownDisposition:
+		*typed, err = parseShutdownLevel(parameter)
+	case *int:
+		*typed, err = strconv.Atoi(parameter)
+	case *fuseID:
+		*typed, err = parseID[fuseID](parameter)
+	case *p9.UID:
+		*typed, err = parseID[p9.UID](parameter)
+	case *p9.GID:
+		*typed, err = parseID[p9.GID](parameter)
+	case *uint32:
+		var temp uint64
+		temp, err = strconv.ParseUint(parameter, 0, 32)
+		*typed = uint32(temp)
+	default:
+		err = fmt.Errorf("parser: unexpected type: %T", value)
+	}
+	return
+}
+
+func parseMultiaddrList(parameter string) ([]multiaddr.Multiaddr, error) {
+	var (
+		reader            = strings.NewReader(parameter)
+		csvReader         = csv.NewReader(reader)
+		maddrStrings, err = csvReader.Read()
+	)
+	if err != nil {
+		return nil, err
+	}
+	maddrs := make([]multiaddr.Multiaddr, 0, len(maddrStrings))
+	for _, maddrString := range maddrStrings {
+		maddr, err := multiaddr.NewMultiaddr(maddrString)
+		if err != nil {
+			return nil, err
+		}
+		maddrs = append(maddrs, maddr)
+	}
+	return maddrs, nil
 }

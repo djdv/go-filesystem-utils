@@ -17,6 +17,8 @@ type (
 		clientSettings
 		disposition shutdownDisposition
 	}
+	shutdownOption  func(*shutdownSettings) error
+	shutdownOptions []shutdownOption
 )
 
 const (
@@ -24,8 +26,9 @@ const (
 	patientShutdown
 	shortShutdown
 	immediateShutdown
-	minimumShutdown = patientShutdown
-	maximumShutdown = immediateShutdown
+	minimumShutdown    = patientShutdown
+	maximumShutdown    = immediateShutdown
+	dispositionDefault = patientShutdown
 )
 
 func (level shutdownDisposition) String() string {
@@ -47,42 +50,68 @@ func Shutdown() command.Command {
 	const (
 		name     = "shutdown"
 		synopsis = "Stop the system service."
-		usage    = "Request to stop the file system service."
 	)
-	return mustMakeCommand[*shutdownSettings](name, synopsis, usage, shutdownExecute)
+	usage := header("Shutdown") +
+		"\n\nRequest to stop the file system services."
+	return command.MakeVariadicCommand[shutdownOptions](name, synopsis, usage, shutdownExecute)
 }
 
-func (set *shutdownSettings) BindFlags(flagSet *flag.FlagSet) {
-	set.clientSettings.BindFlags(flagSet)
+func (so *shutdownOptions) BindFlags(flagSet *flag.FlagSet) {
+	var clientOptions clientOptions
+	(&clientOptions).BindFlags(flagSet)
+	*so = append(*so, func(ss *shutdownSettings) error {
+		subset, err := clientOptions.make()
+		if err != nil {
+			return err
+		}
+		ss.clientSettings = subset
+		return nil
+	})
 	const shutdownName = "level"
-	shutdownValues := make([]string, maximumShutdown)
+	shutdownUsage := fmt.Sprintf(
+		"sets the `disposition` for shutdown"+
+			"\none of {%s}", shutdownLevelsText(),
+	)
+	flagSetFunc(flagSet, shutdownName, shutdownUsage, so,
+		func(value shutdownDisposition, settings *shutdownSettings) error {
+			settings.disposition = value
+			return nil
+		})
+	flagSet.Lookup(shutdownName).
+		DefValue = dispositionDefault.String()
+}
+
+func (so shutdownOptions) make() (shutdownSettings, error) {
+	settings := shutdownSettings{
+		disposition: dispositionDefault,
+	}
+	if err := applyOptions(&settings, so...); err != nil {
+		return shutdownSettings{}, err
+	}
+	return settings, settings.clientSettings.fillDefaults()
+}
+
+func shutdownLevelsText() string {
+	levels := make([]string, maximumShutdown)
 	for i, sl := 0, minimumShutdown; sl <= maximumShutdown; i, sl = i+1, sl+1 {
-		shutdownValues[i] = fmt.Sprintf(`"%s"`,
-			strings.ToLower(sl.String()),
+		levels[i] = fmt.Sprintf(
+			`"%s"`, strings.ToLower(sl.String()),
 		)
 	}
-	shutdownUsage := fmt.Sprintf(
-		"sets the `disposition` for shutdown\none of {%s}",
-		strings.Join(shutdownValues, ", "),
-	)
-	set.disposition = patientShutdown
-	shutdownDefaultText := patientShutdown.String()
-	flagSet.Func(shutdownName, shutdownUsage, func(s string) (err error) {
-		set.disposition, err = parseShutdownLevel(s)
-		return
-	})
-	setDefaultValueText(flagSet, flagDefaultText{
-		shutdownName: shutdownDefaultText,
-	})
+	return strings.Join(levels, ", ")
 }
 
-func shutdownExecute(ctx context.Context, set *shutdownSettings) error {
+func shutdownExecute(ctx context.Context, options ...shutdownOption) error {
+	settings, err := shutdownOptions(options).make()
+	if err != nil {
+		return err
+	}
 	const autoLaunchDaemon = false
-	client, err := set.getClient(autoLaunchDaemon)
+	client, err := settings.getClient(autoLaunchDaemon)
 	if err != nil {
 		return fmt.Errorf("could not get client (server already down?): %w", err)
 	}
-	if err := client.Shutdown(set.disposition); err != nil {
+	if err := client.Shutdown(settings.disposition); err != nil {
 		return errors.Join(err, client.Close())
 	}
 	if err := client.Close(); err != nil {
