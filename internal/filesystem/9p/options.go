@@ -13,32 +13,20 @@ package p9
 // we'll uhhh... figure something out later I guess.
 
 type (
-	// TODO: docs; commonly shared options.
-	Options interface {
-		DirectoryOptions |
-			FileOptions
+	fileSettings struct {
+		linkSync
+		metadata
 	}
-	DirectoryOptions interface {
-		DirectoryOption |
-			ListenerOption |
-			MounterOption |
-			HosterOption |
-			GuestOption
+	optionFunc[T any] interface {
+		~func(*T) error
 	}
-	FileOptions interface {
-		ChannelOption |
-			MountPointOption |
-			metadataOption |
-			linkOption
-	}
-	ChannelOptions interface {
-		ChannelOption |
-			ListenerOption
-	}
-	fileOptions struct {
-		metaOptions []metadataOption
-		linkOptions []linkOption
-	}
-
-	NineOption (func()) // TODO stub
 )
+
+func applyOptions[OT optionFunc[T], T any](settings *T, options ...OT) error {
+	for _, apply := range options {
+		if err := apply(settings); err != nil {
+			return err
+		}
+	}
+	return nil
+}

@@ -25,7 +25,7 @@ type (
 		mode p9.FileMode,
 		uid p9.UID, gid p9.GID) (p9.QID, p9.File, error)
 	mounterSettings struct {
-		directoryOptions []DirectoryOption
+		directorySettings
 	}
 	MounterOption func(*mounterSettings) error
 
@@ -53,10 +53,11 @@ func (ue unmountError) Error() string {
 
 func NewMounter(makeHostFn MakeHostFunc, options ...MounterOption) (p9.QID, *MountFile, error) {
 	var settings mounterSettings
-	if err := parseOptions(&settings, options...); err != nil {
+	settings.metadata.initialize(p9.ModeDirectory)
+	if err := applyOptions(&settings, options...); err != nil {
 		return p9.QID{}, nil, err
 	}
-	qid, directory, err := NewDirectory(settings.directoryOptions...)
+	qid, directory, err := newDirectory(&settings.directorySettings)
 	if err != nil {
 		return p9.QID{}, nil, err
 	}

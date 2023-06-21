@@ -65,7 +65,7 @@ type (
 	}
 	mountPointFile struct {
 		templatefs.NoopFile
-		metadata
+		*metadata
 		mu       *sync.Mutex
 		linkSync *linkSync
 	}
@@ -80,10 +80,7 @@ type (
 	mountPointHost struct {
 		unmountFn *detachFunc
 	}
-	mountPointSettings struct {
-		fileOptions
-	}
-	MountPointOption func(*mountPointSettings) error
+	MountPointOption func(*fileSettings) error
 )
 
 func (fe FieldError) Error() string {
@@ -140,31 +137,25 @@ func NewMountPoint[
 	T any,
 ](options ...MountPointOption,
 ) (p9.QID, *MountPointFile[MP], error) {
-	var settings mountPointSettings
-	if err := parseOptions(&settings, options...); err != nil {
-		return p9.QID{}, nil, err
-	}
-	metadata, err := makeMetadata(p9.ModeRegular, settings.metaOptions...)
-	if err != nil {
-		return p9.QID{}, nil, err
-	}
-	linkSync, err := newLinkSync(settings.linkOptions...)
-	if err != nil {
+	var settings fileSettings
+	settings.metadata.initialize(p9.ModeRegular)
+	if err := applyOptions(&settings, options...); err != nil {
 		return p9.QID{}, nil, err
 	}
 	file := &MountPointFile[MP]{
 		mountPoint: new(T),
 		mountPointFile: mountPointFile{
-			metadata: metadata,
-			linkSync: linkSync,
+			metadata: &settings.metadata,
+			linkSync: &settings.linkSync,
 			mu:       new(sync.Mutex),
 		},
 		mountPointHost: mountPointHost{
 			unmountFn: new(detachFunc),
 		},
 	}
-	metadata.incrementPath()
-	return *file.QID, file, nil
+	settings.metadata.fillDefaults()
+	settings.metadata.incrementPath()
+	return settings.QID, file, nil
 }
 
 func (mf *MountPointFile[MP]) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
@@ -198,7 +189,7 @@ func (mf *MountPointFile[MP]) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
 		return p9.QID{}, noIOUnit, perrors.EBADF
 	}
 	mf.openFlags = mf.withOpenedFlag(mode)
-	return *mf.QID, noIOUnit, nil
+	return mf.QID, noIOUnit, nil
 }
 
 func (mf *MountPointFile[MP]) WriteAt(p []byte, offset int64) (int, error) {

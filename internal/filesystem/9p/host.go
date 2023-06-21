@@ -14,7 +14,7 @@ type (
 		makeGuestFn MakeGuestFunc
 	}
 	hosterSettings struct {
-		directoryOptions []DirectoryOption
+		directorySettings
 	}
 	HosterOption func(*hosterSettings) error
 	// MakeGuestFunc should handle file creation operations
@@ -29,10 +29,11 @@ func NewHostFile(makeGuestFn MakeGuestFunc,
 	options ...HosterOption,
 ) (p9.QID, *HostFile, error) {
 	var settings hosterSettings
-	if err := parseOptions(&settings, options...); err != nil {
+	settings.metadata.initialize(p9.ModeDirectory)
+	if err := applyOptions(&settings, options...); err != nil {
 		return p9.QID{}, nil, err
 	}
-	qid, directory, err := NewDirectory(settings.directoryOptions...)
+	qid, directory, err := newDirectory(&settings.directorySettings)
 	if err != nil {
 		return p9.QID{}, nil, err
 	}

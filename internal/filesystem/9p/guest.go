@@ -13,7 +13,7 @@ type (
 		makeMountPointFn MakeMountPointFunc
 	}
 	guestSettings struct {
-		directoryOptions []DirectoryOption
+		directorySettings
 	}
 	GuestOption func(*guestSettings) error
 	// MakeMountPointFunc should handle file creation operations
@@ -27,13 +27,15 @@ type (
 	}
 )
 
-func NewGuestFile(makeMountPointFn MakeMountPointFunc, options ...GuestOption,
+func NewGuestFile(makeMountPointFn MakeMountPointFunc,
+	options ...GuestOption,
 ) (p9.QID, *GuestFile, error) {
 	var settings guestSettings
-	if err := parseOptions(&settings, options...); err != nil {
+	settings.metadata.initialize(p9.ModeDirectory)
+	if err := applyOptions(&settings, options...); err != nil {
 		return p9.QID{}, nil, err
 	}
-	qid, directory, err := NewDirectory(settings.directoryOptions...)
+	qid, directory, err := newDirectory(&settings.directorySettings)
 	if err != nil {
 		return p9.QID{}, nil, err
 	}
