@@ -32,8 +32,6 @@ type (
 		listenerShared
 	}
 	listenerSettings struct {
-		metaOptions      []metadataOption
-		directoryOptions []DirectoryOption
 		directorySettings
 		channelSettings
 	}
@@ -60,7 +58,7 @@ type (
 	}
 	listenerFile struct {
 		templatefs.NoopFile
-		metadata
+		*metadata
 		Listener manet.Listener
 		*linkSync
 		io.ReaderAt
@@ -80,7 +78,7 @@ type (
 	}
 	connFile struct {
 		templatefs.NoopFile
-		metadata
+		*metadata
 		trackedConn
 		io.ReaderAt
 		*linkSync
@@ -111,28 +109,25 @@ const (
 
 func NewListener(ctx context.Context, options ...ListenerOption) (p9.QID, *Listener, <-chan manet.Listener, error) {
 	var settings listenerSettings
-	if err := parseOptions(&settings, options...); err != nil {
+	settings.metadata.initialize(p9.ModeDirectory)
+	if err := applyOptions(&settings, options...); err != nil {
 		return p9.QID{}, nil, nil, err
 	}
-	metadata, err := makeMetadata(p9.ModeDirectory, settings.metaOptions...)
-	if err != nil {
-		return p9.QID{}, nil, nil, err
-	}
-	directoryOptions := append(
-		settings.directoryOptions,
-		WithoutRename[DirectoryOption](true),
-	)
-	qid, directory, err := NewDirectory(directoryOptions...)
+	settings.linkSync.renameDisabled = true
+	qid, directory, err := newDirectory(&settings.directorySettings)
 	if err != nil {
 		return p9.QID{}, nil, nil, err
 	}
 	var (
-		emitter   = makeChannelEmitter[manet.Listener](ctx, settings.channelSettings.buffer)
+		emitter = makeChannelEmitter[manet.Listener](
+			ctx,
+			settings.channelSettings.buffer,
+		)
 		listeners = emitter.ch
 		listener  = &Listener{
 			directory: directory,
 			listenerShared: listenerShared{
-				path:           metadata.ninePath,
+				path:           settings.metadata.ninePath,
 				emitter:        emitter,
 				cleanupEmpties: settings.cleanupElements,
 			},
@@ -303,14 +298,7 @@ func (ld *Listener) Mkdir(name string, permissions p9.FileMode, uid p9.UID, gid 
 	if err != nil {
 		return p9.QID{}, fmt.Errorf("%w - %s", perrors.EIO, err)
 	}
-	link, err := newLinkSync(
-		WithParent[linkOption](ld, name),
-		WithoutRename[linkOption](true),
-	)
-	if err != nil {
-		return p9.QID{}, err
-	}
-	qid, directory, err := ld.mkdir(ld.directory,
+	qid, directory, link, err := ld.mkdir(ld,
 		name, permissions, uid, gid,
 	)
 	if err != nil {
@@ -327,21 +315,34 @@ func (ld *Listener) Mkdir(name string, permissions p9.FileMode, uid p9.UID, gid 
 
 func (ls *listenerShared) mkdir(directory p9.File, name string,
 	permissions p9.FileMode, uid p9.UID, gid p9.GID,
-) (p9.QID, p9.File, error) {
+) (p9.QID, p9.File, *linkSync, error) {
 	uid, gid, err := mkPreamble(directory, name, uid, gid)
 	if err != nil {
-		return p9.QID{}, nil, err
+		return p9.QID{}, nil, nil, err
 	}
-	cleanup := ls.cleanupEmpties
-	return NewDirectory(
-		WithPath[DirectoryOption](ls.path),
-		WithPermissions[DirectoryOption](permissions),
-		WithUID[DirectoryOption](uid),
-		WithGID[DirectoryOption](gid),
-		WithParent[DirectoryOption](directory, name),
-		UnlinkWhenEmpty[DirectoryOption](cleanup),
-		UnlinkEmptyChildren[DirectoryOption](cleanup),
+	var (
+		cleanup  = ls.cleanupEmpties
+		settings = directorySettings{
+			fileSettings: fileSettings{
+				linkSync: linkSync{
+					link: link{
+						parent: directory,
+						child:  name,
+					},
+					renameDisabled: true,
+				},
+			},
+			cleanupSelf:     cleanup,
+			cleanupElements: cleanup,
+		}
 	)
+	settings.metadata.initialize(
+		p9.ModeDirectory | permissions.Permissions(),
+	)
+	settings.metadata.ninePath = ls.path
+	settings.metadata.UID, settings.metadata.GID = uid, gid
+	qid, file, err := newDirectory(&settings)
+	return qid, file, &settings.linkSync, err
 }
 
 func (pd *protocolDir) Walk(names []string) ([]p9.QID, p9.File, error) {
@@ -379,13 +380,9 @@ func (pd *protocolDir) Mkdir(name string, permissions p9.FileMode, uid p9.UID, g
 			return p9.QID{}, err
 		}
 	}
-	qid, directory, err := pd.mkdir(pd.directory,
+	qid, directory, link, err := pd.mkdir(pd,
 		name, permissions, uid, gid,
 	)
-	if err != nil {
-		return p9.QID{}, err
-	}
-	link, err := newLinkSync(WithParent[linkOption](pd, name))
 	if err != nil {
 		return p9.QID{}, err
 	}
@@ -436,12 +433,8 @@ func (vd *valueDir) Link(file p9.File, name string) error {
 }
 
 func (vd *valueDir) Mkdir(name string, permissions p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, error) {
-	link, err := newLinkSync(WithParent[linkOption](vd, name))
-	if err != nil {
-		return p9.QID{}, err
-	}
 	if isPathType := vd.component == nil; isPathType {
-		qid, directory, err := vd.mkdir(vd.directory,
+		qid, directory, link, err := vd.mkdir(vd,
 			name, permissions, uid, gid,
 		)
 		if err != nil {
@@ -461,7 +454,7 @@ func (vd *valueDir) Mkdir(name string, permissions p9.FileMode, uid p9.UID, gid 
 	if err != nil {
 		return p9.QID{}, fmt.Errorf("%w - %s", perrors.EIO, err)
 	}
-	qid, directory, err := vd.mkdir(vd.directory,
+	qid, directory, link, err := vd.mkdir(vd,
 		name, permissions, uid, gid,
 	)
 	if err != nil {
@@ -515,11 +508,8 @@ func (vd *valueDir) Mknod(name string, mode p9.FileMode,
 				return netErr
 			},
 		}
+		qid, file = vd.newListenerFile(mode, uid, gid, fileListener)
 	)
-	qid, file, err := vd.newListenerFile(mode, uid, gid, fileListener)
-	if err != nil {
-		return p9.QID{}, errors.Join(err, listener.Close())
-	}
 	if err := vd.Link(file, name); err != nil {
 		return p9.QID{}, errors.Join(err, listener.Close())
 	}
@@ -586,33 +576,31 @@ func (vd *valueDir) listen(maddr multiaddr.Multiaddr, permissions p9.FileMode) (
 func (vd *valueDir) newListenerFile(
 	permissions p9.FileMode, uid p9.UID, gid p9.GID,
 	listener manet.Listener,
-) (p9.QID, *listenerFile, error) {
+) (p9.QID, *listenerFile) {
 	var (
-		path          = vd.path
-		metadata, err = makeMetadata(p9.ModeRegular|permissions.Permissions(),
-			WithUID[metadataOption](uid),
-			WithGID[metadataOption](gid),
-			WithPath[metadataOption](path),
-		)
+		path     = vd.path
+		metadata metadata
 	)
-	if err != nil {
-		return p9.QID{}, nil, err
-	}
-	link, err := newLinkSync(
-		WithParent[linkOption](vd, listenerFileName),
-		WithoutRename[linkOption](true),
+	metadata.initialize(
+		p9.ModeRegular | permissions.Permissions(),
 	)
-	if err != nil {
-		return p9.QID{}, nil, err
-	}
+	metadata.ninePath = path
+	metadata.UID, metadata.GID = uid, gid
 	metadata.Size = uint64(len(listener.Multiaddr().String()))
 	listenerFile := &listenerFile{
-		metadata: metadata,
-		linkSync: link,
+		metadata: &metadata,
+		linkSync: &linkSync{
+			link: link{
+				parent: vd,
+				child:  listenerFileName,
+			},
+			renameDisabled: true,
+		},
 		Listener: listener,
 	}
+	metadata.fillDefaults()
 	metadata.incrementPath()
-	return *metadata.QID, listenerFile, nil
+	return metadata.QID, listenerFile
 }
 
 func (vd *valueDir) UnlinkAt(name string, flags uint32) error {
@@ -771,31 +759,30 @@ func (cd *connDir) newConnFile(name string, id uintptr, permissions p9.FileMode,
 	if err != nil {
 		return p9.QID{}, nil, err
 	}
-	path := cd.path
-	metadata, err := makeMetadata(p9.ModeRegular|permissions,
-		WithUID[metadataOption](uid),
-		WithGID[metadataOption](gid),
-		WithPath[metadataOption](path),
+	var (
+		path     = cd.path
+		metadata metadata
 	)
-	if err != nil {
-		return p9.QID{}, nil, err
-	}
-
-	link, err := newLinkSync(
-		WithParent[linkOption](cd, name),
-		WithoutRename[linkOption](true),
+	metadata.initialize(
+		p9.ModeRegular | permissions.Permissions(),
 	)
-	if err != nil {
-		return p9.QID{}, nil, err
-	}
+	metadata.ninePath = path
+	metadata.UID, metadata.GID = uid, gid
 	connFile := &connFile{
 		connID:      id,
 		trackedConn: conn,
-		metadata:    metadata,
-		linkSync:    link,
+		metadata:    &metadata,
+		linkSync: &linkSync{
+			link: link{
+				parent: cd,
+				child:  name,
+			},
+			renameDisabled: true,
+		},
 	}
+	metadata.fillDefaults()
 	metadata.incrementPath()
-	return *metadata.QID, connFile, nil
+	return metadata.QID, connFile, nil
 }
 
 func (lf *listenerFile) Walk(names []string) ([]p9.QID, p9.File, error) {
@@ -825,7 +812,7 @@ func (lf *listenerFile) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
 		return p9.QID{}, 0, perrors.EBADF
 	}
 	lf.openFlags = lf.withOpenedFlag(mode)
-	return *lf.QID, 0, nil
+	return lf.QID, 0, nil
 }
 
 func (lf *listenerFile) Close() error {
@@ -1017,7 +1004,7 @@ func (cf *connFile) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
 		return p9.QID{}, 0, perrors.EBADF
 	}
 	cf.openFlags = cf.withOpenedFlag(mode)
-	return *cf.QID, 0, nil
+	return cf.QID, 0, nil
 }
 
 func (cf *connFile) Close() error {

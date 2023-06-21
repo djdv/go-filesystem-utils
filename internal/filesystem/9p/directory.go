@@ -19,50 +19,80 @@ type (
 	Directory struct {
 		templatefs.NoopFile
 		*fileTableSync
-		metadata
+		*metadata
 		*linkSync
 		opened,
 		cleanupElements bool
 	}
-	directorySettings struct {
-		fileOptions
-		cleanupSelf,
-		cleanupElements bool
-	}
-	DirectoryOption func(*directorySettings) error
-	ephemeralDir    struct {
+	ephemeralDir struct {
 		directory
 		refs *atomic.Uintptr
 		unlinkOnClose,
 		unlinking *atomic.Bool
 		closed bool
 	}
+	directorySettings struct {
+		fileSettings
+		cleanupSelf,
+		cleanupElements bool
+	}
+	DirectoryOption        func(*directorySettings) error
+	directorySetter[T any] interface {
+		*T
+		setCleanupSelf(bool)
+		setCleanupElements(bool)
+	}
 )
+
+func (ds *directorySettings) setCleanupSelf(b bool)     { ds.cleanupSelf = b }
+func (ds *directorySettings) setCleanupElements(b bool) { ds.cleanupElements = b }
+
+// UnlinkWhenEmpty causes files to unlink from their parent
+// after they are considered empty and the last reference
+// held by a Walk has been closed.
+func UnlinkWhenEmpty[
+	OT optionFunc[T],
+	T any,
+	I directorySetter[T],
+](b bool,
+) OT {
+	return func(settings *T) error {
+		any(settings).(I).setCleanupSelf(b)
+		return nil
+	}
+}
+
+// UnlinkEmptyChildren sets [UnlinkWhenEmpty]
+// on files created by this file.
+func UnlinkEmptyChildren[
+	OT optionFunc[T],
+	T any,
+	I directorySetter[T],
+](b bool,
+) OT {
+	return func(settings *T) error {
+		any(settings).(I).setCleanupElements(b)
+		return nil
+	}
+}
 
 func NewDirectory(options ...DirectoryOption) (p9.QID, p9.File, error) {
 	var settings directorySettings
-	if err := parseOptions(&settings, options...); err != nil {
+	settings.metadata.initialize(p9.ModeDirectory)
+	if err := applyOptions(&settings, options...); err != nil {
 		return p9.QID{}, nil, err
 	}
-	metadata, err := makeMetadata(p9.ModeDirectory, settings.metaOptions...)
-	if err != nil {
-		return p9.QID{}, nil, err
+	return newDirectory(&settings)
+}
+
+func newDirectory(settings *directorySettings) (p9.QID, p9.File, error) {
+	var file p9.File = &Directory{
+		fileTableSync: newFileTable(),
+		metadata:      &settings.metadata,
+		linkSync:      &settings.linkSync,
 	}
-	linkSync, err := newLinkSync(settings.linkOptions...)
-	if err != nil {
-		return p9.QID{}, nil, err
-	}
-	var (
-		directory = Directory{
-			fileTableSync: newFileTable(),
-			metadata:      metadata,
-			linkSync:      linkSync,
-		}
-		qid          = metadata.QID
-		file p9.File = &directory
-	)
 	if settings.cleanupSelf {
-		if parent := linkSync.parent; parent == nil {
+		if parent := settings.linkSync.parent; parent == nil {
 			err := generic.ConstError("cannot unlink self without parent file")
 			return p9.QID{}, nil, err
 		}
@@ -73,8 +103,9 @@ func NewDirectory(options ...DirectoryOption) (p9.QID, p9.File, error) {
 			unlinking:     new(atomic.Bool),
 		}
 	}
-	metadata.incrementPath()
-	return *qid, file, nil
+	settings.metadata.fillDefaults()
+	settings.metadata.incrementPath()
+	return settings.QID, file, nil
 }
 
 func (dir *Directory) Walk(names []string) ([]p9.QID, p9.File, error) {
@@ -170,7 +201,7 @@ func (dir *Directory) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
 		return p9.QID{}, noIOUnit, perrors.EINVAL
 	}
 	dir.opened = true
-	return *dir.QID, noIOUnit, nil
+	return dir.QID, noIOUnit, nil
 }
 
 func (dir *Directory) Link(file p9.File, name string) error {
@@ -200,7 +231,7 @@ func (dir *Directory) Mkdir(name string, permissions p9.FileMode, uid p9.UID, gi
 		WithParent[DirectoryOption](dir, name),
 		UnlinkWhenEmpty[DirectoryOption](dir.cleanupElements),
 		UnlinkEmptyChildren[DirectoryOption](dir.cleanupElements),
-		WithoutRename[DirectoryOption](dir.linkSync.disabled),
+		WithoutRename[DirectoryOption](dir.linkSync.renameDisabled),
 	)
 	if err == nil {
 		err = dir.Link(newDir, name)

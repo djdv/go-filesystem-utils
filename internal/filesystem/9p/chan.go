@@ -12,48 +12,62 @@ import (
 type (
 	ChannelFile struct {
 		templatefs.NoopFile
-		metadata
-		linkSync *linkSync
-		emitter  *chanEmitter[[]byte]
+		*metadata
+		*linkSync
+		emitter *chanEmitter[[]byte]
 		openFlags
 	}
 	channelSettings struct {
-		fileOptions
 		buffer int
 	}
-	ChannelOption func(*channelSettings) error
+	channelFileSettings struct {
+		fileSettings
+		channelSettings
+	}
+	ChannelOption        func(*channelFileSettings) error
+	channelSetter[T any] interface {
+		*T
+		setBuffer(int)
+	}
 )
+
+func (cs *channelSettings) setBuffer(size int) { cs.buffer = size }
 
 func NewChannelFile(ctx context.Context,
 	options ...ChannelOption,
 ) (p9.QID, *ChannelFile, <-chan []byte, error) {
-	var settings channelSettings
-	if err := parseOptions(&settings, options...); err != nil {
-		return p9.QID{}, nil, nil, err
-	}
-	metadata, err := makeMetadata(p9.ModeRegular, settings.metaOptions...)
-	if err != nil {
-		return p9.QID{}, nil, nil, err
-	}
-	linkSync, err := newLinkSync(settings.linkOptions...)
-	if err != nil {
+	var settings channelFileSettings
+	settings.metadata.initialize(p9.ModeRegular)
+	if err := applyOptions(&settings, options...); err != nil {
 		return p9.QID{}, nil, nil, err
 	}
 	var (
-		emitter   = makeChannelEmitter[[]byte](ctx, settings.buffer)
+		emitter = makeChannelEmitter[[]byte](
+			ctx,
+			settings.buffer,
+		)
 		bytesChan = emitter.ch
-		chanFile  = &ChannelFile{
-			metadata: metadata,
-			linkSync: linkSync,
+		file      = &ChannelFile{
+			metadata: &settings.metadata,
+			linkSync: &settings.linkSync,
 			emitter:  emitter,
 		}
 	)
-	metadata.incrementPath()
-	return *chanFile.QID, chanFile, bytesChan, nil
+	settings.metadata.fillDefaults()
+	settings.metadata.incrementPath()
+	return settings.QID, file, bytesChan, nil
 }
 
-func WithBuffer[OT ChannelOptions](size int) OT {
-	return makeFieldSetter[OT]("buffer", size)
+func WithBuffer[
+	OT optionFunc[T],
+	T any,
+	I channelSetter[T],
+](size int,
+) OT {
+	return func(channelFile *T) error {
+		any(channelFile).(I).setBuffer(size)
+		return nil
+	}
 }
 
 func (cf *ChannelFile) Walk(names []string) ([]p9.QID, p9.File, error) {
@@ -79,7 +93,7 @@ func (cf *ChannelFile) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
 		return p9.QID{}, 0, perrors.EINVAL
 	}
 	cf.openFlags = cf.withOpenedFlag(mode)
-	return *cf.QID, 0, nil
+	return cf.QID, 0, nil
 }
 
 func (cf *ChannelFile) Close() error {

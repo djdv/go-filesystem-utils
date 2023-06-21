@@ -29,65 +29,115 @@ const noIOUnit ioUnit = 0
 type (
 	ioUnit   = uint32
 	ninePath = *atomic.Uint64
-	metadata struct { // TODO: R/W guard or atomic operations.
+	metadata struct {
 		ninePath
-		*p9.Attr
-		*p9.QID
+		p9.Attr
+		p9.QID
 	}
-	metadataOption func(*metadata) error
+	metadataSetter[T any] interface {
+		*T
+		setPath(ninePath)
+		setPermissions(p9.FileMode)
+		setUID(p9.UID)
+		setGID(p9.GID)
+	}
 )
 
-func makeMetadata(mode p9.FileMode, options ...metadataOption) (metadata, error) {
+func (md *metadata) setPath(path ninePath) { md.ninePath = path }
+func (md *metadata) setUID(uid p9.UID)     { md.UID = uid }
+func (md *metadata) setGID(gid p9.GID)     { md.GID = gid }
+func (md *metadata) setPermissions(permissions p9.FileMode) {
+	md.Mode = md.Mode.FileType() |
+		permissions.Permissions()
+}
+
+func (md *metadata) initialize(mode p9.FileMode) {
 	var (
 		now       = time.Now()
 		sec, nano = uint64(now.Unix()), uint64(now.UnixNano())
-		meta      = metadata{
-			ninePath: new(atomic.Uint64),
-			Attr: &p9.Attr{
-				Mode: mode,
-				UID:  p9.NoUID, GID: p9.NoGID,
-				ATimeSeconds: sec, ATimeNanoSeconds: nano,
-				MTimeSeconds: sec, MTimeNanoSeconds: nano,
-				CTimeSeconds: sec, CTimeNanoSeconds: nano,
-			},
-			QID: &p9.QID{
-				Type: mode.QIDType(),
-			},
-		}
 	)
-	if err := parseOptions(&meta, options...); err != nil {
-		return metadata{}, err
+	md.Attr = p9.Attr{
+		Mode: mode,
+		UID:  p9.NoUID, GID: p9.NoGID,
+		ATimeSeconds: sec, ATimeNanoSeconds: nano,
+		MTimeSeconds: sec, MTimeNanoSeconds: nano,
+		CTimeSeconds: sec, CTimeNanoSeconds: nano,
 	}
-	if meta.ninePath == nil {
-		return metadata{}, generic.ConstError("[path] option's value is `nil`")
+	md.QID = p9.QID{
+		Type: mode.QIDType(),
 	}
-	return meta, nil
 }
 
-func WithPath[OT Options](path *atomic.Uint64) (option OT) {
-	return makeFieldSetter[OT]("ninePath", path)
+func (md *metadata) fillDefaults() {
+	if md.ninePath == nil {
+		md.ninePath = new(atomic.Uint64)
+	}
 }
 
-func WithPermissions[OT Options](permissions p9.FileMode) (option OT) {
-	return makeFieldFunc[OT]("Mode", func(mode *p9.FileMode) error {
-		*mode = mode.FileType() | permissions.Permissions()
+// WithPath specifies the path
+// to be used by this file.
+func WithPath[
+	OT optionFunc[T],
+	T any,
+	I metadataSetter[T],
+](path *atomic.Uint64,
+) OT {
+	return func(status *T) error {
+		if path == nil {
+			return generic.ConstError("path option's value is `nil`")
+		}
+		any(status).(I).setPath(path)
 		return nil
-	})
+	}
 }
 
-func WithUID[OT Options](uid p9.UID) (option OT) {
-	return makeFieldSetter[OT]("UID", uid)
+// WithPermissions specifies the permission bits
+// for a file's mode status.
+func WithPermissions[
+	OT optionFunc[T],
+	T any,
+	I metadataSetter[T],
+](permissions p9.FileMode,
+) OT {
+	return func(status *T) error {
+		any(status).(I).setPermissions(permissions)
+		return nil
+	}
 }
 
-func WithGID[OT Options](gid p9.GID) (option OT) {
-	return makeFieldSetter[OT]("GID", gid)
+// WithUID specifies a UID value for
+// a file's status information.
+func WithUID[
+	OT optionFunc[T],
+	T any,
+	I metadataSetter[T],
+](uid p9.UID,
+) OT {
+	return func(status *T) error {
+		any(status).(I).setUID(uid)
+		return nil
+	}
 }
 
-func (md metadata) incrementPath() {
+// WithGID specifies a GID value for
+// a file's status information.
+func WithGID[
+	OT optionFunc[T],
+	T any,
+	I metadataSetter[T],
+](gid p9.GID,
+) OT {
+	return func(status *T) error {
+		any(status).(I).setGID(gid)
+		return nil
+	}
+}
+
+func (md *metadata) incrementPath() {
 	md.QID.Path = md.ninePath.Add(1)
 }
 
-func (md metadata) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
+func (md *metadata) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
 	var (
 		ourAttr  = md.Attr
 		ourAtime = !valid.ATimeNotSystemTime
@@ -116,63 +166,57 @@ func (md metadata) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
 	return nil
 }
 
-func (md metadata) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
-	var (
-		qid          = *md.QID
-		filled, attr = fillAttrs(req, md.Attr)
-	)
-	return qid, filled, *attr, nil
+func (md *metadata) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
+	validAttrs(&req, &md.Attr)
+	if req.INo {
+		req.INo = md.ninePath != nil
+	}
+	return md.QID, req, md.Attr, nil
 }
 
-func fillAttrs(req p9.AttrMask, attr *p9.Attr) (p9.AttrMask, *p9.Attr) {
-	var (
-		rAttr p9.Attr
-		valid p9.AttrMask
-	)
+func validAttrs(req *p9.AttrMask, attr *p9.Attr) {
 	if req.Empty() {
-		return valid, &rAttr
+		return
 	}
 	if req.Mode {
-		mode := attr.Mode
-		rAttr.Mode, valid.Mode = mode, mode != 0
+		req.Mode = attr.Mode != 0
+	}
+	if req.NLink {
+		req.NLink = attr.NLink != 0
 	}
 	if req.UID {
-		uid := attr.UID
-		rAttr.UID, valid.UID = uid, uid.Ok()
+		req.UID = attr.UID.Ok()
 	}
 	if req.GID {
-		gid := attr.GID
-		rAttr.GID, valid.GID = gid, gid.Ok()
+		req.GID = attr.GID.Ok()
 	}
 	if req.RDev {
-		rDev := attr.RDev
-		rAttr.RDev, valid.RDev = rDev, rDev != 0
+		req.RDev = attr.RDev != 0
 	}
 	if req.ATime {
-		var (
-			sec  = attr.ATimeSeconds
-			nano = attr.ATimeNanoSeconds
-		)
-		rAttr.ATimeSeconds, rAttr.ATimeNanoSeconds, valid.ATime = sec, nano, nano != 0
+		req.ATime = attr.ATimeNanoSeconds != 0
 	}
 	if req.MTime {
-		var (
-			sec  = attr.MTimeSeconds
-			nano = attr.MTimeNanoSeconds
-		)
-		rAttr.MTimeSeconds, rAttr.MTimeNanoSeconds, valid.MTime = sec, nano, nano != 0
+		req.MTime = attr.MTimeNanoSeconds != 0
 	}
 	if req.CTime {
-		var (
-			sec  = attr.CTimeSeconds
-			nano = attr.CTimeNanoSeconds
-		)
-		rAttr.CTimeSeconds, rAttr.CTimeNanoSeconds, valid.CTime = sec, nano, nano != 0
+		req.CTime = attr.CTimeNanoSeconds != 0
 	}
 	if req.Size {
-		rAttr.Size, valid.Size = attr.Size, !attr.Mode.IsDir()
+		req.Size = !attr.Mode.IsDir()
 	}
-	return valid, &rAttr
+	if req.Blocks {
+		req.Blocks = attr.Blocks != 0
+	}
+	if req.BTime {
+		req.BTime = attr.BTimeNanoSeconds != 0
+	}
+	if req.Gen {
+		req.Gen = attr.Gen != 0
+	}
+	if req.DataVersion {
+		req.DataVersion = attr.DataVersion != 0
+	}
 }
 
 func attrErr(got, want p9.AttrMask) error {
