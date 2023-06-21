@@ -7,10 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
-	"path/filepath"
-	"runtime"
 	"strings"
-	"time"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
@@ -19,60 +16,56 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/filesystem/ipfs"
 	"github.com/djdv/p9/p9"
 	"github.com/jaevor/go-nanoid"
-	"github.com/multiformats/go-multiaddr"
 )
 
 type (
-	hostSettings[T any] interface {
+	marshaller interface {
+		marshal(argument string) ([]byte, error)
+	}
+	mountCmdConstraint[T any, M marshaller] interface {
 		*T
 		command.FlagBinder
-		marshal(arg string) ([]byte, error)
+		make() (M, error)
 	}
-	fuseSettings struct {
-		cgofuse.Host
-		haveFUSEFlags bool
+	mountCmdHost[T any, M marshaller] interface {
+		mountCmdConstraint[T, M]
+		usage(filesystem.ID) string
 	}
-
-	guestSettings[T any] interface {
-		*T
-		command.FlagBinder
-		marshal(arg string) ([]byte, error)
+	mountCmdGuest[T any, M marshaller] interface {
+		mountCmdConstraint[T, M]
+		usage(filesystem.Host) string
 	}
 	mountSettings struct {
 		permissions p9.FileMode
 		uid         p9.UID
 		gid         p9.GID
 	}
-	mountIPFSSettings struct {
-		ipfs.IPFSGuest
-		mountSettings
-	}
-	mountPinFSSettings struct {
-		ipfs.PinFSGuest
-		mountSettings
-	}
-	mountIPNSSettings struct {
-		ipfs.IPNSGuest
-		mountSettings
-	}
-	mountKeyFSFSSettings struct {
-		ipfs.KeyFSGuest
-		mountSettings
-	}
-	mountCmdSettings struct {
-		clientSettings
-		options []MountOption
-	}
-	mountPointSettings[
-		HT, GT any,
-		H hostSettings[HT],
-		G guestSettings[GT],
+	mountCmdSettings[
+		HM, GM marshaller,
 	] struct {
-		Host  HT
-		Guest GT
-		mountCmdSettings
+		clientSettings
+		host       HM
+		guest      GM
+		apiOptions []MountOption
 	}
-
+	mountCmdOption[
+		// Host/Guest marshaller constructor types.
+		// (Typically a slice of functional options.)
+		HT, GT any,
+		// Result type of the constructors.
+		// (Typically a struct with options applied.)
+		HM, GM marshaller,
+		// Constraints on *{H,G}T.
+		// (Needs to satisfy requirements of the `mount` command.)
+		HC mountCmdHost[HT, HM],
+		GC mountCmdGuest[GT, GM],
+	] func(*mountCmdSettings[HM, GM]) error
+	mountCmdOptions[
+		HT, GT any,
+		HM, GM marshaller,
+		HC mountCmdHost[HT, HM],
+		GC mountCmdGuest[GT, GM],
+	] []mountCmdOption[HT, GT, HM, GM, HC, GC]
 	MountOption func(*mountSettings) error
 )
 
@@ -80,8 +73,6 @@ const (
 	mountAPIPermissionsDefault = p9fs.ReadUser | p9fs.WriteUser | p9fs.ExecuteUser |
 		p9fs.ReadGroup | p9fs.ExecuteGroup |
 		p9fs.ReadOther | p9fs.ExecuteOther
-	mountAPIUIDDefault = p9.NoUID
-	mountAPIGIDDefault = p9.NoGID
 )
 
 func WithPermissions(permissions p9.FileMode) MountOption {
@@ -120,169 +111,117 @@ func supportedSystems() []filesystem.ID {
 	}
 }
 
-func (set *mountCmdSettings) BindFlags(flagSet *flag.FlagSet) {
-	set.clientSettings.BindFlags(flagSet)
+func (mo *mountCmdOptions[HT, GT, HM, GM, HC, GC]) BindFlags(flagSet *flag.FlagSet) {
+	type cmdSettings = mountCmdSettings[HM, GM]
+	var clientOptions clientOptions
+	(&clientOptions).BindFlags(flagSet)
+	*mo = append(*mo, func(ms *cmdSettings) error {
+		subset, err := clientOptions.make()
+		if err != nil {
+			return err
+		}
+		ms.clientSettings = subset
+		return nil
+	})
+	var host HC = new(HT)
+	host.BindFlags(flagSet)
+	*mo = append(*mo, func(ms *cmdSettings) error {
+		marshaller, err := host.make()
+		if err != nil {
+			return err
+		}
+		ms.host = marshaller
+		return nil
+	})
+	var guest GC = new(GT)
+	guest.BindFlags(flagSet)
+	*mo = append(*mo, func(ms *cmdSettings) error {
+		marshaller, err := guest.make()
+		if err != nil {
+			return err
+		}
+		ms.guest = marshaller
+		return nil
+	})
 	const (
 		prefix   = "api-"
 		uidName  = prefix + "uid"
 		uidUsage = "file owner's `uid`"
 	)
-	uidDefaultText := idString(mountAPIUIDDefault)
-	flagSet.Func(uidName, uidUsage, func(s string) error {
-		uid, err := parseID[p9.UID](s)
-		if err != nil {
-			return err
-		}
-		set.options = append(set.options, WithUID(uid))
-		return nil
-	})
+	flagSetFunc(flagSet, uidName, uidUsage, mo,
+		func(value p9.UID, settings *cmdSettings) error {
+			settings.apiOptions = append(
+				settings.apiOptions,
+				WithUID(value),
+			)
+			return nil
+		})
+	flagSet.Lookup(uidName).
+		DefValue = idString(apiUIDDefault)
 	const (
 		gidName  = prefix + "gid"
 		gidUsage = "file owner's `gid`"
 	)
-	gidDefaultText := idString(mountAPIGIDDefault)
-	flagSet.Func(gidName, gidUsage, func(s string) error {
-		gid, err := parseID[p9.GID](s)
-		if err != nil {
-			return err
-		}
-		set.options = append(set.options, WithGID(gid))
-		return nil
-	})
+	flagSetFunc(flagSet, gidName, gidUsage, mo,
+		func(value p9.GID, settings *cmdSettings) error {
+			settings.apiOptions = append(
+				settings.apiOptions,
+				WithGID(value),
+			)
+			return nil
+		})
+	flagSet.Lookup(gidName).
+		DefValue = idString(apiGIDDefault)
 	const (
 		permissionsName  = prefix + "permissions"
 		permissionsUsage = "`permissions` to use when creating service files"
 	)
-	var (
-		permissions            = fs.FileMode(mountAPIPermissionsDefault &^ p9.FileModeMask)
-		permissionsDefaultText = modeToSymbolicPermissions(permissions)
-	)
-	flagSet.Func(permissionsName, permissionsUsage, func(s string) error {
-		parsedPermissions, err := parsePOSIXPermissions(permissions, s)
-		if err != nil {
-			return err
-		}
-		permissions = parsedPermissions
-		// TODO: [2023.05.20]
-		// patch `.Permissions()` method in 9P library.
-		// For whatever reason the (unexported)
-		// const `p9.permissionsMask` is defined as `01777`
-		// but should be `0o7777`
-		permissions9 := modeFromFS(permissions) &^ p9.FileModeMask
-		set.options = append(set.options, WithPermissions(permissions9))
-		return nil
-	})
-	setDefaultValueText(flagSet, flagDefaultText{
-		uidName:         uidDefaultText,
-		gidName:         gidDefaultText,
-		permissionsName: permissionsDefaultText,
-	})
+	permissions := fs.FileMode(mountAPIPermissionsDefault &^ p9.FileModeMask)
+	flagSetFunc(flagSet, permissionsName, permissionsUsage, mo,
+		func(value string, settings *cmdSettings) error {
+			parsedPermissions, err := parsePOSIXPermissions(permissions, value)
+			if err != nil {
+				return err
+			}
+			permissions = parsedPermissions
+			// TODO: [2023.05.20]
+			// patch `.Permissions()` method in 9P library.
+			// For whatever reason the (unexported)
+			// const `p9.permissionsMask` is defined as `01777`
+			// but should be `0o7777`
+			permissions9 := modeFromFS(permissions) &^ p9.FileModeMask
+			settings.apiOptions = append(
+				settings.apiOptions,
+				WithPermissions(permissions9),
+			)
+			return nil
+		})
+	flagSet.Lookup(permissionsName).
+		DefValue = modeToSymbolicPermissions(permissions)
 }
 
-func registerCommonIPFSFlags(guest filesystem.ID, flagSet *flag.FlagSet,
-	api *multiaddr.Multiaddr,
-	timeout *time.Duration,
-	nodeCache, dirCache *int,
-) {
-	flagPrefix := strings.ToLower(string(guest)) + "-"
-	ipfsAPIVar(flagSet, api)
-	ipfsTimeoutVar(flagPrefix, flagSet, timeout)
-	ipfsNodeCacheVar(flagPrefix, flagSet, nodeCache)
-	ipfsDirCacheVar(flagPrefix, flagSet, dirCache)
-}
-
-func ipfsAPIVar(flagSet *flag.FlagSet, field *multiaddr.Multiaddr) {
-	const (
-		ipfsName  = "ipfs"
-		ipfsUsage = "IPFS API node `maddr`"
-	)
-	ipfsDefaultText := fmt.Sprintf("parses: %s, %s",
-		filepath.Join("$"+ipfsConfigEnv, ipfsAPIFileName),
-		filepath.Join(ipfsConfigDefaultDir, ipfsAPIFileName),
-	)
-	*field = &defaultIPFSMaddr{flagName: ipfsName}
-	flagSet.Func(ipfsName, ipfsUsage, func(s string) (err error) {
-		*field, err = multiaddr.NewMultiaddr(s)
-		return
-	})
-	setDefaultValueText(flagSet, flagDefaultText{
-		ipfsName: ipfsDefaultText,
-	})
-}
-
-func ipfsTimeoutVar(namePrefix string, flagSet *flag.FlagSet, field *time.Duration) {
-	timeoutName := namePrefix + "timeout"
-	const timeoutUsage = "timeout to use when communicating" +
-		" with the IPFS API" +
-		"\nif <= 0, operations will remain pending" +
-		" until the file or system is closed"
-	flagSet.DurationVar(field, timeoutName,
-		1*time.Minute, timeoutUsage,
-	)
-}
-
-func ipfsNodeCacheVar(namePrefix string, flagSet *flag.FlagSet, field *int) {
-	nodeCacheName := namePrefix + "node-cache"
-	const (
-		defaultCacheCount = 64
-		nodeCacheUsage    = "number of nodes to keep in the cache" +
-			"\nnegative values disable node caching"
-	)
-	flagSet.IntVar(field, nodeCacheName, defaultCacheCount, nodeCacheUsage)
-}
-
-func ipfsDirCacheVar(namePrefix string, flagSet *flag.FlagSet, field *int) {
-	dirCacheName := namePrefix + "directory-cache"
-	const (
-		defaultCacheCount = 64
-		dirCacheUsage     = "number of directory entry lists to keep in the cache" +
-			"\nnegative values disable directory caching"
-	)
-	flagSet.IntVar(field, dirCacheName, defaultCacheCount, dirCacheUsage)
-}
-
-func ipnsExpiryVar(namePrefix string, flagSet *flag.FlagSet, field *time.Duration) {
-	expiryName := namePrefix + "expiry"
-	const (
-		expiryUsage = "`duration` of how long a node is considered" +
-			"valid within the cache" +
-			"\nafter this time, the node will be refreshed during" +
-			" its next operation"
-	)
-	flagSet.DurationVar(field, expiryName, 1*time.Minute, expiryUsage)
-}
-
-func (mp *mountPointSettings[HT, GT, H, G]) BindFlags(flagSet *flag.FlagSet) {
-	mp.mountCmdSettings.BindFlags(flagSet)
-	H(&mp.Host).BindFlags(flagSet)
-	G(&mp.Guest).BindFlags(flagSet)
-}
-
-func (mp *mountPointSettings[HT, GT, H, G]) lazyInit() error {
-	if host, ok := any(&mp.Host).(lazyInitializer); ok {
-		if err := host.lazyInit(); err != nil {
-			return err
-		}
+func (mo mountCmdOptions[HT, GT, HM, GM, HC, GC]) make() (mountCmdSettings[HM, GM], error) {
+	var settings mountCmdSettings[HM, GM]
+	if err := applyOptions(&settings, mo...); err != nil {
+		return settings, err
 	}
-	if guest, ok := any(&mp.Guest).(lazyInitializer); ok {
-		if err := guest.lazyInit(); err != nil {
-			return err
-		}
+	if err := settings.clientSettings.fillDefaults(); err != nil {
+		return settings, err
 	}
-	return nil
+	return settings, nil
 }
 
-func (mp *mountPointSettings[HT, GT, H, G]) marshalMountpoints(args ...string) ([][]byte, error) {
+func (mp *mountCmdSettings[HM, GM]) marshalMountpoints(args ...string) ([][]byte, error) {
 	if len(args) == 0 {
 		args = []string{""}
 	}
 	data := make([][]byte, len(args))
 	for i, arg := range args {
-		hostData, err := H(&mp.Host).marshal(arg)
+		hostData, err := mp.host.marshal(arg)
 		if err != nil {
 			return nil, err
 		}
-		guestData, err := G(&mp.Guest).marshal(arg)
+		guestData, err := mp.guest.marshal(arg)
 		if err != nil {
 			return nil, err
 		}
@@ -299,178 +238,6 @@ func (mp *mountPointSettings[HT, GT, H, G]) marshalMountpoints(args ...string) (
 		data[i] = datum
 	}
 	return data, nil
-}
-
-func (set *fuseSettings) BindFlags(flagSet *flag.FlagSet) {
-	const (
-		host    = "fuse"
-		prefix  = host + "-"
-		uidName = prefix + "uid"
-		gidName = prefix + "gid"
-	)
-	flagMonitor := &set.haveFUSEFlags
-	bindFUSEUIDFlag(uidName, &set.UID, flagSet, flagMonitor)
-	bindFUSEGIDFlag(gidName, &set.GID, flagSet, flagMonitor)
-	const (
-		optionsName  = prefix + "options"
-		optionsUsage = "raw options passed directly to mount" +
-			"\nmust be specified once per `FUSE flag`" +
-			"\n (E.g. `-" + optionsName +
-			" \"-o uid=0,gid=0\" -" +
-			optionsName + "\"--VolumePrefix=somePrefix\"`)"
-	)
-	flagSet.Func(optionsName, optionsUsage, func(s string) error {
-		set.Options = append(set.Options, s)
-		return nil
-	})
-	const (
-		logName  = prefix + "log"
-		logUsage = "sets a log `prefix` and enables logging in FUSE operations"
-	)
-	flagSet.StringVar(&set.LogPrefix, logName, "", logUsage)
-	const (
-		readdirName  = prefix + "readdir-plus"
-		readdirUsage = "informs the host that the hosted file system has the readdir-plus capability"
-	)
-	readdirPlusCapible := runtime.GOOS == "windows"
-	flagSet.BoolVar(&set.ReaddirPlus, readdirName, readdirPlusCapible, readdirUsage)
-	const (
-		caseName  = prefix + "case-insensitive"
-		caseUsage = "informs the host that the hosted file system is case insensitive"
-	)
-	flagSet.BoolVar(&set.CaseInsensitive, caseName, false, caseUsage)
-	const (
-		deleteName  = prefix + "delete-access"
-		deleteUsage = "informs the host that the hosted file system implements \"Access\" which understands the \"DELETE_OK\" flag"
-	)
-	flagSet.BoolVar(&set.CaseInsensitive, deleteName, false, deleteUsage)
-}
-
-func bindFUSEUIDFlag(name string, reference *uint32,
-	flagSet *flag.FlagSet, setMonitor *bool,
-) {
-	bindFUSEIDFlag(name, "uid", reference, flagSet, setMonitor)
-}
-
-func bindFUSEGIDFlag(name string, reference *uint32,
-	flagSet *flag.FlagSet, setMonitor *bool,
-) {
-	bindFUSEIDFlag(name, "gid", reference, flagSet, setMonitor)
-}
-
-func (set *fuseSettings) marshal(arg string) ([]byte, error) {
-	if arg == "" &&
-		set.Options == nil {
-		err := fmt.Errorf(
-			"%w - expected mount point",
-			command.ErrUsage,
-		)
-		return nil, err
-	}
-	if set.Options != nil &&
-		set.haveFUSEFlags {
-		err := fmt.Errorf("%w - cannot combine"+
-			" built-in/common FUSE flags"+
-			" with raw/platform-specific flags"+
-			" (the former can be "+
-			"provided manually within the latter)",
-			command.ErrUsage,
-		)
-		return nil, err
-	}
-	host := set.Host
-	host.Point = arg
-	return json.Marshal(host)
-}
-
-func lazyMaddr(maddrPtr *multiaddr.Multiaddr) error {
-	if lazy, ok := (*maddrPtr).(lazyFlag[multiaddr.Multiaddr]); ok {
-		maddr, err := lazy.get()
-		if err != nil {
-			return err
-		}
-		*maddrPtr = maddr
-	}
-	return nil
-}
-
-func (set *mountIPFSSettings) BindFlags(flagSet *flag.FlagSet) {
-	registerCommonIPFSFlags(ipfs.IPFSID, flagSet,
-		&set.APIMaddr,
-		&set.APITimeout,
-		&set.NodeCacheCount,
-		&set.DirectoryCacheCount,
-	)
-}
-
-func (set *mountIPFSSettings) lazyInit() error {
-	return lazyMaddr(&set.APIMaddr)
-}
-
-func (set *mountIPFSSettings) marshal(string) ([]byte, error) {
-	return json.Marshal(set)
-}
-
-func (set *mountPinFSSettings) BindFlags(flagSet *flag.FlagSet) {
-	registerCommonIPFSFlags(ipfs.PinFSID, flagSet,
-		&set.APIMaddr,
-		&set.APITimeout,
-		&set.NodeCacheCount,
-		&set.DirectoryCacheCount,
-	)
-	const (
-		expiryName  = "pinfs-expiry"
-		expiryUsage = "`duration` pins are cached for" +
-			"\nnegative values retain cache forever, 0 disables cache"
-		expiryDefault = 30 * time.Second
-	)
-	flagSet.DurationVar(&set.CacheExpiry, expiryName, expiryDefault, expiryUsage)
-}
-
-func (set *mountPinFSSettings) lazyInit() error {
-	return lazyMaddr(&set.APIMaddr)
-}
-
-func (set *mountPinFSSettings) marshal(string) ([]byte, error) {
-	return json.Marshal(set)
-}
-
-func (set *mountIPNSSettings) BindFlags(flagSet *flag.FlagSet) {
-	registerCommonIPFSFlags(ipfs.IPNSID, flagSet,
-		&set.APIMaddr,
-		&set.APITimeout,
-		&set.NodeCacheCount,
-		&set.DirectoryCacheCount,
-	)
-	flagPrefix := strings.ToLower(string(ipfs.IPNSID)) + "-"
-	ipnsExpiryVar(flagPrefix, flagSet, &set.NodeExpiry)
-}
-
-func (set *mountIPNSSettings) lazyInit() error {
-	return lazyMaddr(&set.APIMaddr)
-}
-
-func (set *mountIPNSSettings) marshal(string) ([]byte, error) {
-	return json.Marshal(set)
-}
-
-func (set *mountKeyFSFSSettings) BindFlags(flagSet *flag.FlagSet) {
-	registerCommonIPFSFlags(ipfs.KeyFSID, flagSet,
-		&set.APIMaddr,
-		&set.APITimeout,
-		&set.NodeCacheCount,
-		&set.DirectoryCacheCount,
-	)
-	flagPrefix := strings.ToLower(string(ipfs.KeyFSID)) + "-"
-	ipnsExpiryVar(flagPrefix, flagSet, &set.NodeExpiry)
-}
-
-func (set *mountKeyFSFSSettings) lazyInit() error {
-	return lazyMaddr(&set.APIMaddr)
-}
-
-func (set *mountKeyFSFSSettings) marshal(string) ([]byte, error) {
-	return json.Marshal(set)
 }
 
 // Mount constructs the command which requests
@@ -496,7 +263,7 @@ func makeMountSubcommands() []command.Command {
 		)
 		switch hostAPI {
 		case cgofuse.HostID:
-			guestCommands := makeGuestCommands[fuseSettings](hostAPI)
+			guestCommands := makeGuestCommands[fuseOptions, fuseSettings](hostAPI)
 			subCommands[i] = command.SubcommandGroup(
 				commandName, synopsis,
 				guestCommands,
@@ -509,10 +276,10 @@ func makeMountSubcommands() []command.Command {
 	return subCommands
 }
 
-// func makeGuestCommands[H hostCommand](host filesystem.Host) []command.Command {
 func makeGuestCommands[
-	H any,
-	HC hostSettings[H],
+	HT any,
+	HM marshaller,
+	HC mountCmdHost[HT, HM],
 ](host filesystem.Host,
 ) []command.Command {
 	var (
@@ -522,13 +289,13 @@ func makeGuestCommands[
 	for i, fsid := range fsidTable {
 		switch fsid {
 		case ipfs.IPFSID:
-			subcommands[i] = makeMountCommand[HC, mountIPFSSettings](host, fsid)
+			subcommands[i] = makeMountCommand[HC, HM, ipfsOptions, ipfsSettings](host, fsid)
 		case ipfs.PinFSID:
-			subcommands[i] = makeMountCommand[HC, mountPinFSSettings](host, fsid)
+			subcommands[i] = makeMountCommand[HC, HM, pinFSOptions, pinFSSettings](host, fsid)
 		case ipfs.IPNSID:
-			subcommands[i] = makeMountCommand[HC, mountIPNSSettings](host, fsid)
+			subcommands[i] = makeMountCommand[HC, HM, ipnsOptions, ipnsSettings](host, fsid)
 		case ipfs.KeyFSID:
-			subcommands[i] = makeMountCommand[HC, mountKeyFSFSSettings](host, fsid)
+			subcommands[i] = makeMountCommand[HC, HM, keyFSOptions, keyFSSettings](host, fsid)
 		default:
 			panic("unexpected API ID for host file system interface")
 		}
@@ -537,25 +304,39 @@ func makeGuestCommands[
 }
 
 func makeMountCommand[
-	HC hostSettings[H],
-	G, H any,
-	GC guestSettings[G],
-](host filesystem.Host, fsid filesystem.ID,
+	HC mountCmdHost[HT, HM],
+	HM marshaller,
+	GT any,
+	GM marshaller,
+	GC mountCmdGuest[GT, GM],
+	HT any,
+](host filesystem.Host, guest filesystem.ID,
 ) command.Command {
-	const usage = "Placeholder text."
+	type (
+		MO  = mountCmdOption[HT, GT, HM, GM, HC, GC]
+		MOS = mountCmdOptions[HT, GT, HM, GM, HC, GC]
+	)
 	var (
 		hostFormalName  = string(host)
-		guestFormalName = string(fsid)
+		guestFormalName = string(guest)
 		cmdName         = strings.ToLower(guestFormalName)
-		synopsis        = fmt.Sprintf("Mount %s via the %s API.", guestFormalName, hostFormalName)
+		synopsis        = fmt.Sprintf(
+			"Mount %s via the %s API.",
+			guestFormalName, hostFormalName,
+		)
+		usage = header(synopsis) + "\n\n" +
+			underline(hostFormalName) + "\n" +
+			HC(nil).usage(guest) + "\n\n" +
+			underline(guestFormalName) + "\n" +
+			GC(nil).usage(host)
 	)
-	type MS = *mountPointSettings[H, G, HC, GC]
-	return mustMakeCommand[MS](cmdName, synopsis, usage,
-		func(ctx context.Context, settings MS, args ...string) error {
-			if err := settings.lazyInit(); err != nil {
+	return command.MakeVariadicCommand[MOS](cmdName, synopsis, usage,
+		func(ctx context.Context, arguments []string, options ...MO) error {
+			settings, err := MOS(options).make()
+			if err != nil {
 				return err
 			}
-			data, err := settings.marshalMountpoints(args...)
+			data, err := settings.marshalMountpoints(arguments...)
 			if err != nil {
 				return err
 			}
@@ -564,8 +345,8 @@ func makeMountCommand[
 			if err != nil {
 				return err
 			}
-			options := settings.mountCmdSettings.options
-			if err := client.Mount(host, fsid, data, options...); err != nil {
+			apiOptions := settings.apiOptions
+			if err := client.Mount(host, guest, data, apiOptions...); err != nil {
 				return errors.Join(err, client.Close())
 			}
 			if err := client.Close(); err != nil {
@@ -578,13 +359,11 @@ func makeMountCommand[
 func (c *Client) Mount(host filesystem.Host, fsid filesystem.ID, data [][]byte, options ...MountOption) error {
 	set := mountSettings{
 		permissions: mountAPIPermissionsDefault,
-		uid:         mountAPIUIDDefault,
-		gid:         mountAPIGIDDefault,
+		uid:         apiUIDDefault,
+		gid:         apiGIDDefault,
 	}
-	for _, setter := range options {
-		if err := setter(&set); err != nil {
-			return err
-		}
+	if err := applyOptions(&set, options...); err != nil {
+		return err
 	}
 	mounts, err := (*p9.Client)(c).Attach(mountsFileName)
 	if err != nil {

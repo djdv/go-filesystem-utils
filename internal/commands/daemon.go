@@ -2,7 +2,6 @@ package commands
 
 import (
 	"context"
-	"encoding/csv"
 	"errors"
 	"flag"
 	"fmt"
@@ -19,10 +18,7 @@ import (
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
-	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
-	"github.com/djdv/go-filesystem-utils/internal/filesystem/cgofuse"
-	"github.com/djdv/go-filesystem-utils/internal/filesystem/ipfs"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	p9net "github.com/djdv/go-filesystem-utils/internal/net/9p"
 	"github.com/djdv/p9/p9"
@@ -36,10 +32,12 @@ type (
 		serverMaddrs []multiaddr.Multiaddr
 		exitInterval time.Duration
 		nineIDs
-		commonSettings
+		sharedSettings
 		permissions fs.FileMode
 	}
-	nineIDs struct {
+	daemonOption  func(*daemonSettings) error
+	daemonOptions []daemonOption
+	nineIDs       struct {
 		uid p9.UID
 		gid p9.GID
 	}
@@ -80,26 +78,6 @@ type (
 	serveFunc  = func(manet.Listener) error
 	checkFunc  = func() (bool, shutdownDisposition, error)
 
-	mountHost[T any] interface {
-		*T
-		p9fs.FieldParser
-		p9fs.Mounter
-		p9fs.HostIdentifier
-	}
-	mountGuest[T any] interface {
-		*T
-		p9fs.FieldParser
-		p9fs.SystemMaker
-		p9fs.GuestIdentifier
-	}
-	mountPoint[
-		HT, GT any,
-		H mountHost[HT],
-		G mountGuest[GT],
-	] struct {
-		Host  HT `json:"host"`
-		Guest GT `json:"guest"`
-	}
 	waitGroupChan[T any] struct {
 		ch      chan T
 		closing chan struct{}
@@ -110,157 +88,102 @@ type (
 )
 
 const (
-	daemonCommandName = "daemon"
+	daemonCommandName     = "daemon"
+	apiUIDDefault         = p9.NoUID
+	apiGIDDefault         = p9.NoGID
+	apiPermissionsDefault = 0o751
 
 	errServe               = generic.ConstError("encountered error while serving")
 	errShutdownDisposition = generic.ConstError("invalid shutdown disposition")
 )
 
-func (mp *mountPoint[HT, GT, H, G]) ParseField(key, value string) error {
-	const (
-		hostPrefix  = "host."
-		guestPrefix = "guest."
-	)
-	var (
-		prefix  string
-		parseFn func(_, _ string) error
-	)
-	switch {
-	case strings.HasPrefix(key, hostPrefix):
-		prefix = hostPrefix
-		parseFn = H(&mp.Host).ParseField
-	case strings.HasPrefix(key, guestPrefix):
-		prefix = guestPrefix
-		parseFn = G(&mp.Guest).ParseField
-	default:
-		const wildcard = "*"
-		return p9fs.FieldError{
-			Key:   key,
-			Tried: []string{hostPrefix + wildcard, guestPrefix + wildcard},
-		}
-	}
-	baseKey := key[len(prefix):]
-	err := parseFn(baseKey, value)
-	if err == nil {
-		return nil
-	}
-	var fErr p9fs.FieldError
-	if !errors.As(err, &fErr) {
-		return err
-	}
-	tried := fErr.Tried
-	for i, e := range fErr.Tried {
-		tried[i] = prefix + e
-	}
-	fErr.Tried = tried
-	return fErr
-}
-
-func (mp *mountPoint[HT, GT, H, G]) MakeFS() (fs.FS, error) {
-	return G(&mp.Guest).MakeFS()
-}
-
-func (mp *mountPoint[HT, GT, H, G]) Mount(fsys fs.FS) (io.Closer, error) {
-	return H(&mp.Host).Mount(fsys)
-}
-
-func (mp *mountPoint[HT, GT, H, G]) HostID() filesystem.Host {
-	return H(&mp.Host).HostID()
-}
-
-func (mp *mountPoint[HT, GT, H, G]) GuestID() filesystem.ID {
-	return G(&mp.Guest).GuestID()
-}
-
-func (set *daemonSettings) BindFlags(flagSet *flag.FlagSet) {
-	set.commonSettings.BindFlags(flagSet)
-	const (
-		sockName  = serverFlagName
-		sockUsage = "listening socket `maddr`" +
-			"\ncan be specified multiple times and/or comma separated" +
-			"\n\b" // Newline for default value, sans space.
-	)
-	var (
-		sockFlagSet     bool
-		sockDefaultText string
-	)
-	{
-		maddrs, err := userServiceMaddrs()
-		if err != nil {
-			panic(err)
-		}
-		sockDefault := maddrs[0]
-		sockDefaultText = sockDefault.String()
-		set.serverMaddrs = maddrs[:1]
-	}
-	flagSet.Func(sockName, sockUsage, func(s string) error {
-		maddrStrings, err := csv.NewReader(strings.NewReader(s)).Read()
+func (do *daemonOptions) BindFlags(flagSet *flag.FlagSet) {
+	var sharedOptions sharedOptions
+	(&sharedOptions).BindFlags(flagSet)
+	*do = append(*do, func(ds *daemonSettings) error {
+		subset, err := sharedOptions.make()
 		if err != nil {
 			return err
 		}
-		for _, maddrString := range maddrStrings {
-			maddr, err := multiaddr.NewMultiaddr(maddrString)
+		ds.sharedSettings = subset
+		return nil
+	})
+	const serverUsage = "listening socket `maddr`" +
+		"\ncan be specified multiple times and/or comma separated"
+	flagSetFunc(flagSet, serverFlagName, serverUsage, do,
+		func(value []multiaddr.Multiaddr, settings *daemonSettings) error {
+			settings.serverMaddrs = append(settings.serverMaddrs, value...)
+			return nil
+		})
+	flagSet.Lookup(serverFlagName).
+		DefValue = defaultServerMaddr().String()
+	const (
+		exitName  = exitAfterFlagName
+		exitUsage = "check every `interval` (e.g. \"30s\") and shutdown the daemon if its idle"
+	)
+	flagSetFunc(flagSet, exitName, exitUsage, do,
+		func(value time.Duration, settings *daemonSettings) error {
+			settings.exitInterval = value
+			return nil
+		})
+	const (
+		uidName  = apiFlagPrefix + "uid"
+		uidUsage = "file owner's `uid`"
+	)
+	flagSetFunc(flagSet, uidName, uidUsage, do,
+		func(value p9.UID, settings *daemonSettings) error {
+			settings.nineIDs.uid = value
+			return nil
+		})
+	flagSet.Lookup(uidName).
+		DefValue = idString(apiUIDDefault)
+	const (
+		gidName  = apiFlagPrefix + "gid"
+		gidUsage = "file owner's `gid`"
+	)
+	flagSetFunc(flagSet, gidName, gidUsage, do,
+		func(value p9.GID, settings *daemonSettings) error {
+			settings.nineIDs.gid = value
+			return nil
+		})
+	flagSet.Lookup(gidName).
+		DefValue = idString(apiGIDDefault)
+	const (
+		permissionsName  = apiFlagPrefix + "permissions"
+		permissionsUsage = "`permissions` to use when creating service files"
+	)
+	apiPermissions := fs.FileMode(apiPermissionsDefault)
+	flagSetFunc(flagSet, permissionsName, permissionsUsage, do,
+		func(value string, settings *daemonSettings) error {
+			permissions, err := parsePOSIXPermissions(apiPermissions, value)
 			if err != nil {
 				return err
 			}
-			if !sockFlagSet {
-				// Don't append to the default value(s).
-				set.serverMaddrs = []multiaddr.Multiaddr{maddr}
-				sockFlagSet = true
-				continue
-			}
-			set.serverMaddrs = append(set.serverMaddrs, maddr)
+			apiPermissions = permissions &^ fs.ModeType
+			settings.permissions = apiPermissions
+			return nil
+		})
+	flagSet.Lookup(permissionsName).
+		DefValue = modeToSymbolicPermissions(fs.FileMode(apiPermissionsDefault &^ p9.FileModeMask))
+}
+
+func (do daemonOptions) make() (daemonSettings, error) {
+	settings := daemonSettings{
+		nineIDs: nineIDs{
+			uid: apiUIDDefault,
+			gid: apiGIDDefault,
+		},
+		permissions: apiPermissionsDefault,
+	}
+	if err := applyOptions(&settings, do...); err != nil {
+		return daemonSettings{}, err
+	}
+	if settings.serverMaddrs == nil {
+		settings.serverMaddrs = []multiaddr.Multiaddr{
+			defaultServerMaddr(),
 		}
-		return nil
-	})
-	const (
-		exitFlag  = exitAfterFlagName
-		exitUsage = "check every `interval` (e.g. \"30s\") and shutdown the daemon if its idle"
-	)
-	flagSet.DurationVar(&set.exitInterval, exitFlag, 0, exitUsage)
-	const (
-		uidName        = apiFlagPrefix + "uid"
-		uidDefaultText = "nobody"
-		uidUsage       = "file owner's `uid`"
-	)
-	set.uid = p9.NoUID
-	flagSet.Func(uidName, uidUsage, func(s string) (err error) {
-		set.uid, err = parseID[p9.UID](s)
-		return
-	})
-	const (
-		gidName        = apiFlagPrefix + "gid"
-		gidDefaultText = "nobody"
-		gidUsage       = "file owner's `gid`"
-	)
-	set.gid = p9.NoGID
-	flagSet.Func(gidName, gidUsage, func(s string) (err error) {
-		set.gid, err = parseID[p9.GID](s)
-		return
-	})
-	const (
-		permissionsName    = apiFlagPrefix + "permissions"
-		permissionsUsage   = "`permissions` to use when creating service files"
-		permissionsDefault = 0o751
-	)
-	permissionsDefaultText := modeToSymbolicPermissions(
-		fs.FileMode(permissionsDefault &^ p9.FileModeMask),
-	)
-	set.permissions = permissionsDefault
-	flagSet.Func(permissionsName, permissionsUsage, func(s string) (err error) {
-		permissions, err := parsePOSIXPermissions(set.permissions, s)
-		if err != nil {
-			return err
-		}
-		set.permissions = permissions &^ fs.ModeType
-		return
-	})
-	setDefaultValueText(flagSet, flagDefaultText{
-		uidName:         uidDefaultText,
-		gidName:         gidDefaultText,
-		sockName:        sockDefaultText,
-		permissionsName: permissionsDefaultText,
-	})
+	}
+	return settings, nil
 }
 
 // Daemon constructs the command which
@@ -269,15 +192,20 @@ func Daemon() command.Command {
 	const (
 		name     = daemonCommandName
 		synopsis = "Host system services."
-		usage    = "File system service daemon."
 	)
-	return mustMakeCommand[*daemonSettings](name, synopsis, usage, daemonExecute)
+	usage := header("File system service daemon.") +
+		"\n\n" + synopsis
+	return command.MakeVariadicCommand[daemonOptions](name, synopsis, usage, daemonExecute)
 }
 
-func daemonExecute(ctx context.Context, set *daemonSettings) error {
+func daemonExecute(ctx context.Context, options ...daemonOption) error {
+	settings, err := daemonOptions(options).make()
+	if err != nil {
+		return err
+	}
 	dCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	system, err := newSystem(dCtx, set)
+	system, err := newSystem(dCtx, &settings)
 	if err != nil {
 		return err
 	}
@@ -306,10 +234,10 @@ func daemonExecute(ctx context.Context, set *daemonSettings) error {
 	)
 	var (
 		listener    = listenSys.Listener
-		permissions = modeFromFS(set.permissions)
+		permissions = modeFromFS(settings.permissions)
 		procExitCh  = listenOn(listener, permissions,
 			stopSend, errs,
-			set.serverMaddrs...,
+			settings.serverMaddrs...,
 		)
 		control  = fsys.control.directory
 		handleFn = server.Handle
@@ -318,7 +246,7 @@ func daemonExecute(ctx context.Context, set *daemonSettings) error {
 		control, handleFn,
 		serviceWg, errs,
 	)
-	idleCheckInterval := set.exitInterval
+	idleCheckInterval := settings.exitInterval
 	setupExtraStopWriters(idleCheckInterval, fsys,
 		stopSend, errs,
 		log,
@@ -546,38 +474,18 @@ func newDaemonLog(verbose bool) ulog.Logger {
 	return golog.New(os.Stderr, prefix, flags)
 }
 
-func commonOptions[OT p9fs.Options](parent p9.File, child string,
-	path ninePath, uid p9.UID, gid p9.GID, permissions p9.FileMode,
-) []OT {
-	return []OT{
-		p9fs.WithParent[OT](parent, child),
-		p9fs.WithPath[OT](path),
-		p9fs.WithUID[OT](uid),
-		p9fs.WithGID[OT](gid),
-		p9fs.WithPermissions[OT](permissions),
-	}
-}
-
-func unlinkEmptyDirs[OT p9fs.DirectoryOptions](autoUnlink bool) []OT {
-	return []OT{
-		p9fs.UnlinkEmptyChildren[OT](autoUnlink),
-		p9fs.UnlinkWhenEmpty[OT](autoUnlink),
-	}
-}
-
 func newFileSystem(ctx context.Context, uid p9.UID, gid p9.GID) (fileSystem, error) {
 	const permissions = p9fs.ReadUser | p9fs.WriteUser | p9fs.ExecuteUser |
 		p9fs.ReadGroup | p9fs.ExecuteGroup |
 		p9fs.ReadOther | p9fs.ExecuteOther
 	var (
 		path         = new(atomic.Uint64)
-		_, root, err = p9fs.NewDirectory(append(
-			commonOptions[p9fs.DirectoryOption](
-				nil, "", path,
-				uid, gid, permissions,
-			),
+		_, root, err = p9fs.NewDirectory(
+			p9fs.WithPath[p9fs.DirectoryOption](path),
+			p9fs.WithUID[p9fs.DirectoryOption](uid),
+			p9fs.WithGID[p9fs.DirectoryOption](gid),
+			p9fs.WithPermissions[p9fs.DirectoryOption](permissions),
 			p9fs.WithoutRename[p9fs.DirectoryOption](true),
-		)...,
 		)
 	)
 	if err != nil {
@@ -605,146 +513,17 @@ func newFileSystem(ctx context.Context, uid p9.UID, gid p9.GID) (fileSystem, err
 	return system, linkSystems(system)
 }
 
-func newMounter(parent p9.File, path ninePath,
-	uid p9.UID, gid p9.GID, permissions p9.FileMode,
-) (mountSubsystem, error) {
-	const autoUnlink = true
-	var (
-		makeHostFn = newHostFunc(path, autoUnlink)
-		options    = append(
-			commonOptions[p9fs.MounterOption](
-				parent, mountsFileName, path,
-				uid, gid, permissions,
-			),
-			p9fs.UnlinkEmptyChildren[p9fs.MounterOption](autoUnlink),
-			p9fs.WithoutRename[p9fs.MounterOption](true),
-		)
-		_, mountFS, err = p9fs.NewMounter(makeHostFn, options...)
-	)
-	if err != nil {
-		return mountSubsystem{}, err
-	}
-	return mountSubsystem{
-		name:      mountsFileName,
-		MountFile: mountFS,
-	}, nil
-}
-
-func mountsDirCreatePreamble(mode p9.FileMode) (p9.FileMode, error) {
-	if !mode.IsDir() {
-		return 0, generic.ConstError("expected to be called from mkdir")
-	}
-	return mode.Permissions(), nil
-}
-
-func newHostFunc(path ninePath, autoUnlink bool) p9fs.MakeHostFunc {
-	linkOptions := unlinkEmptyDirs[p9fs.HosterOption](autoUnlink)
-	return func(parent p9.File, host filesystem.Host, mode p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
-		permissions, err := mountsDirCreatePreamble(mode)
-		if err != nil {
-			return p9.QID{}, nil, err
-		}
-		var makeGuestFn p9fs.MakeGuestFunc
-		switch host {
-		case cgofuse.HostID:
-			makeGuestFn = newGuestFunc[*cgofuse.Host](path, autoUnlink)
-		default:
-			err := fmt.Errorf(`unexpected host "%v"`, host)
-			return p9.QID{}, nil, err
-		}
-		var (
-			name    = string(host)
-			options = append(
-				commonOptions[p9fs.HosterOption](
-					parent, name, path,
-					uid, gid, permissions,
-				),
-				linkOptions...,
-			)
-		)
-		options = append(options,
-			p9fs.WithoutRename[p9fs.HosterOption](true),
-		)
-		return p9fs.NewHostFile(makeGuestFn, options...)
-	}
-}
-
-func newGuestFunc[H mountHost[T], T any](path ninePath, autoUnlink bool) p9fs.MakeGuestFunc {
-	linkOptions := unlinkEmptyDirs[p9fs.GuestOption](autoUnlink)
-	return func(parent p9.File, guest filesystem.ID, mode p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
-		permissions, err := mountsDirCreatePreamble(mode)
-		if err != nil {
-			return p9.QID{}, nil, err
-		}
-		var (
-			makeMountPointFn p9fs.MakeMountPointFunc
-			options          = append(
-				commonOptions[p9fs.GuestOption](
-					parent, string(guest), path,
-					uid, gid, permissions,
-				),
-				linkOptions...,
-			)
-		)
-		// TODO: share IPFS instances
-		// when server API is the same
-		// (needs some wrapper too so
-		// Close works properly.)
-		switch guest {
-		case ipfs.IPFSID:
-			makeMountPointFn = newMountPointFunc[H, *ipfs.IPFSGuest](path)
-		case ipfs.PinFSID:
-			makeMountPointFn = newMountPointFunc[H, *ipfs.PinFSGuest](path)
-		case ipfs.IPNSID:
-			makeMountPointFn = newMountPointFunc[H, *ipfs.IPNSGuest](path)
-		case ipfs.KeyFSID:
-			makeMountPointFn = newMountPointFunc[H, *ipfs.KeyFSGuest](path)
-		default:
-			err := fmt.Errorf(`unexpected guest "%v"`, guest)
-			return p9.QID{}, nil, err
-		}
-		return p9fs.NewGuestFile(makeMountPointFn, options...)
-	}
-}
-
-func mountsFileCreatePreamble(mode p9.FileMode) (p9.FileMode, error) {
-	if !mode.IsRegular() {
-		return 0, generic.ConstError("expected to be called from mknod")
-	}
-	return mode.Permissions(), nil
-}
-
-func newMountPointFunc[
-	H mountHost[HT],
-	G mountGuest[GT],
-	HT, GT any,
-](path ninePath,
-) p9fs.MakeMountPointFunc {
-	return func(parent p9.File, name string, mode p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
-		permissions, err := mountsFileCreatePreamble(mode)
-		if err != nil {
-			return p9.QID{}, nil, err
-		}
-		return p9fs.NewMountPoint[*mountPoint[HT, GT, H, G]](
-			commonOptions[p9fs.MountPointOption](
-				parent, name, path,
-				uid, gid, permissions,
-			)...,
-		)
-	}
-}
-
 func newListener(ctx context.Context, parent p9.File, path ninePath,
 	uid p9.UID, gid p9.GID, permissions p9.FileMode,
 ) (listenSubsystem, error) {
 	lCtx, cancel := context.WithCancel(ctx)
-	_, listenFS, listeners, err := p9fs.NewListener(lCtx, append(
-		commonOptions[p9fs.ListenerOption](
-			parent, listenersFileName, path,
-			uid, gid, permissions,
-		),
+	_, listenFS, listeners, err := p9fs.NewListener(lCtx,
+		p9fs.WithParent[p9fs.ListenerOption](parent, listenersFileName),
+		p9fs.WithPath[p9fs.ListenerOption](path),
+		p9fs.WithUID[p9fs.ListenerOption](uid),
+		p9fs.WithGID[p9fs.ListenerOption](gid),
+		p9fs.WithPermissions[p9fs.ListenerOption](permissions),
 		p9fs.UnlinkEmptyChildren[p9fs.ListenerOption](true),
-	)...,
 	)
 	if err != nil {
 		cancel()
@@ -762,10 +541,13 @@ func newControl(ctx context.Context,
 	parent p9.File, path ninePath,
 	uid p9.UID, gid p9.GID, permissions p9.FileMode,
 ) (controlSubsystem, error) {
-	_, control, err := p9fs.NewDirectory(append(
-		commonOptions[p9fs.DirectoryOption](parent, controlFileName, path, uid, gid, permissions),
+	_, control, err := p9fs.NewDirectory(
+		p9fs.WithParent[p9fs.DirectoryOption](parent, controlFileName),
+		p9fs.WithPath[p9fs.DirectoryOption](path),
+		p9fs.WithUID[p9fs.DirectoryOption](uid),
+		p9fs.WithGID[p9fs.DirectoryOption](gid),
+		p9fs.WithPermissions[p9fs.DirectoryOption](permissions),
 		p9fs.WithoutRename[p9fs.DirectoryOption](true),
-	)...,
 	)
 	if err != nil {
 		return controlSubsystem{}, err
@@ -775,7 +557,11 @@ func newControl(ctx context.Context,
 		filePermissions = permissions ^ (p9fs.ExecuteOther | p9fs.ExecuteGroup | p9fs.ExecuteUser)
 	)
 	_, shutdownFile, shutdownCh, err := p9fs.NewChannelFile(sCtx,
-		commonOptions[p9fs.ChannelOption](control, shutdownFileName, path, uid, gid, filePermissions)...,
+		p9fs.WithParent[p9fs.ChannelOption](control, shutdownFileName),
+		p9fs.WithPath[p9fs.ChannelOption](path),
+		p9fs.WithUID[p9fs.ChannelOption](uid),
+		p9fs.WithGID[p9fs.ChannelOption](gid),
+		p9fs.WithPermissions[p9fs.ChannelOption](filePermissions),
 	)
 	if err != nil {
 		cancel()
@@ -847,7 +633,7 @@ func serveListeners(serveFn serveFunc, listeners <-chan manet.Listener,
 				errors.Is(err, net.ErrClosed) {
 				return
 			}
-			err = fmt.Errorf("%w: %s - %s",
+			err = fmt.Errorf("%w: %s - %w",
 				errServe, listener.Multiaddr(), err,
 			)
 			errs.send(err)
@@ -1113,7 +899,7 @@ func stopOnShutdownWrite(data <-chan []byte, stopper wgShutdown,
 				errs.send(err)
 				continue
 			}
-			log.Print("external source requested to shutdown")
+			log.Printf(`external source requested to shutdown: "%s"`, level.String())
 			if !stopper.send(level) {
 				return
 			}
