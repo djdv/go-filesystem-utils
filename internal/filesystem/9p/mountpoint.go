@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	perrors "github.com/djdv/p9/errors"
 	"github.com/djdv/p9/fsimpl/templatefs"
 	"github.com/djdv/p9/p9"
@@ -51,7 +52,6 @@ type (
 		GuestID() filesystem.ID
 	}
 	MountPoint interface {
-		FieldParser
 		SystemMaker
 		Mounter
 		HostIdentifier
@@ -228,11 +228,17 @@ func (mf *MountPointFile[MP]) parseFieldsLocked(b []byte) error {
 	for _, fields := range tokenize(b) {
 		switch fields.typ() {
 		case keyAndValue:
-			var (
-				key, value = fields[key], fields[value]
-				mountPoint = mf.mountPoint
-			)
-			if err := mountPoint.ParseField(key, value); err != nil {
+			parser, ok := any(mf.mountPoint).(FieldParser)
+			if !ok {
+				// TODO: [Go 1.21] use [errors.ErrUnsupported].
+				const unsupported = generic.ConstError("unsupported operation")
+				return fmt.Errorf(
+					"%w - %w: %T does not implement field parser",
+					perrors.EINVAL, unsupported, mf.mountPoint,
+				)
+			}
+			key, value := fields[key], fields[value]
+			if err := parser.ParseField(key, value); err != nil {
 				return errors.Join(perrors.EINVAL, err)
 			}
 			mf.modified = true
