@@ -18,13 +18,11 @@ import (
 type (
 	mountPointHost[T any] interface {
 		*T
-		p9fs.FieldParser
 		p9fs.Mounter
 		p9fs.HostIdentifier
 	}
 	mountPointGuest[T any] interface {
 		*T
-		p9fs.FieldParser
 		p9fs.SystemMaker
 		p9fs.GuestIdentifier
 	}
@@ -170,16 +168,33 @@ func (mp *mountPoint[HT, GT, HC, GC]) ParseField(key, value string) error {
 		guestPrefix = "guest."
 	)
 	var (
-		prefix  string
-		parseFn func(_, _ string) error
+		prefix string
+		parser p9fs.FieldParser
+	)
+	const (
+		// TODO: [Go 1.21] use [errors.ErrUnsupported].
+		unsupported    = generic.ConstError("unsupported operation")
+		unsupportedFmt = "%w: %T does not implement field parser"
 	)
 	switch {
 	case strings.HasPrefix(key, hostPrefix):
 		prefix = hostPrefix
-		parseFn = HC(&mp.Host).ParseField
+		var ok bool
+		if parser, ok = any(&mp.Host).(p9fs.FieldParser); !ok {
+			return fmt.Errorf(
+				unsupportedFmt,
+				unsupported, &mp.Host,
+			)
+		}
 	case strings.HasPrefix(key, guestPrefix):
 		prefix = guestPrefix
-		parseFn = GC(&mp.Guest).ParseField
+		var ok bool
+		if parser, ok = any(&mp.Guest).(p9fs.FieldParser); !ok {
+			return fmt.Errorf(
+				unsupportedFmt,
+				unsupported, &mp.Guest,
+			)
+		}
 	default:
 		const wildcard = "*"
 		return p9fs.FieldError{
@@ -187,8 +202,10 @@ func (mp *mountPoint[HT, GT, HC, GC]) ParseField(key, value string) error {
 			Tried: []string{hostPrefix + wildcard, guestPrefix + wildcard},
 		}
 	}
-	baseKey := key[len(prefix):]
-	err := parseFn(baseKey, value)
+	var (
+		baseKey = key[len(prefix):]
+		err     = parser.ParseField(baseKey, value)
+	)
 	if err == nil {
 		return nil
 	}
