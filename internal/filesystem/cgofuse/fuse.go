@@ -1,5 +1,3 @@
-//go:build !nofuse
-
 package cgofuse
 
 import (
