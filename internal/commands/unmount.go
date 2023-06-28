@@ -10,7 +10,6 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/command"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
-	"github.com/djdv/go-filesystem-utils/internal/filesystem/cgofuse"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/p9/p9"
 )
@@ -26,6 +25,8 @@ type (
 	}
 	unmountCmdOption  func(*unmountCmdSettings) error
 	unmountCmdOptions []unmountCmdOption
+	decodeFunc        func([]byte) (string, error)
+	decoders          map[filesystem.Host]decodeFunc
 )
 
 const (
@@ -136,24 +137,50 @@ func (c *Client) Unmount(ctx context.Context, targets []string, options ...Unmou
 		}
 		return mounts.Close()
 	}
-	if err := p9fs.UnmountTargets(mounts, targets, decodeMountPoint); err != nil {
+	decodeFn := newDecodeTargetFunc()
+	if err := p9fs.UnmountTargets(mounts, targets, decodeFn); err != nil {
 		err = receiveError(mounts, err)
 		return errors.Join(err, mounts.Close())
 	}
 	return mounts.Close()
 }
 
-func decodeMountPoint(host filesystem.Host, _ filesystem.ID, data []byte) (string, error) {
-	if host != cgofuse.HostID {
-		return "", fmt.Errorf("unexpected host: %v", host)
+func newDecodeTargetFunc() p9fs.DecodeTargetFunc {
+	type makeDecoderFunc func() (filesystem.Host, decodeFunc)
+	var (
+		decoderMakers = []makeDecoderFunc{
+			unmarshalFUSE,
+		}
+		decoders = make(decoders, len(decoderMakers))
+	)
+	for _, decoderMaker := range decoderMakers {
+		host, decoder := decoderMaker()
+		if decoder == nil {
+			continue // System (likely) disabled by build constraints.
+		}
+		// No clobbering, accidental or otherwise.
+		if _, exists := decoders[host]; exists {
+			err := fmt.Errorf(
+				"%s decoder already registered",
+				host,
+			)
+			panic(err)
+		}
+		decoders[host] = decoder
 	}
-	// TODO: we should use `mountPointSettings`
-	// same as [Mount], to assure consistency.
-	// For now we only have 1 host type, so
-	// ranging over them isn't necessary yet.
-	var mountPoint struct {
-		Host cgofuse.Host `json:"host"`
+	return func(host filesystem.Host, _ filesystem.ID, data []byte) (string, error) {
+		decoder, ok := decoders[host]
+		if !ok {
+			return "", fmt.Errorf("unexpected host: %v", host)
+		}
+		// Subset of struct [mountPoint].
+		// Not processed by us.
+		var mountPoint struct {
+			Host json.RawMessage `json:"host"`
+		}
+		if err := json.Unmarshal(data, &mountPoint); err != nil {
+			return "", err
+		}
+		return decoder(mountPoint.Host)
 	}
-	err := json.Unmarshal(data, &mountPoint)
-	return mountPoint.Host.Point, err
 }

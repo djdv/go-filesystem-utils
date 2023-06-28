@@ -7,13 +7,13 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
+	"slices"
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
-	"github.com/djdv/go-filesystem-utils/internal/filesystem/cgofuse"
-	"github.com/djdv/go-filesystem-utils/internal/filesystem/ipfs"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/p9/p9"
 	"github.com/jaevor/go-nanoid"
 )
@@ -31,7 +31,10 @@ type (
 		mountCmdConstraint[T, M]
 		usage(filesystem.ID) string
 	}
-	mountCmdGuest[T any, M marshaller] interface {
+	mountCmdGuest[
+		T any,
+		M marshaller,
+	] interface {
 		mountCmdConstraint[T, M]
 		usage(filesystem.Host) string
 	}
@@ -93,21 +96,6 @@ func WithGID(gid p9.GID) MountOption {
 	return func(ms *mountSettings) error {
 		ms.gid = gid
 		return nil
-	}
-}
-
-func supportedHosts() []filesystem.Host {
-	return []filesystem.Host{
-		cgofuse.HostID,
-	}
-}
-
-func supportedSystems() []filesystem.ID {
-	return []filesystem.ID{
-		ipfs.IPFSID,
-		ipfs.PinFSID,
-		ipfs.IPNSID,
-		ipfs.KeyFSID,
 	}
 }
 
@@ -247,33 +235,74 @@ func Mount() command.Command {
 		name     = "mount"
 		synopsis = "Mount file systems."
 	)
-	return command.SubcommandGroup(name, synopsis, makeMountSubcommands())
+	if subcommands := makeMountSubcommands(); len(subcommands) != 0 {
+		return command.SubcommandGroup(name, synopsis, makeMountSubcommands())
+	}
+	const usage = "No mount host APIs were built into this executable."
+	return command.MakeNiladicCommand(
+		name, synopsis, usage,
+		func(ctx context.Context) error {
+			return command.UsageError{
+				Err: generic.ConstError("no host systems"),
+			}
+		},
+	)
 }
 
 func makeMountSubcommands() []command.Command {
-	var (
-		hostTable   = supportedHosts()
-		subCommands = make([]command.Command, len(hostTable))
-	)
-	for i, hostAPI := range hostTable {
-		var (
-			formalName  = string(hostAPI)
-			commandName = strings.ToLower(formalName)
-			synopsis    = fmt.Sprintf("Mount a file system via the %s API.", formalName)
-		)
-		switch hostAPI {
-		case cgofuse.HostID:
-			guestCommands := makeGuestCommands[fuseOptions, fuseSettings](hostAPI)
-			subCommands[i] = command.SubcommandGroup(
-				commandName, synopsis,
-				guestCommands,
+	hosts := makeHostCommands()
+	sortCommands(hosts)
+	return hosts
+}
+
+func sortCommands(commands []command.Command) {
+	slices.SortFunc(
+		commands,
+		func(a, b command.Command) int {
+			return strings.Compare(
+				a.Name(),
+				b.Name(),
 			)
-		default:
-			err := fmt.Errorf("unexpected Host API: %v", hostAPI)
-			panic(err)
+		},
+	)
+}
+
+func makeMountSubcommand(host filesystem.Host, guestCommands []command.Command) command.Command {
+	var (
+		formalName  = string(host)
+		commandName = strings.ToLower(formalName)
+		synopsis    = fmt.Sprintf("Mount a file system via the %s API.", formalName)
+	)
+	if len(guestCommands) > 0 {
+		return command.SubcommandGroup(commandName, synopsis, guestCommands)
+	}
+	const usage = "No mount guest APIs were built into this executable."
+	return command.MakeNiladicCommand(
+		commandName, synopsis, usage,
+		func(ctx context.Context) error {
+			return command.UsageError{
+				Err: generic.ConstError("no guest systems"),
+			}
+		},
+	)
+}
+
+func makeHostCommands() []command.Command {
+	type makeCommand func() command.Command
+	var (
+		commandMakers = []makeCommand{
+			makeFUSECommand,
+		}
+		commands = make([]command.Command, 0, len(commandMakers))
+	)
+	for _, makeCommand := range commandMakers {
+		// Commands can be nil if system
+		// is disabled by build constraints.
+		if command := makeCommand(); command != nil {
+			commands = append(commands, command)
 		}
 	}
-	return subCommands
+	return commands
 }
 
 func makeGuestCommands[
@@ -282,25 +311,9 @@ func makeGuestCommands[
 	HC mountCmdHost[HT, HM],
 ](host filesystem.Host,
 ) []command.Command {
-	var (
-		fsidTable   = supportedSystems()
-		subcommands = make([]command.Command, len(fsidTable))
-	)
-	for i, fsid := range fsidTable {
-		switch fsid {
-		case ipfs.IPFSID:
-			subcommands[i] = makeMountCommand[HC, HM, ipfsOptions, ipfsSettings](host, fsid)
-		case ipfs.PinFSID:
-			subcommands[i] = makeMountCommand[HC, HM, pinFSOptions, pinFSSettings](host, fsid)
-		case ipfs.IPNSID:
-			subcommands[i] = makeMountCommand[HC, HM, ipnsOptions, ipnsSettings](host, fsid)
-		case ipfs.KeyFSID:
-			subcommands[i] = makeMountCommand[HC, HM, keyFSOptions, keyFSSettings](host, fsid)
-		default:
-			panic("unexpected API ID for host file system interface")
-		}
-	}
-	return subcommands
+	guests := makeIPFSCommands[HC, HM](host)
+	sortCommands(guests)
+	return guests
 }
 
 func makeMountCommand[

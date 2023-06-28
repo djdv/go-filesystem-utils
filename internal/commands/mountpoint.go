@@ -9,8 +9,6 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
-	"github.com/djdv/go-filesystem-utils/internal/filesystem/cgofuse"
-	"github.com/djdv/go-filesystem-utils/internal/filesystem/ipfs"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/p9/p9"
 )
@@ -34,61 +32,23 @@ type (
 		Host  HT `json:"host"`
 		Guest GT `json:"guest"`
 	}
+	mountPointHosts  map[filesystem.Host]p9fs.MakeGuestFunc
+	mountPointGuests map[filesystem.ID]p9fs.MakeMountPointFunc
 )
-
-func newGuestFunc[HC mountPointHost[T], T any](path ninePath, autoUnlink bool) p9fs.MakeGuestFunc {
-	return func(parent p9.File, guest filesystem.ID, mode p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
-		permissions, err := mountsDirCreatePreamble(mode)
-		if err != nil {
-			return p9.QID{}, nil, err
-		}
-		var makeMountPointFn p9fs.MakeMountPointFunc
-		// TODO: share IPFS instances
-		// when server API is the same
-		// (needs some wrapper too so
-		// Close works properly.)
-		switch guest {
-		case ipfs.IPFSID:
-			makeMountPointFn = newMountPointFunc[HC, *ipfs.IPFSGuest](path)
-		case ipfs.PinFSID:
-			makeMountPointFn = newMountPointFunc[HC, *ipfs.PinFSGuest](path)
-		case ipfs.IPNSID:
-			makeMountPointFn = newMountPointFunc[HC, *ipfs.IPNSGuest](path)
-		case ipfs.KeyFSID:
-			makeMountPointFn = newMountPointFunc[HC, *ipfs.KeyFSGuest](path)
-		default:
-			err := fmt.Errorf(`unexpected guest "%v"`, guest)
-			return p9.QID{}, nil, err
-		}
-		return p9fs.NewGuestFile(
-			makeMountPointFn,
-			p9fs.UnlinkEmptyChildren[p9fs.GuestOption](autoUnlink),
-			p9fs.UnlinkWhenEmpty[p9fs.GuestOption](autoUnlink),
-			p9fs.WithParent[p9fs.GuestOption](parent, string(guest)),
-			p9fs.WithPath[p9fs.GuestOption](path),
-			p9fs.WithUID[p9fs.GuestOption](uid),
-			p9fs.WithGID[p9fs.GuestOption](gid),
-			p9fs.WithPermissions[p9fs.GuestOption](permissions),
-		)
-	}
-}
 
 func newMounter(parent p9.File, path ninePath,
 	uid p9.UID, gid p9.GID, permissions p9.FileMode,
 ) (mountSubsystem, error) {
 	const autoUnlink = true
-	var (
-		makeHostFn      = newHostFunc(path, autoUnlink)
-		_, mountFS, err = p9fs.NewMounter(
-			makeHostFn,
-			p9fs.WithParent[p9fs.MounterOption](parent, mountsFileName),
-			p9fs.WithPath[p9fs.MounterOption](path),
-			p9fs.WithUID[p9fs.MounterOption](uid),
-			p9fs.WithGID[p9fs.MounterOption](gid),
-			p9fs.WithPermissions[p9fs.MounterOption](permissions),
-			p9fs.UnlinkEmptyChildren[p9fs.MounterOption](autoUnlink),
-			p9fs.WithoutRename[p9fs.MounterOption](true),
-		)
+	_, mountFS, err := p9fs.NewMounter(
+		newMakeHostFunc(path, autoUnlink),
+		p9fs.WithParent[p9fs.MounterOption](parent, mountsFileName),
+		p9fs.WithPath[p9fs.MounterOption](path),
+		p9fs.WithUID[p9fs.MounterOption](uid),
+		p9fs.WithGID[p9fs.MounterOption](gid),
+		p9fs.WithPermissions[p9fs.MounterOption](permissions),
+		p9fs.UnlinkEmptyChildren[p9fs.MounterOption](autoUnlink),
+		p9fs.WithoutRename[p9fs.MounterOption](true),
 	)
 	if err != nil {
 		return mountSubsystem{}, err
@@ -99,17 +59,15 @@ func newMounter(parent p9.File, path ninePath,
 	}, nil
 }
 
-func newHostFunc(path ninePath, autoUnlink bool) p9fs.MakeHostFunc {
+func newMakeHostFunc(path ninePath, autoUnlink bool) p9fs.MakeHostFunc {
+	hosts := makeMountPointHosts(path, autoUnlink)
 	return func(parent p9.File, host filesystem.Host, mode p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
 		permissions, err := mountsDirCreatePreamble(mode)
 		if err != nil {
 			return p9.QID{}, nil, err
 		}
-		var makeGuestFn p9fs.MakeGuestFunc
-		switch host {
-		case cgofuse.HostID:
-			makeGuestFn = newGuestFunc[*cgofuse.Host](path, autoUnlink)
-		default:
+		makeGuestFn, ok := hosts[host]
+		if !ok {
 			err := fmt.Errorf(`unexpected host "%v"`, host)
 			return p9.QID{}, nil, err
 		}
@@ -127,6 +85,66 @@ func newHostFunc(path ninePath, autoUnlink bool) p9fs.MakeHostFunc {
 	}
 }
 
+func makeMountPointHosts(path ninePath, autoUnlink bool) mountPointHosts {
+	type makeHostsFunc func(ninePath, bool) (filesystem.Host, p9fs.MakeGuestFunc)
+	var (
+		hostMakers = []makeHostsFunc{
+			makeFUSEHost,
+		}
+		hosts = make(mountPointHosts, len(hostMakers))
+	)
+	for _, hostMaker := range hostMakers {
+		host, guestMaker := hostMaker(path, autoUnlink)
+		if guestMaker == nil {
+			continue // System (likely) disabled by build constraints.
+		}
+		// No clobbering, accidental or otherwise.
+		if _, exists := hosts[host]; exists {
+			err := fmt.Errorf(
+				"%s file constructor already registered",
+				host,
+			)
+			panic(err)
+		}
+		hosts[host] = guestMaker
+	}
+	return hosts
+}
+
+func newMakeGuestFunc(guests mountPointGuests, path ninePath, autoUnlink bool) p9fs.MakeGuestFunc {
+	return func(parent p9.File, guest filesystem.ID, mode p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
+		permissions, err := mountsDirCreatePreamble(mode)
+		if err != nil {
+			return p9.QID{}, nil, err
+		}
+		makeMountPointFn, ok := guests[guest]
+		if !ok {
+			err := fmt.Errorf(`unexpected guest "%v"`, guest)
+			return p9.QID{}, nil, err
+		}
+		return p9fs.NewGuestFile(
+			makeMountPointFn,
+			p9fs.UnlinkEmptyChildren[p9fs.GuestOption](autoUnlink),
+			p9fs.UnlinkWhenEmpty[p9fs.GuestOption](autoUnlink),
+			p9fs.WithParent[p9fs.GuestOption](parent, string(guest)),
+			p9fs.WithPath[p9fs.GuestOption](path),
+			p9fs.WithUID[p9fs.GuestOption](uid),
+			p9fs.WithGID[p9fs.GuestOption](gid),
+			p9fs.WithPermissions[p9fs.GuestOption](permissions),
+		)
+	}
+}
+
+func makeMountPointGuests[
+	T any,
+	HC mountPointHost[T],
+](path ninePath,
+) mountPointGuests {
+	guests := make(mountPointGuests)
+	makeIPFSGuests[HC](guests, path)
+	return guests
+}
+
 func mountsDirCreatePreamble(mode p9.FileMode) (p9.FileMode, error) {
 	if !mode.IsDir() {
 		return 0, generic.ConstError("expected to be called from mkdir")
@@ -136,8 +154,9 @@ func mountsDirCreatePreamble(mode p9.FileMode) (p9.FileMode, error) {
 
 func newMountPointFunc[
 	HC mountPointHost[HT],
+	GT any,
 	GC mountPointGuest[GT],
-	HT, GT any,
+	HT any,
 ](path ninePath,
 ) p9fs.MakeMountPointFunc {
 	return func(parent p9.File, name string, mode p9.FileMode, uid p9.UID, gid p9.GID) (p9.QID, p9.File, error) {
