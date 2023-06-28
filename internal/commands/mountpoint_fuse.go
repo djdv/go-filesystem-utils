@@ -1,3 +1,5 @@
+//go:build !nofuse
+
 package commands
 
 import (
@@ -11,6 +13,7 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
+	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem/cgofuse"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 )
@@ -26,6 +29,26 @@ const (
 	fuseFlagPrefix     = "fuse-"
 	fuseRawOptionsName = fuseFlagPrefix + "options"
 )
+
+func makeFUSECommand() command.Command {
+	return makeMountSubcommand(
+		cgofuse.HostID,
+		makeGuestCommands[fuseOptions, fuseSettings](cgofuse.HostID),
+	)
+}
+
+func makeFUSEHost(path ninePath, autoUnlink bool) (filesystem.Host, p9fs.MakeGuestFunc) {
+	guests := makeMountPointGuests[cgofuse.Host](path)
+	return cgofuse.HostID, newMakeGuestFunc(guests, path, autoUnlink)
+}
+
+func unmarshalFUSE() (filesystem.Host, decodeFunc) {
+	return cgofuse.HostID, func(b []byte) (string, error) {
+		var host cgofuse.Host
+		err := json.Unmarshal(b, &host)
+		return host.Point, err
+	}
+}
 
 func (*fuseOptions) usage(guest filesystem.ID) string {
 	var (

@@ -1,3 +1,5 @@
+//go:build !noipfs
+
 package commands
 
 import (
@@ -9,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/djdv/go-filesystem-utils/internal/command"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem/ipfs"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
@@ -38,6 +41,31 @@ const (
 	pinfsExpiryDefault   = 30 * time.Second
 	ipnsExpiryDefault    = 1 * time.Minute
 )
+
+func makeIPFSCommands[
+	HC mountCmdHost[HT, HM],
+	HM marshaller,
+	HT any,
+](host filesystem.Host,
+) []command.Command {
+	return []command.Command{
+		makeMountCommand[HC, HM, ipfsOptions, ipfsSettings](host, ipfs.IPFSID),
+		makeMountCommand[HC, HM, pinFSOptions, pinFSSettings](host, ipfs.PinFSID),
+		makeMountCommand[HC, HM, ipnsOptions, ipnsSettings](host, ipfs.IPNSID),
+		makeMountCommand[HC, HM, keyFSOptions, keyFSSettings](host, ipfs.KeyFSID),
+	}
+}
+
+func makeIPFSGuests[
+	HC mountPointHost[T],
+	T any,
+](guests mountPointGuests, path ninePath,
+) {
+	guests[ipfs.IPFSID] = newMountPointFunc[HC, ipfs.IPFSGuest](path)
+	guests[ipfs.IPNSID] = newMountPointFunc[HC, ipfs.IPNSGuest](path)
+	guests[ipfs.KeyFSID] = newMountPointFunc[HC, ipfs.KeyFSGuest](path)
+	guests[ipfs.PinFSID] = newMountPointFunc[HC, ipfs.PinFSGuest](path)
+}
 
 func guestOverlayText(overlay, overlaid filesystem.ID) string {
 	return string(overlay) + " is an " + string(overlaid) + " overlay"
