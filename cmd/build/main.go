@@ -24,7 +24,7 @@ const (
 
 func main() {
 	log.SetFlags(log.Lshortfile)
-	buildMode := parseFlags()
+	buildMode, tags := parseFlags()
 	cwd, err := os.Getwd()
 	if err != nil {
 		log.Fatal("could not get working directory:", err)
@@ -43,7 +43,7 @@ func main() {
 	const (
 		goBin   = "go"
 		goBuild = "build"
-		maxArgs = 3
+		maxArgs = 4
 	)
 	goArgs := make([]string, 1, maxArgs)
 	goArgs[0] = goBuild
@@ -57,6 +57,9 @@ func main() {
 			linkerReleaseFlags = `-ldflags=-s -w`
 		)
 		goArgs = append(goArgs, buildTrimFlag, linkerReleaseFlags)
+	}
+	if tags != "" {
+		goArgs = append(goArgs, "-tags="+tags)
 	}
 	goArgs = append(goArgs, pkgFSPath)
 	cmd := exec.Command(goBin, goArgs...)
@@ -73,7 +76,7 @@ func main() {
 	}
 }
 
-func parseFlags() buildMode {
+func parseFlags() (buildMode, string) {
 	const (
 		regularUsage = "standard go build with no compiler or linker flags when building"
 		releaseUsage = "remove extra debugging data when building"
@@ -98,11 +101,16 @@ func parseFlags() buildMode {
 		mode, err = generic.ParseEnum(regular, debug, arg)
 		return
 	})
-	flagSet.VisitAll(func(f *flag.Flag) {
-		if f.Name == modeName {
-			f.DefValue = mode.String()
-		}
-	})
+	flagSet.Lookup(modeName).DefValue = mode.String()
+	var tags string
+	const (
+		tagName   = "tags"
+		tagsUsage = "a comma-separated list of build tags" +
+			"\nsupported in addition to Go's standard tags:" +
+			"\nnofuse - build without FUSE host support" +
+			"\nnoipfs - build without IPFS guest support"
+	)
+	flagSet.StringVar(&tags, tagName, "", tagsUsage)
 	if err := flagSet.Parse(os.Args[1:]); err != nil {
 		log.Fatal(err)
 	}
@@ -115,7 +123,7 @@ func parseFlags() buildMode {
 			output.String(),
 		)
 	}
-	return mode
+	return mode, tags
 }
 
 func commandName() string {
