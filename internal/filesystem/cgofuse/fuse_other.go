@@ -1,4 +1,4 @@
-//go:build !nofuse && !windows
+//go:build !windows
 
 package cgofuse
 
