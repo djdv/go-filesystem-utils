@@ -46,14 +46,9 @@ type (
 		info   *nodeInfo
 		cid    cid.Cid
 	}
-	arcMode bool
 )
 
-const (
-	IPFSID  filesystem.ID = "IPFS"
-	arcGet  arcMode       = true
-	arcPeek arcMode       = false
-)
+const IPFSID filesystem.ID = "IPFS"
 
 // TODO: move assertions for exported types to a _test file
 var (
@@ -249,7 +244,7 @@ func (fsys *IPFS) getInfo(name string, cid cid.Cid) (*nodeInfo, error) {
 }
 
 func (fsys *IPFS) fetchInfo(name string, cid cid.Cid) (*nodeInfo, error) {
-	node, err := fsys.getNode(arcPeek, cid)
+	node, err := fsys.getNode(cid)
 	if err != nil {
 		return nil, err
 	}
@@ -267,18 +262,15 @@ func (fsys *IPFS) fetchInfo(name string, cid cid.Cid) (*nodeInfo, error) {
 	return &info, nil
 }
 
-func (fsys *IPFS) getNode(mode arcMode, cid cid.Cid) (ipld.Node, error) {
+func (fsys *IPFS) getNode(cid cid.Cid) (ipld.Node, error) {
 	cache := fsys.nodeCache
 	if cacheDisabled := cache == nil; cacheDisabled {
 		return fsys.fetchNode(cid)
 	}
-	var record ipfsRecord
-	if mode == arcGet {
+	var (
 		record, _ = cache.Get(cid)
-	} else {
-		record, _ = cache.Peek(cid)
-	}
-	node := record.Node
+		node      = record.Node
+	)
 	if node != nil {
 		return node, nil
 	}
@@ -310,7 +302,7 @@ func (fsys *IPFS) nodeContext() (context.Context, context.CancelFunc) {
 
 func (fsys *IPFS) walkLinks(root cid.Cid, names []string) (cid.Cid, error) {
 	return walkLinks(root, names, func(c cid.Cid) (ipld.Node, error) {
-		return fsys.getNode(arcPeek, c)
+		return fsys.getNode(c)
 	})
 }
 
@@ -446,7 +438,7 @@ func (fsys *IPFS) fetchEntries(ctx context.Context, cid cid.Cid, info *nodeInfo)
 }
 
 func (fsys *IPFS) openFile(cid cid.Cid, info *nodeInfo) (fs.File, error) {
-	ipldNode, err := fsys.getNode(arcGet, cid)
+	ipldNode, err := fsys.getNode(cid)
 	if err != nil {
 		return nil, err
 	}
