@@ -50,6 +50,12 @@ type (
 	FlagBinder interface {
 		BindFlags(*flag.FlagSet)
 	}
+	// ValueNamer may be implemented by a [flag.Value]
+	// to specify the name of its parameter type, but
+	// is only used if the name is absent in the usage string.
+	ValueNamer interface {
+		Name() string
+	}
 	// Option is a functional option.
 	// One can be returned by the various constructors
 	// before being passed to [MakeCommand].
@@ -347,7 +353,7 @@ func printFlags(
 			flagName = render(bold(flagName))
 		}
 		writeFn("  " + flagName)
-		valueType, usage := flag.UnquoteUsage(flg)
+		valueType, usage := unquoteUsage(flg)
 		if len(valueType) > 0 {
 			if styled {
 				valueType = italicUnderline(valueType)
@@ -412,6 +418,16 @@ func newItalicUnderlineRenderer(renderer *glamour.TermRenderer) stringModiferFun
 		builder.Reset()
 		return render
 	}
+}
+
+func unquoteUsage(flg *flag.Flag) (name, usage string) {
+	name, usage = flag.UnquoteUsage(flg)
+	if name == "value" {
+		if namer, ok := flg.Value.(ValueNamer); ok {
+			name = namer.Name()
+		}
+	}
+	return name, usage
 }
 
 // isZeroValue determines whether the string represents the zero
