@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
 	"github.com/djdv/p9/p9"
@@ -70,7 +71,9 @@ func (so *shutdownOptions) BindFlags(flagSet *flag.FlagSet) {
 	const shutdownName = "level"
 	shutdownUsage := fmt.Sprintf(
 		"sets the `disposition` for shutdown"+
-			"\none of {%s}", shutdownLevelsText(),
+			"\none of:"+
+			"\n%s",
+		shutdownLevelsTable(),
 	)
 	flagSetFunc(flagSet, shutdownName, shutdownUsage, so,
 		func(value shutdownDisposition, settings *shutdownSettings) error {
@@ -91,14 +94,51 @@ func (so shutdownOptions) make() (shutdownSettings, error) {
 	return settings, settings.clientSettings.fillDefaults()
 }
 
-func shutdownLevelsText() string {
-	levels := make([]string, maximumShutdown)
-	for i, sl := 0, minimumShutdown; sl <= maximumShutdown; i, sl = i+1, sl+1 {
-		levels[i] = fmt.Sprintf(
-			`"%s"`, strings.ToLower(sl.String()),
+func shutdownLevelsTable() string {
+	// [upstream] glamour prepends a newline to lists
+	// which can not be disabled. So we don't use them here. :^/
+	const (
+		minWidth = 0
+		tabWidth = 0
+		padding  = 0
+		padChar  = ' '
+		flags    = 0
+	)
+	var (
+		levelsBuffer strings.Builder
+		tabWriter    = tabwriter.NewWriter(
+			&levelsBuffer, minWidth, tabWidth, padding, padChar, flags,
 		)
+	)
+	for _, pair := range []struct {
+		description string
+		level       shutdownDisposition
+	}{
+		{
+			level:       patientShutdown,
+			description: "waits for connections to become idle before closing",
+		},
+		{
+			level:       shortShutdown,
+			description: "forcibly closes connections after a short delay",
+		},
+		{
+			level:       immediateShutdown,
+			description: "forcibly closes connections immediately",
+		},
+	} {
+		if _, err := fmt.Fprintf(
+			tabWriter,
+			"`%s`\t - %s\n",
+			pair.level, pair.description,
+		); err != nil {
+			panic(err)
+		}
 	}
-	return strings.Join(levels, ", ")
+	if err := tabWriter.Flush(); err != nil {
+		panic(err)
+	}
+	return levelsBuffer.String()
 }
 
 func shutdownExecute(ctx context.Context, options ...shutdownOption) error {
