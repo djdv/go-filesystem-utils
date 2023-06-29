@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"math"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -37,7 +38,24 @@ type (
 	}
 	sharedOption  func(*sharedSettings) error
 	sharedOptions []sharedOption
+
+	// standard [flag.funcValue] extended
+	// for [command.ValueNamer].
+	// (Because standard uses internal types
+	// in a way we can't access;
+	// see: [flag.UnquoteUsage]'s implementation.)
+	genericFuncValue[T any] func(string) error
 )
+
+func (gf genericFuncValue[T]) Set(s string) error { return gf(s) }
+func (gf genericFuncValue[T]) String() string     { return "" }
+func (gf genericFuncValue[T]) Name() string {
+	name := reflect.TypeOf((*T)(nil)).Elem().String()
+	if index := strings.LastIndexByte(name, '.'); index != -1 {
+		name = name[index+1:] // Remove [QualifiedIdent] prefix.
+	}
+	return strings.ToLower(name)
+}
 
 const (
 	permMaximum    = 0o7777
@@ -515,9 +533,13 @@ func flagSetFunc[
 		})
 		return
 	}
-	flagSet.Func(name, usage, func(parameter string) error {
+	funcFlag[VT](flagSet, name, usage, func(parameter string) error {
 		return parseAndSet(parameter, options, setter)
 	})
+}
+
+func funcFlag[T any](flagSet *flag.FlagSet, name, usage string, fn func(string) error) {
+	flagSet.Var(genericFuncValue[T](fn), name, usage)
 }
 
 func parseAndSet[
