@@ -239,7 +239,7 @@ func (no ipnsOptions) make() (ipnsSettings, error) {
 	settings := ipnsSettings{
 		NodeExpiry: ipnsExpiryDefault,
 	}
-	return settings, applyOptions(&settings, no...)
+	return settings, generic.ApplyOptions(&settings, no...)
 }
 
 func (set ipnsSettings) marshal(string) ([]byte, error) {

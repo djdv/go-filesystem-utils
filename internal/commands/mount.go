@@ -190,7 +190,7 @@ func (mo *mountCmdOptions[HT, GT, HM, GM, HC, GC]) BindFlags(flagSet *flag.FlagS
 
 func (mo mountCmdOptions[HT, GT, HM, GM, HC, GC]) make() (mountCmdSettings[HM, GM], error) {
 	var settings mountCmdSettings[HM, GM]
-	if err := applyOptions(&settings, mo...); err != nil {
+	if err := generic.ApplyOptions(&settings, mo...); err != nil {
 		return settings, err
 	}
 	if err := settings.clientSettings.fillDefaults(); err != nil {
@@ -375,7 +375,7 @@ func (c *Client) Mount(host filesystem.Host, fsid filesystem.ID, data [][]byte, 
 		uid:         apiUIDDefault,
 		gid:         apiGIDDefault,
 	}
-	if err := applyOptions(&set, options...); err != nil {
+	if err := generic.ApplyOptions(&set, options...); err != nil {
 		return err
 	}
 	mounts, err := (*p9.Client)(c).Attach(mountsFileName)

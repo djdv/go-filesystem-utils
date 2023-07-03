@@ -22,16 +22,16 @@ import (
 type (
 	optionsReference[
 		OS optionSlice[OT, T],
-		OT optionFunc[T],
+		OT generic.OptionFunc[T],
 		T any,
 	] interface {
 		*OS
 	}
-	optionSlice[OT optionFunc[T], T any] interface {
+	optionSlice[
+		OT generic.OptionFunc[T],
+		T any,
+	] interface {
 		~[]OT
-	}
-	optionFunc[T any] interface {
-		~func(*T) error
 	}
 	sharedSettings struct {
 		verbose bool
@@ -82,18 +82,9 @@ const (
 	permSymText    = 't'
 )
 
-func makeWithOptions[OT optionFunc[T], T any](options ...OT) (T, error) {
+func makeWithOptions[OT generic.OptionFunc[T], T any](options ...OT) (T, error) {
 	var settings T
-	return settings, applyOptions(&settings, options...)
-}
-
-func applyOptions[OT optionFunc[T], T any](settings *T, options ...OT) error {
-	for _, apply := range options {
-		if err := apply(settings); err != nil {
-			return err
-		}
-	}
-	return nil
+	return settings, generic.ApplyOptions(&settings, options...)
 }
 
 func (so *sharedOptions) BindFlags(flagSet *flag.FlagSet) {
@@ -519,7 +510,7 @@ func underline(text string) string {
 func flagSetFunc[
 	OSR optionsReference[OS, OT, ST],
 	OS optionSlice[OT, ST],
-	OT optionFunc[ST],
+	OT generic.OptionFunc[ST],
 	setterFn func(VT, *ST) error,
 	ST, VT any,
 ](flagSet *flag.FlagSet, name, usage string,
@@ -545,7 +536,7 @@ func funcFlag[T any](flagSet *flag.FlagSet, name, usage string, fn func(string) 
 func parseAndSet[
 	OSR optionsReference[OS, OT, ST],
 	OS optionSlice[OT, ST],
-	OT optionFunc[ST],
+	OT generic.OptionFunc[ST],
 	setterFn func(VT, *ST) error,
 	ST, VT any,
 ](parameter string, options OSR, setter setterFn,
