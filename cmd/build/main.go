@@ -24,7 +24,7 @@ const (
 
 func main() {
 	log.SetFlags(log.Lshortfile)
-	buildMode, tags := parseFlags()
+	buildMode, tags, output := parseFlags()
 	cwd, err := os.Getwd()
 	if err != nil {
 		log.Fatal("could not get working directory:", err)
@@ -43,7 +43,7 @@ func main() {
 	const (
 		goBin   = "go"
 		goBuild = "build"
-		maxArgs = 4
+		maxArgs = 5
 	)
 	goArgs := make([]string, 1, maxArgs)
 	goArgs[0] = goBuild
@@ -61,6 +61,9 @@ func main() {
 	if tags != "" {
 		goArgs = append(goArgs, "-tags="+tags)
 	}
+	if output != "" {
+		goArgs = append(goArgs, "-o="+output)
+	}
 	goArgs = append(goArgs, pkgFSPath)
 	cmd := exec.Command(goBin, goArgs...)
 	cmd.Stdin = os.Stdin
@@ -76,7 +79,7 @@ func main() {
 	}
 }
 
-func parseFlags() (buildMode, string) {
+func parseFlags() (mode buildMode, tags string, output string) {
 	const (
 		regularUsage = "standard go build with no compiler or linker flags when building"
 		releaseUsage = "remove extra debugging data when building"
@@ -86,7 +89,6 @@ func parseFlags() (buildMode, string) {
 	var (
 		cmdName   = commandName()
 		flagSet   = flag.NewFlagSet(cmdName, flag.ExitOnError)
-		mode      = release
 		modeUsage = fmt.Sprintf(
 			"%s\t- %s"+
 				"\n%s\t- %s"+
@@ -97,12 +99,12 @@ func parseFlags() (buildMode, string) {
 			debug.String(), debugUsage,
 		)
 	)
+	mode = release
 	flagSet.Func(modeName, modeUsage, func(arg string) (err error) {
 		mode, err = generic.ParseEnum(regular, debug, arg)
 		return
 	})
 	flagSet.Lookup(modeName).DefValue = mode.String()
-	var tags string
 	const (
 		tagName   = "tags"
 		tagsUsage = "a comma-separated list of build tags" +
@@ -111,6 +113,12 @@ func parseFlags() (buildMode, string) {
 			"\nnoipfs - build without IPFS guest support"
 	)
 	flagSet.StringVar(&tags, tagName, "", tagsUsage)
+	const (
+		outputName  = "o"
+		outputUsage = "write the resulting executable" +
+			" to the named output file or directory"
+	)
+	flagSet.StringVar(&output, outputName, "", outputUsage)
 	if err := flagSet.Parse(os.Args[1:]); err != nil {
 		log.Fatal(err)
 	}
@@ -123,7 +131,7 @@ func parseFlags() (buildMode, string) {
 			output.String(),
 		)
 	}
-	return mode, tags
+	return
 }
 
 func commandName() string {
