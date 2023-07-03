@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
-	"slices"
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
@@ -253,18 +252,6 @@ func makeMountSubcommands() []command.Command {
 	hosts := makeHostCommands()
 	sortCommands(hosts)
 	return hosts
-}
-
-func sortCommands(commands []command.Command) {
-	slices.SortFunc(
-		commands,
-		func(a, b command.Command) int {
-			return strings.Compare(
-				a.Name(),
-				b.Name(),
-			)
-		},
-	)
 }
 
 func makeMountSubcommand(host filesystem.Host, guestCommands []command.Command) command.Command {
