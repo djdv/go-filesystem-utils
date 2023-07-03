@@ -51,7 +51,7 @@ func (ds *directorySettings) setCleanupElements(b bool) { ds.cleanupElements = b
 // after they are considered empty and the last reference
 // held by a Walk has been closed.
 func UnlinkWhenEmpty[
-	OT optionFunc[T],
+	OT generic.OptionFunc[T],
 	T any,
 	I directorySetter[T],
 ](b bool,
@@ -65,7 +65,7 @@ func UnlinkWhenEmpty[
 // UnlinkEmptyChildren sets [UnlinkWhenEmpty]
 // on files created by this file.
 func UnlinkEmptyChildren[
-	OT optionFunc[T],
+	OT generic.OptionFunc[T],
 	T any,
 	I directorySetter[T],
 ](b bool,
@@ -79,7 +79,7 @@ func UnlinkEmptyChildren[
 func NewDirectory(options ...DirectoryOption) (p9.QID, p9.File, error) {
 	var settings directorySettings
 	settings.metadata.initialize(p9.ModeDirectory)
-	if err := applyOptions(&settings, options...); err != nil {
+	if err := generic.ApplyOptions(&settings, options...); err != nil {
 		return p9.QID{}, nil, err
 	}
 	return newDirectory(&settings)

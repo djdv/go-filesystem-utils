@@ -3,6 +3,7 @@ package p9
 import (
 	"sync"
 
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	perrors "github.com/djdv/p9/errors"
 	"github.com/djdv/p9/p9"
 )
@@ -32,7 +33,7 @@ func (ls *linkSync) disableRename(disabled bool)            { ls.renameDisabled 
 func (ls *linkSync) setRenamedFunc(fn RenamedFunc)          { ls.renamedFn = fn }
 
 func WithParent[
-	OT optionFunc[T],
+	OT generic.OptionFunc[T],
 	T any,
 	I linkSetter[T],
 ](parent p9.File, child string,
@@ -46,7 +47,7 @@ func WithParent[
 // WithoutRename causes rename operations
 // to return an error when called.
 func WithoutRename[
-	OT optionFunc[T],
+	OT generic.OptionFunc[T],
 	T any,
 	I linkSetter[T],
 ](disabled bool,
@@ -60,7 +61,7 @@ func WithoutRename[
 // WithRenamedFunc provides a callback
 // which is called after a successful rename operation.
 func WithRenamedFunc[
-	OT optionFunc[T],
+	OT generic.OptionFunc[T],
 	T any,
 	I linkSetter[T],
 ](fn RenamedFunc,

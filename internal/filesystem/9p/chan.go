@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	perrors "github.com/djdv/p9/errors"
 	"github.com/djdv/p9/fsimpl/templatefs"
 	"github.com/djdv/p9/p9"
@@ -38,7 +39,7 @@ func NewChannelFile(ctx context.Context,
 ) (p9.QID, *ChannelFile, <-chan []byte, error) {
 	var settings channelFileSettings
 	settings.metadata.initialize(p9.ModeRegular)
-	if err := applyOptions(&settings, options...); err != nil {
+	if err := generic.ApplyOptions(&settings, options...); err != nil {
 		return p9.QID{}, nil, nil, err
 	}
 	var (
@@ -59,7 +60,7 @@ func NewChannelFile(ctx context.Context,
 }
 
 func WithBuffer[
-	OT optionFunc[T],
+	OT generic.OptionFunc[T],
 	T any,
 	I channelSetter[T],
 ](size int,
