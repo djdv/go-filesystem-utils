@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	p9net "github.com/djdv/go-filesystem-utils/internal/net/9p"
 	perrors "github.com/djdv/p9/errors"
 	"github.com/djdv/p9/fsimpl/templatefs"
@@ -110,7 +111,7 @@ const (
 func NewListener(ctx context.Context, options ...ListenerOption) (p9.QID, *Listener, <-chan manet.Listener, error) {
 	var settings listenerSettings
 	settings.metadata.initialize(p9.ModeDirectory)
-	if err := applyOptions(&settings, options...); err != nil {
+	if err := generic.ApplyOptions(&settings, options...); err != nil {
 		return p9.QID{}, nil, nil, err
 	}
 	settings.linkSync.renameDisabled = true

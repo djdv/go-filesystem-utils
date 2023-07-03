@@ -3,6 +3,7 @@ package p9
 import (
 	"errors"
 
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	perrors "github.com/djdv/p9/errors"
 	"github.com/djdv/p9/p9"
 )
@@ -32,7 +33,7 @@ func NewGuestFile(makeMountPointFn MakeMountPointFunc,
 ) (p9.QID, *GuestFile, error) {
 	var settings guestSettings
 	settings.metadata.initialize(p9.ModeDirectory)
-	if err := applyOptions(&settings, options...); err != nil {
+	if err := generic.ApplyOptions(&settings, options...); err != nil {
 		return p9.QID{}, nil, err
 	}
 	qid, directory, err := newDirectory(&settings.directorySettings)

@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	perrors "github.com/djdv/p9/errors"
 	"github.com/djdv/p9/p9"
 )
@@ -54,7 +55,7 @@ func (ue unmountError) Error() string {
 func NewMounter(makeHostFn MakeHostFunc, options ...MounterOption) (p9.QID, *MountFile, error) {
 	var settings mounterSettings
 	settings.metadata.initialize(p9.ModeDirectory)
-	if err := applyOptions(&settings, options...); err != nil {
+	if err := generic.ApplyOptions(&settings, options...); err != nil {
 		return p9.QID{}, nil, err
 	}
 	qid, directory, err := newDirectory(&settings.directorySettings)

@@ -139,7 +139,7 @@ func NewMountPoint[
 ) (p9.QID, *MountPointFile[MP], error) {
 	var settings fileSettings
 	settings.metadata.initialize(p9.ModeRegular)
-	if err := applyOptions(&settings, options...); err != nil {
+	if err := generic.ApplyOptions(&settings, options...); err != nil {
 		return p9.QID{}, nil, err
 	}
 	file := &MountPointFile[MP]{

@@ -34,6 +34,10 @@ type (
 		p9.Attr
 		p9.QID
 	}
+	fileSettings struct {
+		linkSync
+		metadata
+	}
 	metadataSetter[T any] interface {
 		*T
 		setPath(ninePath)
@@ -77,7 +81,7 @@ func (md *metadata) fillDefaults() {
 // WithPath specifies the path
 // to be used by this file.
 func WithPath[
-	OT optionFunc[T],
+	OT generic.OptionFunc[T],
 	T any,
 	I metadataSetter[T],
 ](path *atomic.Uint64,
@@ -94,7 +98,7 @@ func WithPath[
 // WithPermissions specifies the permission bits
 // for a file's mode status.
 func WithPermissions[
-	OT optionFunc[T],
+	OT generic.OptionFunc[T],
 	T any,
 	I metadataSetter[T],
 ](permissions p9.FileMode,
@@ -108,7 +112,7 @@ func WithPermissions[
 // WithUID specifies a UID value for
 // a file's status information.
 func WithUID[
-	OT optionFunc[T],
+	OT generic.OptionFunc[T],
 	T any,
 	I metadataSetter[T],
 ](uid p9.UID,
@@ -122,7 +126,7 @@ func WithUID[
 // WithGID specifies a GID value for
 // a file's status information.
 func WithGID[
-	OT optionFunc[T],
+	OT generic.OptionFunc[T],
 	T any,
 	I metadataSetter[T],
 ](gid p9.GID,
