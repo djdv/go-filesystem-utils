@@ -388,11 +388,10 @@ func (nf *ipnsFile) Seek(offset int64, whence int) (int64, error) {
 	if err := nf.refreshFn(); err != nil {
 		return 0, err
 	}
-	seeker, ok := nf.file.(io.Seeker)
-	if !ok {
-		return 0, fserrors.ErrUnsupported
+	if seeker, ok := nf.file.(io.Seeker); ok {
+		return seeker.Seek(offset, whence)
 	}
-	return seeker.Seek(offset, whence)
+	return 0, fserrors.ErrUnsupported
 }
 
 func (nf *ipnsFile) Read(b []byte) (int, error) {
@@ -409,20 +408,19 @@ func (nf *ipnsFile) ReadDir(count int) ([]fs.DirEntry, error) {
 	// TODO: these kinds of things should
 	// use the new [errors.ErrUnsupported] value too.
 	file := nf.file
-	directory, ok := file.(fs.ReadDirFile)
-	if !ok {
-		var (
-			name string
-			err  error = ErrIsDir
-			kind       = fserrors.NotDir
-		)
-		if info, sErr := file.Stat(); sErr == nil {
-			name = info.Name()
-		} else {
-			err = errors.Join(err, sErr)
-			kind = fserrors.IO
-		}
-		return nil, newFSError("ReadDir", name, err, kind)
+	if directory, ok := file.(fs.ReadDirFile); ok {
+		return directory.ReadDir(count)
 	}
-	return directory.ReadDir(count)
+	var (
+		name string
+		err  error = ErrIsDir
+		kind       = fserrors.NotDir
+	)
+	if info, sErr := file.Stat(); sErr == nil {
+		name = info.Name()
+	} else {
+		err = errors.Join(err, sErr)
+		kind = fserrors.IO
+	}
+	return nil, newFSError("ReadDir", name, err, kind)
 }
