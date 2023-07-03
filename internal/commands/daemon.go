@@ -175,7 +175,7 @@ func (do daemonOptions) make() (daemonSettings, error) {
 		},
 		permissions: apiPermissionsDefault,
 	}
-	if err := applyOptions(&settings, do...); err != nil {
+	if err := generic.ApplyOptions(&settings, do...); err != nil {
 		return daemonSettings{}, err
 	}
 	if settings.serverMaddrs == nil {

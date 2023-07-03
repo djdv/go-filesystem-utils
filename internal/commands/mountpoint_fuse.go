@@ -196,7 +196,7 @@ func (fo fuseOptions) make() (fuseSettings, error) {
 		GID:         fuseGIDDefault,
 		ReaddirPlus: readdirPlusCapible,
 	}
-	return settings, applyOptions(&settings, fo...)
+	return settings, generic.ApplyOptions(&settings, fo...)
 }
 
 func (set fuseSettings) marshal(arg string) ([]byte, error) {

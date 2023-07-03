@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/p9/p9"
 )
 
@@ -88,7 +89,7 @@ func (so shutdownOptions) make() (shutdownSettings, error) {
 	settings := shutdownSettings{
 		disposition: dispositionDefault,
 	}
-	if err := applyOptions(&settings, so...); err != nil {
+	if err := generic.ApplyOptions(&settings, so...); err != nil {
 		return shutdownSettings{}, err
 	}
 	return settings, settings.clientSettings.fillDefaults()

@@ -96,7 +96,7 @@ func (co clientOptions) make() (clientSettings, error) {
 	settings := clientSettings{
 		exitInterval: exitIntervalDefault,
 	}
-	if err := applyOptions(&settings, co...); err != nil {
+	if err := generic.ApplyOptions(&settings, co...); err != nil {
 		return clientSettings{}, err
 	}
 	if err := settings.fillDefaults(); err != nil {
