@@ -50,13 +50,6 @@ type (
 
 const IPFSID filesystem.ID = "IPFS"
 
-// TODO: move assertions for exported types to a _test file
-var (
-	_ fs.StatFS                = (*IPFS)(nil)
-	_ filesystem.IDFS          = (*IPFS)(nil)
-	_ filesystem.StreamDirFile = (*ipfsDirectory)(nil)
-)
-
 func NewIPFS(core coreiface.CoreAPI, options ...IPFSOption) (*IPFS, error) {
 	var (
 		fsys = &IPFS{
@@ -75,10 +68,8 @@ func NewIPFS(core coreiface.CoreAPI, options ...IPFSOption) (*IPFS, error) {
 			defaultDirCache:  true,
 		}
 	)
-	for _, setter := range options {
-		if err := setter(&settings); err != nil {
-			return nil, err
-		}
+	if err := generic.ApplyOptions(&settings, options...); err != nil {
+		return nil, err
 	}
 	if err := settings.fillInDefaults(); err != nil {
 		fsys.cancel()
@@ -161,6 +152,14 @@ func WithNodeTimeout(duration time.Duration) IPFSOption {
 }
 
 func (*IPFS) ID() filesystem.ID { return IPFSID }
+
+func (fsys *IPFS) setContext(ctx context.Context) {
+	fsys.ctx, fsys.cancel = context.WithCancel(ctx)
+}
+
+func (fsys *IPFS) setPermissions(permissions fs.FileMode) {
+	fsys.info.mode = fsys.info.mode.Type() | permissions.Perm()
+}
 
 func (fsys *IPFS) Close() error {
 	fsys.cancel()

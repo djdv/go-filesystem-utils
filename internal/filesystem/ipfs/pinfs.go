@@ -14,16 +14,6 @@ import (
 	coreoptions "github.com/ipfs/boxo/coreiface/options"
 )
 
-var ( // TODO: move this to a test file
-	_ fs.StatFS                = (*PinFS)(nil)
-	_ filesystem.IDFS          = (*PinFS)(nil)
-	_ filesystem.StreamDirFile = (*pinDirectory)(nil)
-	// TODO: if this info is stored somewhere for pins.
-	// _ filesystem.AccessTimeInfo   = (*pinDirEntry)(nil)
-	// _ filesystem.ChangeTimeInfo   = (*pinDirEntry)(nil)
-	// _ filesystem.CreationTimeInfo = (*pinDirEntry)(nil)
-)
-
 type (
 	pinDirectoryInfo struct {
 		modTime     atomic.Pointer[time.Time]
@@ -56,10 +46,7 @@ type (
 	PinFSOption func(*PinFS) error
 )
 
-const (
-	PinFSID       filesystem.ID = "PinFS"
-	pinfsRootName               = rootName
-)
+const PinFSID filesystem.ID = "PinFS"
 
 func NewPinFS(pinAPI coreiface.PinAPI, options ...PinFSOption) (*PinFS, error) {
 	fsys := PinFS{
@@ -88,6 +75,14 @@ func NewPinFS(pinAPI coreiface.PinAPI, options ...PinFSOption) (*PinFS, error) {
 // One such case is resolving a pin's file metadata.
 func WithIPFS(ipfs fs.FS) PinFSOption {
 	return func(pfs *PinFS) error { pfs.ipfs = ipfs; return nil }
+}
+
+func (pfs *PinFS) setContext(ctx context.Context) {
+	pfs.ctx, pfs.cancel = context.WithCancel(ctx)
+}
+
+func (pfs *PinFS) setPermissions(permissions fs.FileMode) {
+	pfs.info.permissions = permissions.Perm()
 }
 
 func (pfs *PinFS) initStatFunc() {
@@ -127,7 +122,7 @@ func (*PinFS) ID() filesystem.ID { return PinFSID }
 
 func (pfs *PinFS) Stat(name string) (fs.FileInfo, error) {
 	const op = "stat"
-	if name == pinfsRootName {
+	if name == rootName {
 		return &pfs.info, nil
 	}
 	if subsys := pfs.ipfs; subsys != nil {
@@ -138,7 +133,7 @@ func (pfs *PinFS) Stat(name string) (fs.FileInfo, error) {
 
 func (pfs *PinFS) Open(name string) (fs.File, error) {
 	const op = "open"
-	if name == pinfsRootName {
+	if name == rootName {
 		return pfs.openRoot()
 	}
 	if subsys := pfs.ipfs; subsys != nil {
@@ -267,7 +262,7 @@ func (pfs *PinFS) Close() error {
 	return nil
 }
 
-func (*pinDirectoryInfo) Name() string          { return pinfsRootName }
+func (*pinDirectoryInfo) Name() string          { return rootName }
 func (*pinDirectoryInfo) Size() int64           { return 0 }
 func (pi *pinDirectoryInfo) Mode() fs.FileMode  { return fs.ModeDir | pi.permissions }
 func (pi *pinDirectoryInfo) ModTime() time.Time { return *pi.modTime.Load() }
@@ -277,7 +272,7 @@ func (pi *pinDirectoryInfo) Sys() any           { return pi }
 func (pd *pinDirectory) Stat() (fs.FileInfo, error) { return &pd.info, nil }
 func (*pinDirectory) Read([]byte) (int, error) {
 	const op = "pinDirectory.Read"
-	return -1, newFSError(op, pinfsRootName, ErrIsDir, fserrors.IsDir)
+	return -1, newFSError(op, rootName, ErrIsDir, fserrors.IsDir)
 }
 
 func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
@@ -286,7 +281,7 @@ func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	if stream == nil {
 		// TODO: We don't have an error kind
 		// that translates into EBADF
-		return nil, newFSError(op, pinfsRootName, ErrNotOpen, fserrors.IO)
+		return nil, newFSError(op, rootName, ErrNotOpen, fserrors.IO)
 	}
 	var (
 		ctx       = stream.Context
@@ -295,7 +290,7 @@ func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	entries, err := readEntries(ctx, entryChan, count)
 	if err != nil {
 		stream.ch = nil
-		err = readdirErr(op, pinfsRootName, err)
+		err = readdirErr(op, rootName, err)
 	}
 	return entries, err
 }
@@ -308,7 +303,7 @@ func (pd *pinDirectory) StreamDir() <-chan filesystem.StreamDirEntry {
 		// TODO: We don't have an error kind
 		// that translates into EBADF
 		errs <- newErrorEntry(
-			newFSError(op, pinfsRootName, ErrNotOpen, fserrors.IO),
+			newFSError(op, rootName, ErrNotOpen, fserrors.IO),
 		)
 		return errs
 	}
@@ -324,7 +319,7 @@ func (pd *pinDirectory) Close() error {
 	}
 	// TODO: We don't have an error kind
 	// that translates into EBADF
-	return newFSError(op, pinfsRootName, ErrNotOpen, fserrors.IO)
+	return newFSError(op, rootName, ErrNotOpen, fserrors.IO)
 }
 
 func (pe *pinDirEntry) Name() string {

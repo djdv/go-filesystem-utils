@@ -24,10 +24,13 @@ import (
 )
 
 type (
-	// TODO: docs; commonly shared options.
-	Options interface {
-		IPFSOption | PinFSOption |
-			IPNSOption | KeyFSOption
+	contextSetter[T any] interface {
+		*T
+		setContext(context.Context)
+	}
+	permissionSetter[T any] interface {
+		*T
+		setPermissions(fs.FileMode)
 	}
 	nodeInfo struct {
 		modTime time.Time
@@ -80,43 +83,28 @@ func newErrorEntry(err error) filesystem.StreamDirEntry {
 	return errorEntry{error: err}
 }
 
-func WithContext[OT Options](ctx context.Context) (option OT) {
-	switch fn := any(&option).(type) {
-	default:
-		panic(unhandledOption)
-	case *IPFSOption:
-		*fn = func(ifs *ipfsSettings) error { ifs.ctx, ifs.cancel = context.WithCancel(ctx); return nil }
-	case *PinFSOption:
-		*fn = func(pfs *PinFS) error { pfs.ctx, pfs.cancel = context.WithCancel(ctx); return nil }
-	case *IPNSOption:
-		*fn = func(nfs *ipnsSettings) error { nfs.ctx, nfs.cancel = context.WithCancel(ctx); return nil }
-	case *KeyFSOption:
-		*fn = func(kfs *KeyFS) error { kfs.ctx, kfs.cancel = context.WithCancel(ctx); return nil }
+func WithContext[
+	OT generic.OptionFunc[T],
+	T any,
+	I contextSetter[T],
+](ctx context.Context,
+) OT {
+	return func(settings *T) error {
+		any(settings).(I).setContext(ctx)
+		return nil
 	}
-	return
 }
 
-func WithPermissions[OT Options](permissions fs.FileMode) (option OT) {
-	switch fn := any(&option).(type) {
-	default:
-		panic(unhandledOption)
-	case *PinFSOption:
-		*fn = func(pfs *PinFS) error {
-			pfs.info.permissions = permissions.Perm()
-			return nil
-		}
-	case *IPFSOption:
-		*fn = func(ifs *ipfsSettings) error {
-			ifs.info.mode = ifs.info.mode.Type() | permissions.Perm()
-			return nil
-		}
-	case *KeyFSOption:
-		*fn = func(kfs *KeyFS) error {
-			kfs.permissions = permissions.Perm()
-			return nil
-		}
+func WithPermissions[
+	OT generic.OptionFunc[T],
+	T any,
+	I permissionSetter[T],
+](permissions fs.FileMode,
+) OT {
+	return func(mode *T) error {
+		any(mode).(I).setPermissions(permissions)
+		return nil
 	}
-	return
 }
 
 func (ni *nodeInfo) Name() string       { return ni.name }
