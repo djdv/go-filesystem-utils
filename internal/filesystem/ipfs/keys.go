@@ -95,6 +95,20 @@ func (ki *KeyFS) translateName(name string) (string, error) {
 	return keyName, nil
 }
 
+func (kfs *KeyFS) Stat(name string) (fs.FileInfo, error) {
+	const op = "stat"
+	if name == rootName {
+		return &keyDirectory{
+			mode: fs.ModeDir | kfs.permissions,
+			ipns: kfs.ipns,
+		}, nil
+	}
+	if subsys := kfs.ipns; subsys != nil {
+		return fs.Stat(subsys, name)
+	}
+	return nil, newFSError(op, name, ErrNotFound, fserrors.NotExist)
+}
+
 func (kfs *KeyFS) Open(name string) (fs.File, error) {
 	const op = "open"
 	if name == rootName {
