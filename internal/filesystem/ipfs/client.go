@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/internal/generic"
-	httpapi "github.com/ipfs/go-ipfs-http-client"
+	"github.com/ipfs/kubo/client/rpc"
 	"github.com/multiformats/go-multiaddr"
 	madns "github.com/multiformats/go-multiaddr-dns"
 	manet "github.com/multiformats/go-multiaddr/net"
@@ -15,12 +15,12 @@ import (
 
 const errCantResolveAPI = generic.ConstError("non-resolvable API endpoint")
 
-func newIPFSClient(apiMaddr multiaddr.Multiaddr) (*httpapi.HttpApi, error) {
+func newIPFSClient(apiMaddr multiaddr.Multiaddr) (*rpc.HttpApi, error) {
 	address, client, err := newHTTPClient(apiMaddr)
 	if err != nil {
 		return nil, err
 	}
-	return httpapi.NewURLApiWithClient(address, client)
+	return rpc.NewURLApiWithClient(address, client)
 }
 
 func newHTTPClient(apiMaddr multiaddr.Multiaddr) (string, *http.Client, error) {
