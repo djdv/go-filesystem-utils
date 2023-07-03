@@ -1,0 +1,18 @@
+name: "Latest"
+description: 'Update the GitHub release tagged "latest"'
+inputs:
+  github-token:
+    description: "Token used to publish releases"
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        git tag --force latest master
+        git push --force origin latest
+        pushd artifact
+        gh release upload --clobber latest *
+        popd

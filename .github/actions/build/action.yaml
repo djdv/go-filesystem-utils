@@ -14,5 +14,5 @@ runs:
       run: |
         mkdir build
         $buildDir = Join-Path . build
-        $commandDir = Join-Path . cmd fs
-        go build -o ${buildDir} ${commandDir}
+        $buildCommand = Join-Path . cmd build
+        go run $buildCommand -o $buildDir

@@ -3,9 +3,6 @@ on:
   push:
     branches:
       - master
-    tags:
-      - 'prerelease'
-      - 'release'
   pull_request:
 jobs:
   Test:
@@ -18,7 +15,7 @@ jobs:
       - uses: ./.github/actions/setup
       - uses: ./.github/actions/test
   Build:
-    if: github.ref == 'refs/tags/prerelease' ||  github.ref == 'refs/tags/release'
+    if: github.ref == 'refs/heads/master'
     strategy:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
@@ -28,13 +25,13 @@ jobs:
       - uses: ./.github/actions/setup
       - uses: ./.github/actions/build
       - uses: ./.github/actions/archive
-  Prerelease:
-    if: github.ref == 'refs/tags/prerelease' # TODO: invert this? If prerelease; setup + test + build + release
+  Release:
+    if: github.ref == 'refs/heads/master'
     needs: [Test, Build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: actions/download-artifact@v3
-      - uses: ./.github/actions/prerelease
+      - uses: ./.github/actions/latest
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
