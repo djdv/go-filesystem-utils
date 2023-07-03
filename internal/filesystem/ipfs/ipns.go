@@ -48,23 +48,6 @@ type (
 
 const IPNSID filesystem.ID = "IPNS"
 
-// TODO: We need disparate composite types.
-// We don't want to expose an interface,
-// when the underlying type does not support it.
-// ^ worse we might want/need to handle mutation.
-// E.g. when a file is opened and the remote node is modified
-// (independent of us); we'll need to update both the I/O
-// and the actual container type to match it.
-// ^^ and/or treat type changes as a persistent error on the handle.
-// _ filesystem.StreamDirFile = (*ipnsFile)(nil)
-var (
-	_ io.Seeker       = (*ipnsFile)(nil)
-	_ fs.StatFS       = (*IPNS)(nil)
-	_ filesystem.IDFS = (*IPNS)(nil)
-)
-
-// TODO: instead of having WithIPFS{Options}
-// we should just require an fs.fs for it.
 func NewIPNS(core coreiface.CoreAPI, ipfs fs.FS, options ...IPNSOption) (*IPNS, error) {
 	var (
 		fsys = &IPNS{
@@ -149,6 +132,14 @@ func CacheNodesFor(duration time.Duration) IPNSOption {
 }
 
 func (*IPNS) ID() filesystem.ID { return IPNSID }
+
+func (fsys *IPNS) setContext(ctx context.Context) {
+	fsys.ctx, fsys.cancel = context.WithCancel(ctx)
+}
+
+func (fsys *IPNS) setPermissions(permissions fs.FileMode) {
+	fsys.info.mode = fsys.info.mode.Type() | permissions.Perm()
+}
 
 func (fsys *IPNS) Close() error {
 	fsys.cancel()

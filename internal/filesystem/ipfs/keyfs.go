@@ -66,6 +66,14 @@ func NewKeyFS(core coreiface.KeyAPI, options ...KeyFSOption) (*KeyFS, error) {
 
 func (*KeyFS) ID() filesystem.ID { return KeyFSID }
 
+func (fsys *KeyFS) setContext(ctx context.Context) {
+	fsys.ctx, fsys.cancel = context.WithCancel(ctx)
+}
+
+func (fsys *KeyFS) setPermissions(permissions fs.FileMode) {
+	fsys.permissions = permissions.Perm()
+}
+
 func (ki *KeyFS) Close() error {
 	ki.cancel()
 	return nil
