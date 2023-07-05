@@ -10,7 +10,6 @@ import (
 	golog "log"
 	"net"
 	"os"
-	"os/signal"
 	"reflect"
 	"strings"
 	"sync"
@@ -280,18 +279,16 @@ func watchService(ctx context.Context,
 }
 
 func makeStoppers(ctx context.Context) (wgShutdown, <-chan shutdownDisposition) {
-	var (
-		shutdownChan   = newWaitGroupChan[shutdownDisposition](int(maximumShutdown))
-		shutdownLevels = make(chan shutdownDisposition)
-	)
-	shutdownChan.Add(2)
-	go stopOnSignal(os.Interrupt, shutdownChan)
-	go stopOnDone(ctx, shutdownChan)
+	shutdownSend := newWaitGroupChan[shutdownDisposition](int(maximumShutdown))
+	registerSystemStoppers(ctx, shutdownSend)
+	shutdownSend.Add(1)
+	go stopOnDone(ctx, shutdownSend)
+	shutdownReceive := make(chan shutdownDisposition)
 	go func() {
-		sequentialLeveling(shutdownChan.ch, shutdownLevels)
-		close(shutdownLevels)
+		sequentialLeveling(shutdownSend.ch, shutdownReceive)
+		close(shutdownReceive)
 	}()
-	return shutdownChan, shutdownLevels
+	return shutdownSend, shutdownReceive
 }
 
 func makeServer(fsys p9.Attacher, log ulog.Logger) *p9net.Server {
@@ -826,31 +823,12 @@ func unmountAll(system mountSubsystem,
 	}
 }
 
-func stopOnSignal(sig os.Signal, stopCh wgShutdown) {
-	signals := make(chan os.Signal, generic.Max(1, cap(stopCh.ch)))
-	signal.Notify(signals, sig)
-	defer func() {
-		signal.Stop(signals)
-		stopCh.Done()
-	}()
-	for count := minimumShutdown; count <= maximumShutdown; count++ {
-		select {
-		case <-signals:
-			if !stopCh.send(count) {
-				return
-			}
-		case <-stopCh.Closing():
-			return
-		}
-	}
-}
-
-func stopOnDone(ctx context.Context, stopCh wgShutdown) {
-	defer stopCh.Done()
+func stopOnDone(ctx context.Context, shutdownSend wgShutdown) {
+	defer shutdownSend.Done()
 	select {
 	case <-ctx.Done():
-		stopCh.send(immediateShutdown)
-	case <-stopCh.closing:
+		shutdownSend.send(immediateShutdown)
+	case <-shutdownSend.closing:
 	}
 }
 
