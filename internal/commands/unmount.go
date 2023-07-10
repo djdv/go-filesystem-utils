@@ -64,11 +64,7 @@ func (uo *unmountCmdOptions) BindFlags(flagSet *flag.FlagSet) {
 }
 
 func (uo unmountCmdOptions) make() (unmountCmdSettings, error) {
-	settings, err := makeWithOptions(uo...)
-	if err != nil {
-		return unmountCmdSettings{}, nil
-	}
-	return settings, settings.clientSettings.fillDefaults()
+	return makeWithOptions(uo...)
 }
 
 // Unmount constructs the command which requests the file system service

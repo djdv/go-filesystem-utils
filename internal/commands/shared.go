@@ -1,7 +1,5 @@
 package commands
 
-import "github.com/multiformats/go-multiaddr"
-
 const (
 	// serverRootName defines a name which servers and clients may use
 	// to refer to the service in namespace oriented APIs.
@@ -51,11 +49,3 @@ const (
 	// value to the file.
 	shutdownFileName = "shutdown"
 )
-
-func defaultServerMaddr() multiaddr.Multiaddr {
-	maddrs, err := userServiceMaddrs()
-	if err != nil {
-		panic(err)
-	}
-	return defaultClientMaddr{Multiaddr: maddrs[0]}
-}

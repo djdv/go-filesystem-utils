@@ -192,9 +192,6 @@ func (mo mountCmdOptions[HT, GT, HM, GM, HC, GC]) make() (mountCmdSettings[HM, G
 	if err := generic.ApplyOptions(&settings, mo...); err != nil {
 		return settings, err
 	}
-	if err := settings.clientSettings.fillDefaults(); err != nil {
-		return settings, err
-	}
 	return settings, nil
 }
 
