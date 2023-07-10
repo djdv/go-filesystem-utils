@@ -33,12 +33,6 @@ type (
 	] interface {
 		~[]OT
 	}
-	sharedSettings struct {
-		verbose bool
-	}
-	sharedOption  func(*sharedSettings) error
-	sharedOptions []sharedOption
-
 	// standard [flag.funcValue] extended
 	// for [command.ValueNamer].
 	// (Because standard uses internal types
@@ -85,23 +79,6 @@ const (
 func makeWithOptions[OT generic.OptionFunc[T], T any](options ...OT) (T, error) {
 	var settings T
 	return settings, generic.ApplyOptions(&settings, options...)
-}
-
-func (so *sharedOptions) BindFlags(flagSet *flag.FlagSet) {
-	const (
-		verboseName    = "verbose"
-		verboseDefault = false
-		verboseUsage   = "enable log messages"
-	)
-	flagSetFunc(flagSet, verboseName, verboseUsage, so,
-		func(value bool, settings *sharedSettings) error {
-			settings.verbose = value
-			return nil
-		})
-}
-
-func (so sharedOptions) make() (sharedSettings, error) {
-	return makeWithOptions(so...)
 }
 
 func parseID[id fuseID | p9.UID | p9.GID](arg string) (id, error) {

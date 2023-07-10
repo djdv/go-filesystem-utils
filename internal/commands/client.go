@@ -17,59 +17,74 @@ import (
 	"github.com/djdv/p9/p9"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
+	"github.com/u-root/uio/ulog"
 )
 
 type (
 	Client         p9.Client
 	clientSettings struct {
 		serviceMaddr multiaddr.Multiaddr
+		log          ulog.Logger
 		exitInterval time.Duration
-		sharedSettings
 	}
 	clientOption  func(*clientSettings) error
 	clientOptions []clientOption
-	// defaultClientMaddr distinguishes
-	// the default maddr value, from an arbitrary maddr value.
-	// I.e. even if the underlying multiaddrs are the same
-	// only the flag's default value should be of this type.
-	// Implying the flag was not provided/set explicitly.
-	defaultClientMaddr struct{ multiaddr.Multiaddr }
 )
 
 const (
-	exitIntervalDefault = 30 * time.Second
-	errServiceNotFound  = generic.ConstError("could not find service instance")
+	exitIntervalDefault  = 30 * time.Second
+	errServiceConnection = generic.ConstError("could not connect to service")
+	errCouldNotDial      = generic.ConstError("could not dial")
 )
 
 func (cs *clientSettings) getClient(autoLaunchDaemon bool) (*Client, error) {
 	var (
 		serviceMaddr = cs.serviceMaddr
-		clientOpts   []p9.ClientOpt
+		options      []p9.ClientOpt
 	)
-	if cs.verbose {
-		// TODO: less fancy prefix and/or out+prefix from CLI flags
-		clientLog := log.New(os.Stdout, "⬇️ client - ", log.Lshortfile)
-		clientOpts = append(clientOpts, p9.WithClientLogger(clientLog))
+	if log := cs.log; log != nil {
+		options = append(options, p9.WithClientLogger(log))
 	}
-	if autoLaunchDaemon {
-		if _, wasUnset := serviceMaddr.(defaultClientMaddr); wasUnset {
-			return connectOrLaunchLocal(cs.exitInterval, clientOpts...)
+	var serviceMaddrs []multiaddr.Multiaddr
+	if serviceMaddr != nil {
+		autoLaunchDaemon = false
+		serviceMaddrs = []multiaddr.Multiaddr{serviceMaddr}
+	} else {
+		var err error
+		if serviceMaddrs, err = allServiceMaddrs(); err != nil {
+			return nil, fmt.Errorf(
+				"%w: %w",
+				errServiceConnection, err,
+			)
 		}
 	}
-	return Connect(serviceMaddr, clientOpts...)
+	client, err := connect(serviceMaddrs, options...)
+	if err == nil {
+		return client, nil
+	}
+	if autoLaunchDaemon &&
+		errors.Is(err, errCouldNotDial) {
+		return launchAndConnect(cs.exitInterval, options...)
+	}
+	return nil, err
 }
 
 func (co *clientOptions) BindFlags(flagSet *flag.FlagSet) {
-	var sharedOptions sharedOptions
-	(&sharedOptions).BindFlags(flagSet)
-	*co = append(*co, func(cs *clientSettings) error {
-		subset, err := sharedOptions.make()
-		if err != nil {
-			return err
-		}
-		cs.sharedSettings = subset
-		return nil
-	})
+	const (
+		verboseName  = "verbose"
+		verboseUsage = "enable client message logging"
+	)
+	flagSetFunc(flagSet, verboseName, verboseUsage, co,
+		func(verbose bool, settings *clientSettings) error {
+			if verbose {
+				const (
+					prefix = "⬇️ client - "
+					flags  = 0
+				)
+				settings.log = log.New(os.Stderr, prefix, flags)
+			}
+			return nil
+		})
 	const (
 		exitName  = exitAfterFlagName
 		exitUsage = "passed to the daemon command if we launch it" +
@@ -88,8 +103,19 @@ func (co *clientOptions) BindFlags(flagSet *flag.FlagSet) {
 			settings.serviceMaddr = value
 			return nil
 		})
+	serviceMaddrs, err := allServiceMaddrs()
+	if err != nil {
+		panic(err)
+	}
+	maddrStrings := make([]string, len(serviceMaddrs))
+	for i, maddr := range serviceMaddrs {
+		maddrStrings[i] = "`" + maddr.String() + "`"
+	}
 	flagSet.Lookup(serverFlagName).
-		DefValue = defaultServerMaddr().String()
+		DefValue = fmt.Sprintf(
+		"one of: %s",
+		strings.Join(maddrStrings, ", "),
+	)
 }
 
 func (co clientOptions) make() (clientSettings, error) {
@@ -99,17 +125,7 @@ func (co clientOptions) make() (clientSettings, error) {
 	if err := generic.ApplyOptions(&settings, co...); err != nil {
 		return clientSettings{}, err
 	}
-	if err := settings.fillDefaults(); err != nil {
-		return clientSettings{}, err
-	}
 	return settings, nil
-}
-
-func (cs *clientSettings) fillDefaults() error {
-	if cs.serviceMaddr == nil {
-		cs.serviceMaddr = defaultServerMaddr()
-	}
-	return nil
 }
 
 func (c *Client) getListeners() ([]multiaddr.Multiaddr, error) {
@@ -124,44 +140,26 @@ func (c *Client) getListeners() ([]multiaddr.Multiaddr, error) {
 	return maddrs, listenersDir.Close()
 }
 
-func connectOrLaunchLocal(exitInterval time.Duration, options ...p9.ClientOpt) (*Client, error) {
-	conn, err := findLocalServer()
-	if err == nil {
-		return newClient(conn, options...)
-	}
-	if !errors.Is(err, errServiceNotFound) {
-		return nil, err
-	}
-	return launchAndConnect(exitInterval, options...)
-}
-
 func launchAndConnect(exitInterval time.Duration, options ...p9.ClientOpt) (*Client, error) {
 	daemon, ipc, stderr, err := spawnDaemonProc(exitInterval)
 	if err != nil {
 		return nil, err
 	}
-	var (
-		errs     []error
-		killProc = func() error {
-			return errors.Join(
-				maybeKill(daemon),
-				daemon.Process.Release(),
-			)
-		}
-	)
+	killProc := func() error {
+		return errors.Join(
+			maybeKill(daemon),
+			daemon.Process.Release(),
+		)
+	}
 	maddrs, err := getListenersFromProc(ipc, stderr, options...)
 	if err != nil {
-		errs = append(errs, err)
+		errs := []error{err}
 		if err := killProc(); err != nil {
 			errs = append(errs, err)
 		}
 		return nil, errors.Join(errs...)
 	}
-	conn, err := firstDialable(maddrs)
-	if err != nil {
-		return nil, errors.Join(err, killProc())
-	}
-	client, err := newClient(conn, options...)
+	client, err := connect(maddrs)
 	if err != nil {
 		return nil, errors.Join(err, killProc())
 	}
@@ -182,9 +180,16 @@ func launchAndConnect(exitInterval time.Duration, options ...p9.ClientOpt) (*Cli
 }
 
 func Connect(serverMaddr multiaddr.Multiaddr, options ...p9.ClientOpt) (*Client, error) {
-	conn, err := manet.Dial(serverMaddr)
+	return connect([]multiaddr.Multiaddr{serverMaddr}, options...)
+}
+
+func connect(maddrs []multiaddr.Multiaddr, options ...p9.ClientOpt) (*Client, error) {
+	conn, err := firstDialable(maddrs...)
 	if err != nil {
-		return nil, fmt.Errorf("could not connect to service: %w", err)
+		return nil, fmt.Errorf(
+			"%w: %w",
+			errServiceConnection, err,
+		)
 	}
 	return newClient(conn, options...)
 }
@@ -192,20 +197,12 @@ func Connect(serverMaddr multiaddr.Multiaddr, options ...p9.ClientOpt) (*Client,
 func newClient(conn io.ReadWriteCloser, options ...p9.ClientOpt) (*Client, error) {
 	client, err := p9.NewClient(conn, options...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf(
+			"could not create client: %w",
+			err,
+		)
 	}
 	return (*Client)(client), nil
-}
-
-// findLocalServer searches a set of local addresses
-// and returns the first dialable maddr it finds.
-// [errServiceNotFound] will be returned if none are dialable.
-func findLocalServer() (manet.Conn, error) {
-	allMaddrs, err := allServiceMaddrs()
-	if err != nil {
-		return nil, err
-	}
-	return firstDialable(allMaddrs)
 }
 
 func allServiceMaddrs() ([]multiaddr.Multiaddr, error) {
@@ -214,7 +211,13 @@ func allServiceMaddrs() ([]multiaddr.Multiaddr, error) {
 		systemMaddrs, sErr = systemServiceMaddrs()
 		serviceMaddrs      = append(userMaddrs, systemMaddrs...)
 	)
-	return serviceMaddrs, errors.Join(uErr, sErr)
+	if err := errors.Join(uErr, sErr); err != nil {
+		return nil, fmt.Errorf(
+			"could not retrieve service maddrs: %w",
+			err,
+		)
+	}
+	return serviceMaddrs, nil
 }
 
 // TODO: [Ame] docs.
@@ -231,21 +234,25 @@ func systemServiceMaddrs() ([]multiaddr.Multiaddr, error) {
 	return hostServiceMaddrs()
 }
 
-func firstDialable(maddrs []multiaddr.Multiaddr) (manet.Conn, error) {
+func firstDialable(maddrs ...multiaddr.Multiaddr) (manet.Conn, error) {
 	for _, maddr := range maddrs {
 		if conn, err := manet.Dial(maddr); err == nil {
 			return conn, nil
 		}
 	}
+	return nil, fmt.Errorf(
+		"%w any of: %s",
+		errCouldNotDial,
+		formatMaddrs(maddrs),
+	)
+}
+
+func formatMaddrs(maddrs []multiaddr.Multiaddr) string {
 	maddrStrings := make([]string, len(maddrs))
 	for i, maddr := range maddrs {
 		maddrStrings[i] = maddr.String()
 	}
-	var (
-		cErr      error = errServiceNotFound
-		fmtString       = strings.Join(maddrStrings, ", ")
-	)
-	return nil, fmt.Errorf("%w: tried: %s", cErr, fmtString)
+	return strings.Join(maddrStrings, ", ")
 }
 
 func servicePathsToServiceMaddrs(servicePaths ...string) ([]multiaddr.Multiaddr, error) {

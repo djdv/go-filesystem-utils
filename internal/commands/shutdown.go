@@ -92,7 +92,7 @@ func (so shutdownOptions) make() (shutdownSettings, error) {
 	if err := generic.ApplyOptions(&settings, so...); err != nil {
 		return shutdownSettings{}, err
 	}
-	return settings, settings.clientSettings.fillDefaults()
+	return settings, nil
 }
 
 func shutdownLevelsTable() string {

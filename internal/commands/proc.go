@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/p9/p9"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -156,9 +157,8 @@ func getListenersFromProc(ipc io.ReadWriteCloser, stderr io.ReadCloser, options 
 		if errs != nil {
 			accumulateErr(client.Shutdown(patientShutdown))
 		} else if len(maddrs) == 0 {
-			errs = append(errs, fmt.Errorf(
-				"%w: daemon didn't return any addresses",
-				errServiceNotFound,
+			errs = append(errs, generic.ConstError(
+				"daemon didn't return any addresses",
 			))
 		}
 		accumulateErr(client.ipcRelease())

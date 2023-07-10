@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	golog "log"
+	"log"
 	"net"
 	"os"
 	"reflect"
@@ -28,10 +28,10 @@ import (
 
 type (
 	daemonSettings struct {
-		serverMaddrs []multiaddr.Multiaddr
-		exitInterval time.Duration
+		systemLog, protocolLog ulog.Logger
+		serverMaddrs           []multiaddr.Multiaddr
+		exitInterval           time.Duration
 		nineIDs
-		sharedSettings
 		permissions fs.FileMode
 	}
 	daemonOption  func(*daemonSettings) error
@@ -97,16 +97,21 @@ const (
 )
 
 func (do *daemonOptions) BindFlags(flagSet *flag.FlagSet) {
-	var sharedOptions sharedOptions
-	(&sharedOptions).BindFlags(flagSet)
-	*do = append(*do, func(ds *daemonSettings) error {
-		subset, err := sharedOptions.make()
-		if err != nil {
-			return err
-		}
-		ds.sharedSettings = subset
-		return nil
-	})
+	const (
+		verboseName  = "verbose"
+		verboseUsage = "enable server message logging"
+	)
+	flagSetFunc(flagSet, verboseName, verboseUsage, do,
+		func(verbose bool, settings *daemonSettings) error {
+			if verbose {
+				const (
+					prefix = "⬆️ server - "
+					flags  = 0
+				)
+				settings.systemLog = log.New(os.Stderr, prefix, flags)
+			}
+			return nil
+		})
 	const serverUsage = "listening socket `maddr`" +
 		"\ncan be specified multiple times and/or comma separated"
 	flagSetFunc(flagSet, serverFlagName, serverUsage, do,
@@ -114,8 +119,12 @@ func (do *daemonOptions) BindFlags(flagSet *flag.FlagSet) {
 			settings.serverMaddrs = append(settings.serverMaddrs, value...)
 			return nil
 		})
+	userMaddrs, err := userServiceMaddrs()
+	if err != nil {
+		panic(err)
+	}
 	flagSet.Lookup(serverFlagName).
-		DefValue = defaultServerMaddr().String()
+		DefValue = userMaddrs[0].String()
 	const (
 		exitName  = exitAfterFlagName
 		exitUsage = "check every `interval` (e.g. \"30s\") and shutdown the daemon if its idle"
@@ -178,9 +187,14 @@ func (do daemonOptions) make() (daemonSettings, error) {
 		return daemonSettings{}, err
 	}
 	if settings.serverMaddrs == nil {
-		settings.serverMaddrs = []multiaddr.Multiaddr{
-			defaultServerMaddr(),
+		userMaddrs, err := userServiceMaddrs()
+		if err != nil {
+			return daemonSettings{}, err
 		}
+		settings.serverMaddrs = userMaddrs[0:1:1]
+	}
+	if settings.systemLog == nil {
+		settings.systemLog = ulog.Null
 	}
 	return settings, nil
 }
@@ -214,7 +228,10 @@ func daemonExecute(ctx context.Context, options ...daemonOption) error {
 		path   = fsys.path
 		root   = fsys.root
 		log    = system.log
-		server = makeServer(newAttacher(path, root), log)
+		server = makeServer(
+			newAttacher(path, root),
+			settings.protocolLog,
+		)
 		stopSend,
 		stopReceive = makeStoppers(ctx)
 		lsnStop,
@@ -292,10 +309,13 @@ func makeStoppers(ctx context.Context) (wgShutdown, <-chan shutdownDisposition) 
 }
 
 func makeServer(fsys p9.Attacher, log ulog.Logger) *p9net.Server {
-	server := p9net.NewServer(fsys,
-		p9net.WithServerLogger(log),
-	)
-	return server
+	var options []p9net.ServerOpt
+	if log != nil {
+		options = []p9net.ServerOpt{
+			p9net.WithServerLogger(log),
+		}
+	}
+	return p9net.NewServer(fsys, options...)
 }
 
 func splitStopper(shutdownLevels <-chan shutdownDisposition) (_, _, _ <-chan shutdownDisposition) {
@@ -454,21 +474,10 @@ func newSystem(ctx context.Context, set *daemonSettings) (*daemonSystem, error) 
 		fsys, err = newFileSystem(ctx, uid, gid)
 		system    = &daemonSystem{
 			files: fsys,
-			log:   newDaemonLog(set.verbose),
+			log:   set.systemLog,
 		}
 	)
 	return system, err
-}
-
-func newDaemonLog(verbose bool) ulog.Logger {
-	if !verbose {
-		return ulog.Null
-	}
-	const (
-		prefix = "⬆️ server - "
-		flags  = golog.Lshortfile
-	)
-	return golog.New(os.Stderr, prefix, flags)
 }
 
 func newFileSystem(ctx context.Context, uid p9.UID, gid p9.GID) (fileSystem, error) {
