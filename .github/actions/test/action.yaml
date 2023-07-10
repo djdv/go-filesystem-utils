@@ -12,6 +12,26 @@ runs:
       env:
         CPATH: ${{env.CPATH}}
       run: |
-        $commandPath = $(Join-Path . ...)
+        $commandPath = Join-Path . ...
+        $tagValues = & {
+            $tags = 'nofuse', 'noipfs'
+            $combinations = @()
+            $allCombinations = [Math]::Pow(2, $tags.Length)
+            for ($i = 0; $i -lt $allCombinations; $i++) {
+                $components = @()
+                for ($j = 0; $j -lt $tags.Length; $j++) {
+                    if (($i -band ([Math]::Pow(2, $j))) -ne 0) {
+                        $components += $tags[$j]
+                    }
+                }
+                if ($components.Count -gt 0) {
+                    $combinations += $components -join ','
+                }
+            }
+            return $combinations
+        }
+        $tagValues | ForEach-Object {
+            "go vet -tags=$_ ${commandPath}"
+        }
         go test -cover ${commandPath}
         go test -race ${commandPath}
