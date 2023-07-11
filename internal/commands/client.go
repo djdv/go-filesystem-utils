@@ -122,10 +122,7 @@ func (co clientOptions) make() (clientSettings, error) {
 	settings := clientSettings{
 		exitInterval: exitIntervalDefault,
 	}
-	if err := generic.ApplyOptions(&settings, co...); err != nil {
-		return clientSettings{}, err
-	}
-	return settings, nil
+	return settings, generic.ApplyOptions(&settings, co...)
 }
 
 func (c *Client) getListeners() ([]multiaddr.Multiaddr, error) {

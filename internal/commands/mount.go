@@ -188,11 +188,7 @@ func (mo *mountCmdOptions[HT, GT, HM, GM, HC, GC]) BindFlags(flagSet *flag.FlagS
 }
 
 func (mo mountCmdOptions[HT, GT, HM, GM, HC, GC]) make() (mountCmdSettings[HM, GM], error) {
-	var settings mountCmdSettings[HM, GM]
-	if err := generic.ApplyOptions(&settings, mo...); err != nil {
-		return settings, err
-	}
-	return settings, nil
+	return makeWithOptions(mo...)
 }
 
 func (mp *mountCmdSettings[HM, GM]) marshalMountpoints(args ...string) ([][]byte, error) {
