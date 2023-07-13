@@ -15,6 +15,7 @@ func (gw *goWrapper) Getattr(path string, stat *fuse.Stat_t, fh fileDescriptor) 
 	defer gw.systemLock.Access(path)()
 	if path == mountedFusePath {
 		// Special case; see: [pollMountpoint].
+		stat.Mode = 0o111 | fuse.S_IFREG
 		return operationSuccess
 	}
 	var (
