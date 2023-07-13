@@ -8,7 +8,17 @@ import (
 
 func (gw *goWrapper) Statfs(path string, stat *fuse.Statfs_t) errNo {
 	defer gw.systemLock.Access(path)()
-	return -fuse.ENOSYS
+	// TODO: optional "freesize" on host init
+	// tracked in write, delete, etc. calls
+	// (^ lots of software checks for free space
+	// before even trying to call `write`, so we need to
+	// emulate that somehow)
+	errNo, err := statfs(path, stat)
+	if err != nil {
+		gw.logError(path, err)
+		return -fuse.EIO
+	}
+	return errNo
 }
 
 func (gw *goWrapper) Getattr(path string, stat *fuse.Stat_t, fh fileDescriptor) errNo {
@@ -61,6 +71,7 @@ func (gw *goWrapper) infoFromPath(path string) (fs.FileInfo, error) {
 
 func (gw *goWrapper) Utimens(path string, tmsp []fuse.Timespec) errNo {
 	defer gw.systemLock.Modify(path)()
+	return operationSuccess
 	return -fuse.ENOSYS
 }
 

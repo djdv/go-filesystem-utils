@@ -1,6 +1,7 @@
 package ipfs
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -14,6 +15,10 @@ import (
 )
 
 type (
+	// multiformats/go-multiaddr issue #100
+	maddrWorkaround struct {
+		APIMaddr multiaddrContainer `json:"apiMaddr,omitempty"`
+	}
 	IPFSGuest struct {
 		APIMaddr            multiaddr.Multiaddr `json:"apiMaddr,omitempty"`
 		APITimeout          time.Duration       `json:"apiTimeout,omitempty"`
@@ -29,15 +34,15 @@ type (
 		CacheExpiry time.Duration `json:"cacheExpiry,omitempty"`
 	}
 	KeyFSGuest struct{ IPNSGuest }
+	FilesGuest struct {
+		APIMaddr multiaddr.Multiaddr `json:"apiMaddr,omitempty"`
+	}
 )
 
 func (*IPFSGuest) GuestID() filesystem.ID { return IPFSID }
 
 func (ig *IPFSGuest) UnmarshalJSON(b []byte) error {
-	// multiformats/go-multiaddr issue #100
-	var maddrWorkaround struct {
-		APIMaddr multiaddrContainer `json:"apiMaddr,omitempty"`
-	}
+	var maddrWorkaround maddrWorkaround
 	if err := json.Unmarshal(b, &maddrWorkaround); err != nil {
 		return err
 	}
@@ -248,4 +253,41 @@ func (kg *KeyFSGuest) MakeFS() (fs.FS, error) {
 	return NewKeyFS(client.Key(),
 		WithIPNS(ipnsFS),
 	)
+}
+
+func (fg *FilesGuest) GuestID() filesystem.ID { return FilesID }
+
+func (fg *FilesGuest) UnmarshalJSON(b []byte) error {
+	var maddrWorkaround maddrWorkaround
+	if err := json.Unmarshal(b, &maddrWorkaround); err != nil {
+		return err
+	}
+	fg.APIMaddr = maddrWorkaround.APIMaddr.Multiaddr
+	return nil
+}
+
+func (fg *FilesGuest) MakeFS() (fs.FS, error) {
+	ctx := context.Background()
+	return NewFilesFS(
+		ctx, fg.APIMaddr,
+		WithPermissions[FilesOption](0o755),
+	)
+}
+
+func (fg *FilesGuest) ParseField(key, value string) error {
+	const apiKey = "apiMaddr"
+	var err error
+	switch key {
+	case apiKey:
+		var maddr multiaddr.Multiaddr
+		if maddr, err = multiaddr.NewMultiaddr(value); err == nil {
+			fg.APIMaddr = maddr
+		}
+	default:
+		return p9fs.FieldError{
+			Key:   key,
+			Tried: []string{apiKey},
+		}
+	}
+	return err
 }

@@ -32,6 +32,9 @@ type (
 	keyFSSettings ipfs.KeyFSGuest
 	keyFSOption   func(*keyFSSettings) error
 	keyFSOptions  []keyFSOption
+	filesSettings ipfs.FilesGuest
+	filesOption   func(*filesSettings) error
+	filesOptions  []filesOption
 )
 
 const (
@@ -49,6 +52,7 @@ func makeIPFSCommands[
 ](host filesystem.Host,
 ) []command.Command {
 	return []command.Command{
+		makeMountCommand[HC, HM, filesOptions, filesSettings](host, ipfs.FilesID),
 		makeMountCommand[HC, HM, ipfsOptions, ipfsSettings](host, ipfs.IPFSID),
 		makeMountCommand[HC, HM, pinFSOptions, pinFSSettings](host, ipfs.PinFSID),
 		makeMountCommand[HC, HM, ipnsOptions, ipnsSettings](host, ipfs.IPNSID),
@@ -65,6 +69,7 @@ func makeIPFSGuests[
 	guests[ipfs.IPNSID] = newMountPointFunc[HC, ipfs.IPNSGuest](path)
 	guests[ipfs.KeyFSID] = newMountPointFunc[HC, ipfs.KeyFSGuest](path)
 	guests[ipfs.PinFSID] = newMountPointFunc[HC, ipfs.PinFSGuest](path)
+	guests[ipfs.FilesID] = newMountPointFunc[HC, ipfs.FilesGuest](path)
 }
 
 func guestOverlayText(overlay, overlaid filesystem.ID) string {
@@ -271,6 +276,45 @@ func (ko keyFSOptions) make() (keyFSSettings, error) {
 }
 
 func (set keyFSSettings) marshal(string) ([]byte, error) {
+	return json.Marshal(set)
+}
+
+func (*filesOptions) usage(filesystem.Host) string {
+	return string(ipfs.FilesID) + " provides access to the node's FilesAPI."
+}
+
+func (fo *filesOptions) BindFlags(flagSet *flag.FlagSet) {
+	var (
+		flagPrefix = prefixIDFlag(ipfs.FilesID)
+		apiUsage   = string(ipfs.FilesID) + " API node `maddr`"
+		apiName    = flagPrefix + ipfsAPIFileName
+	)
+	flagSetFunc(flagSet, apiName, apiUsage, fo,
+		func(value multiaddr.Multiaddr, settings *filesSettings) error {
+			settings.APIMaddr = value
+			return nil
+		})
+}
+
+func (fo filesOptions) make() (filesSettings, error) {
+	settings, err := makeWithOptions(fo...)
+	if err != nil {
+		return filesSettings{}, err
+	}
+	if settings.APIMaddr == nil {
+		maddrs, err := getIPFSAPI()
+		if err != nil {
+			return filesSettings{}, fmt.Errorf(
+				"could not get default value for API: %w",
+				err,
+			)
+		}
+		settings.APIMaddr = maddrs[0]
+	}
+	return settings, nil
+}
+
+func (set filesSettings) marshal(string) ([]byte, error) {
 	return json.Marshal(set)
 }
 
