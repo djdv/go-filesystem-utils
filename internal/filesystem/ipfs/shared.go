@@ -58,21 +58,9 @@ type (
 )
 
 const (
-	ErrPath     = generic.ConstError("path not valid")
-	ErrNotFound = generic.ConstError("file not found")
-	ErrNotOpen  = generic.ConstError("file was not open")
-	ErrIsDir    = generic.ConstError("file is a directory")
-	ErrIsNotDir = generic.ConstError("file is not a directory")
-
 	errUnexpectedType = generic.ConstError("unexpected type")
-
-	rootName = "."
-	// If this is encountered, it is an implementation error.
-	// All option types must be handled explicitly.
-	unhandledOption = "unhandled option case"
-
-	executeAll = filesystem.ExecuteUser | filesystem.ExecuteGroup | filesystem.ExecuteOther
-	readAll    = filesystem.ReadUser | filesystem.ReadGroup | filesystem.ReadOther
+	executeAll        = filesystem.ExecuteUser | filesystem.ExecuteGroup | filesystem.ExecuteOther
+	readAll           = filesystem.ReadUser | filesystem.ReadGroup | filesystem.ReadOther
 )
 
 var _ fs.FileInfo = (*nodeInfo)(nil)
@@ -139,7 +127,7 @@ func (er emptyRoot) Stat() (fs.FileInfo, error) { return er.info, nil }
 func (emptyRoot) Close() error                  { return nil }
 func (emptyRoot) Read([]byte) (int, error) {
 	const op = "emptyRoot.Read"
-	return -1, newFSError(op, rootName, ErrIsDir, fserrors.IsDir)
+	return -1, fserrors.New(op, filesystem.Root, filesystem.ErrIsDir, fserrors.IsDir)
 }
 
 func (emptyRoot) ReadDir(count int) ([]fs.DirEntry, error) {
@@ -261,18 +249,7 @@ func readdirErr(op, path string, err error) error {
 	if err == io.EOF {
 		return err
 	}
-	return newFSError(op, path, err, fserrors.IO)
-}
-
-func newFSError(op, path string, err error, kind fserrors.Kind) error {
-	return &fserrors.Error{
-		PathError: fs.PathError{
-			Op:   op,
-			Path: path,
-			Err:  err,
-		},
-		Kind: kind,
-	}
+	return fserrors.New(op, path, err, fserrors.IO)
 }
 
 func cidErrKind(err error) fserrors.Kind {

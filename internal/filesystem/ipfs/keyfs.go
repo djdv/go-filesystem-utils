@@ -39,10 +39,7 @@ type (
 	}
 )
 
-const (
-	KeyFSID       filesystem.ID = "KeyFS"
-	keyfsRootName               = rootName
-)
+const KeyFSID filesystem.ID = "KeyFS"
 
 func WithIPNS(ipns fs.FS) KeyFSOption {
 	return func(ka *KeyFS) error { ka.ipns = ipns; return nil }
@@ -105,7 +102,7 @@ func (ki *KeyFS) translateName(name string) (string, error) {
 
 func (kfs *KeyFS) Stat(name string) (fs.FileInfo, error) {
 	const op = "stat"
-	if name == rootName {
+	if name == filesystem.Root {
 		return &keyDirectory{
 			mode: fs.ModeDir | kfs.permissions,
 			ipns: kfs.ipns,
@@ -114,12 +111,12 @@ func (kfs *KeyFS) Stat(name string) (fs.FileInfo, error) {
 	if subsys := kfs.ipns; subsys != nil {
 		return fs.Stat(subsys, name)
 	}
-	return nil, newFSError(op, name, ErrNotFound, fserrors.NotExist)
+	return nil, fserrors.New(op, name, filesystem.ErrNotFound, fserrors.NotExist)
 }
 
 func (kfs *KeyFS) Open(name string) (fs.File, error) {
 	const op = "open"
-	if name == rootName {
+	if name == filesystem.Root {
 		file, err := kfs.openRoot()
 		if err != nil {
 			return nil, err
@@ -128,12 +125,12 @@ func (kfs *KeyFS) Open(name string) (fs.File, error) {
 	}
 	translated, err := kfs.translateName(name)
 	if err != nil {
-		return nil, newFSError(op, name, err, fserrors.IO)
+		return nil, fserrors.New(op, name, err, fserrors.IO)
 	}
 	if subsys := kfs.ipns; subsys != nil {
 		return subsys.Open(translated)
 	}
-	return nil, newFSError(op, name, ErrNotFound, fserrors.NotExist)
+	return nil, fserrors.New(op, name, filesystem.ErrNotFound, fserrors.NotExist)
 }
 
 func (kfs *KeyFS) openRoot() (fs.ReadDirFile, error) {
@@ -143,7 +140,7 @@ func (kfs *KeyFS) openRoot() (fs.ReadDirFile, error) {
 	)
 	rootCtx := kfs.ctx
 	if err := rootCtx.Err(); err != nil {
-		return nil, newFSError(op, keyfsRootName, err, errKind)
+		return nil, fserrors.New(op, filesystem.Root, err, errKind)
 	}
 	var (
 		dirCtx, dirCancel = context.WithCancel(rootCtx)
@@ -175,12 +172,12 @@ func (kfs *KeyFS) openRoot() (fs.ReadDirFile, error) {
 
 func (*keyDirectory) Read([]byte) (int, error) {
 	const op = "keyDirectory.Read"
-	return -1, newFSError(op, keyfsRootName, ErrIsDir, fserrors.IsDir)
+	return -1, fserrors.New(op, filesystem.Root, filesystem.ErrIsDir, fserrors.IsDir)
 }
 
 func (kd *keyDirectory) Stat() (fs.FileInfo, error) { return kd, nil }
 
-func (*keyDirectory) Name() string          { return rootName }
+func (*keyDirectory) Name() string          { return filesystem.Root }
 func (*keyDirectory) Size() int64           { return 0 }
 func (kd *keyDirectory) Mode() fs.FileMode  { return kd.mode }
 func (kd *keyDirectory) ModTime() time.Time { return time.Now() } // TODO: is there any way the node can tell us when the last publish was?
@@ -191,7 +188,7 @@ func (kd *keyDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	const op = "keyDirectory.ReadDir"
 	stream := kd.stream
 	if stream == nil {
-		return nil, newFSError(op, keyfsRootName, ErrNotOpen, fserrors.IO)
+		return nil, fserrors.New(op, filesystem.Root, filesystem.ErrNotOpen, fserrors.IO)
 	}
 	var (
 		ctx     = stream.Context
@@ -203,7 +200,7 @@ func (kd *keyDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	ents, err := readEntries(ctx, entries, count)
 	if err != nil {
 		stream.ch = nil
-		err = readdirErr(op, keyfsRootName, err)
+		err = readdirErr(op, filesystem.Root, err)
 	}
 	return ents, err
 }
@@ -215,7 +212,7 @@ func (kd *keyDirectory) Close() error {
 		kd.stream = nil
 		return nil
 	}
-	return newFSError(op, keyfsRootName, ErrNotOpen, fserrors.InvalidItem)
+	return fserrors.New(op, filesystem.Root, filesystem.ErrNotOpen, fserrors.InvalidItem)
 }
 
 func pathWithoutNamespace(key coreiface.Key) string {
