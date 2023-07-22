@@ -30,3 +30,14 @@ const (
 )
 
 func (e *Error) Unwrap() error { return &e.PathError }
+
+func New(op, path string, err error, kind Kind) error {
+	return &Error{
+		PathError: fs.PathError{
+			Op:   op,
+			Path: path,
+			Err:  err,
+		},
+		Kind: kind,
+	}
+}
