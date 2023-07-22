@@ -206,9 +206,6 @@ func validAttrs(req *p9.AttrMask, attr *p9.Attr) {
 	if req.CTime {
 		req.CTime = attr.CTimeNanoSeconds != 0
 	}
-	if req.Size {
-		req.Size = !attr.Mode.IsDir()
-	}
 	if req.Blocks {
 		req.Blocks = attr.Blocks != 0
 	}
