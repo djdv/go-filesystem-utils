@@ -90,6 +90,11 @@ func (gw *goWrapper) Destroy() {
 		}
 		gw.fileTable = nil
 	}
+	if closer, ok := gw.FS.(io.Closer); ok {
+		if err := closer.Close(); err != nil {
+			gw.logError(posixRoot, err)
+		}
+	}
 }
 
 func (gw *goWrapper) Flush(path string, fh fileDescriptor) errNo {
