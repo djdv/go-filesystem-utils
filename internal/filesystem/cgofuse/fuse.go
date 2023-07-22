@@ -203,5 +203,14 @@ func (gw *goWrapper) Chmod(path string, mode uint32) errNo {
 }
 
 func (gw *goWrapper) logError(path string, err error) {
-	gw.log.Printf(`"%s" - %s`, path, err)
+	const logFmt = `"%s" - %s`
+	if joinErrs, ok := err.(interface {
+		Unwrap() []error
+	}); ok {
+		for _, err := range joinErrs.Unwrap() {
+			gw.log.Printf(logFmt, path, err)
+		}
+	} else {
+		gw.log.Printf(logFmt, path, err)
+	}
 }

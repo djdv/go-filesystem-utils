@@ -204,8 +204,8 @@ func (ft *fileTable) release(fh fileDescriptor) (errorCode errNo, err error) {
 func (ft *fileTable) Close() error {
 	ft.Lock()
 	defer ft.Unlock()
-	var err error
-	for _, handle := range ft.files {
+	var errs []error
+	for i, handle := range ft.files {
 		if handle == nil {
 			// `nil` handles may be present in the file table.
 			// Lower handle indices may be removed before
@@ -215,13 +215,15 @@ func (ft *fileTable) Close() error {
 			// with no open handles at all.
 			continue
 		}
-		if cErr := handle.goFile.Close(); cErr != nil {
-			if err == nil {
-				err = fmt.Errorf("failed to close: %w", cErr)
-			} else {
-				err = fmt.Errorf("%w - %s", err, cErr)
-			}
+		if err := handle.goFile.Close(); err != nil {
+			errs = append(
+				errs,
+				fmt.Errorf(
+					"failed to close handle %d: %w",
+					i, err,
+				),
+			)
 		}
 	}
-	return err
+	return errors.Join(errs...)
 }
