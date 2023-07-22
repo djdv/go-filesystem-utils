@@ -54,7 +54,7 @@ func NewIPNS(core coreiface.CoreAPI, ipfs fs.FS, options ...IPNSOption) (*IPNS, 
 			core: core,
 			ipfs: ipfs,
 			info: nodeInfo{
-				name:    rootName,
+				name:    filesystem.Root,
 				modTime: time.Now(),
 				mode: fs.ModeDir |
 					readAll | executeAll,
@@ -150,7 +150,7 @@ func (fsys *IPNS) Close() error {
 }
 
 func (fsys *IPNS) Stat(name string) (fs.FileInfo, error) {
-	if name == rootName {
+	if name == filesystem.Root {
 		return &fsys.info, nil
 	}
 	cid, err := fsys.toCID(name)
@@ -180,7 +180,7 @@ func (fsys *IPNS) toCID(goPath string) (cid.Cid, error) {
 		defer cancel()
 		if rootCID, err = fsys.fetchCID(ctx, goPath); err != nil {
 			kind := resolveErrKind(err)
-			return cid.Cid{}, newFSError(op, goPath, err, kind)
+			return cid.Cid{}, fserrors.New(op, goPath, err, kind)
 		}
 		record.Cid = &rootCID
 		now := time.Now()
@@ -207,7 +207,7 @@ func (fsys *IPNS) toCID(goPath string) (cid.Cid, error) {
 	}
 	if err != nil {
 		kind := resolveErrKind(err)
-		return cid.Cid{}, newFSError(op, goPath, err, kind)
+		return cid.Cid{}, fserrors.New(op, goPath, err, kind)
 	}
 	return leafCid, nil
 }
@@ -236,12 +236,12 @@ func (fsys *IPNS) fetchCID(ctx context.Context, goPath string) (cid.Cid, error) 
 }
 
 func (fsys *IPNS) Open(name string) (fs.File, error) {
-	if name == rootName {
+	if name == filesystem.Root {
 		return emptyRoot{info: &fsys.info}, nil
 	}
 	const op = "open"
 	if !fs.ValidPath(name) {
-		return nil, newFSError(op, name, ErrPath, fserrors.InvalidItem)
+		return nil, fserrors.New(op, name, filesystem.ErrPath, fserrors.InvalidItem)
 	}
 	cid, err := fsys.toCID(name)
 	if err != nil {
@@ -250,7 +250,7 @@ func (fsys *IPNS) Open(name string) (fs.File, error) {
 	ipfs := fsys.ipfs
 	file, err := ipfs.Open(cid.String())
 	if err != nil {
-		return nil, newFSError(op, name, err, fserrors.IO)
+		return nil, fserrors.New(op, name, err, fserrors.IO)
 	}
 	nFile := ipnsFile{
 		file: file,
@@ -268,7 +268,7 @@ func (fsys *IPNS) Open(name string) (fs.File, error) {
 			return err
 		}
 		if err := seekToSame(file, newFile); err != nil {
-			err = newFSError(op, name, err, fserrors.IO)
+			err = fserrors.New(op, name, err, fserrors.IO)
 			if cErr := newFile.Close(); cErr != nil {
 				return errors.Join(err, cErr)
 			}
@@ -404,7 +404,7 @@ func (nf *ipnsFile) ReadDir(count int) ([]fs.DirEntry, error) {
 	}
 	var (
 		name string
-		err  error = ErrIsDir
+		err  error = filesystem.ErrIsDir
 		kind       = fserrors.NotDir
 	)
 	if info, sErr := file.Stat(); sErr == nil {
@@ -413,5 +413,5 @@ func (nf *ipnsFile) ReadDir(count int) ([]fs.DirEntry, error) {
 		err = errors.Join(err, sErr)
 		kind = fserrors.IO
 	}
-	return nil, newFSError("ReadDir", name, err, kind)
+	return nil, fserrors.New("ReadDir", name, err, kind)
 }

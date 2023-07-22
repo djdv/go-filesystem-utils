@@ -54,7 +54,7 @@ func NewIPFS(core coreiface.CoreAPI, options ...IPFSOption) (*IPFS, error) {
 	var (
 		fsys = &IPFS{
 			info: nodeInfo{
-				name:    rootName,
+				name:    filesystem.Root,
 				modTime: time.Now(),
 				mode: fs.ModeDir |
 					readAll | executeAll,
@@ -168,7 +168,7 @@ func (fsys *IPFS) Close() error {
 
 func (fsys *IPFS) Stat(name string) (fs.FileInfo, error) {
 	const op = "IPFS.Stat"
-	if name == rootName {
+	if name == filesystem.Root {
 		return &fsys.info, nil
 	}
 	cid, err := fsys.toCID(name)
@@ -177,7 +177,7 @@ func (fsys *IPFS) Stat(name string) (fs.FileInfo, error) {
 	}
 	info, err := fsys.getInfo(name, cid)
 	if err != nil {
-		return nil, newFSError(op, name, err, fserrors.IO)
+		return nil, fserrors.New(op, name, err, fserrors.IO)
 	}
 	return info, nil
 }
@@ -196,7 +196,7 @@ func (fsys *IPFS) toCID(goPath string) (cid.Cid, error) {
 	)
 	if err != nil {
 		kind := cidErrKind(err)
-		return cid.Cid{}, newFSError(op, goPath, err, kind)
+		return cid.Cid{}, fserrors.New(op, goPath, err, kind)
 	}
 	if len(names) == 1 {
 		return rootCID, nil
@@ -204,7 +204,7 @@ func (fsys *IPFS) toCID(goPath string) (cid.Cid, error) {
 	nodeCID, err := fsys.walkLinks(rootCID, names[1:])
 	if err != nil {
 		kind := resolveErrKind(err)
-		return cid.Cid{}, newFSError(op, goPath, err, kind)
+		return cid.Cid{}, fserrors.New(op, goPath, err, kind)
 	}
 	return nodeCID, nil
 }
@@ -306,12 +306,12 @@ func (fsys *IPFS) walkLinks(root cid.Cid, names []string) (cid.Cid, error) {
 }
 
 func (fsys *IPFS) Open(name string) (fs.File, error) {
-	if name == rootName {
+	if name == filesystem.Root {
 		return emptyRoot{info: &fsys.info}, nil
 	}
 	const op = "open"
 	if !fs.ValidPath(name) {
-		return nil, newFSError(op, name, ErrPath, fserrors.InvalidItem)
+		return nil, fserrors.New(op, name, filesystem.ErrPath, fserrors.InvalidItem)
 	}
 	cid, err := fsys.toCID(name)
 	if err != nil {
@@ -319,7 +319,7 @@ func (fsys *IPFS) Open(name string) (fs.File, error) {
 	}
 	file, err := fsys.openCid(name, cid)
 	if err != nil {
-		return nil, newFSError(op, name, err, fserrors.IO)
+		return nil, fserrors.New(op, name, err, fserrors.IO)
 	}
 	return file, nil
 }
@@ -453,7 +453,7 @@ func (fsys *IPFS) openFile(cid cid.Cid, info *nodeInfo) (fs.File, error) {
 		if err != nil {
 			// HACK: not exactly a proper error name.
 			// But this only matters when debugging anyway.
-			return nil, newFSError("openFile", cid.String(), err, ufsOpenErr(err))
+			return nil, fserrors.New("openFile", cid.String(), err, ufsOpenErr(err))
 		}
 		return file, nil
 	}
@@ -463,7 +463,7 @@ func (id *ipfsDirectory) Stat() (fs.FileInfo, error) { return id.info, nil }
 
 func (id *ipfsDirectory) Read([]byte) (int, error) {
 	const op = "ipfsDirectory.Read"
-	return -1, newFSError(op, id.info.name, ErrIsDir, fserrors.IsDir)
+	return -1, fserrors.New(op, id.info.name, filesystem.ErrIsDir, fserrors.IsDir)
 }
 
 func (id *ipfsDirectory) StreamDir() <-chan filesystem.StreamDirEntry {
@@ -474,7 +474,7 @@ func (id *ipfsDirectory) StreamDir() <-chan filesystem.StreamDirEntry {
 		// TODO: We don't have an error kind
 		// that translates into EBADF
 		errs <- newErrorEntry(
-			newFSError(op, id.info.name, ErrNotOpen, fserrors.IO),
+			fserrors.New(op, id.info.name, filesystem.ErrNotOpen, fserrors.IO),
 		)
 		return errs
 	}
@@ -487,7 +487,7 @@ func (id *ipfsDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	if stream == nil {
 		// TODO: We don't have an error kind
 		// that translates into EBADF
-		return nil, newFSError(op, id.info.name, ErrNotOpen, fserrors.IO)
+		return nil, fserrors.New(op, id.info.name, filesystem.ErrNotOpen, fserrors.IO)
 	}
 	var (
 		ctx       = stream.Context
@@ -508,5 +508,5 @@ func (id *ipfsDirectory) Close() error {
 		id.stream = nil
 		return nil
 	}
-	return newFSError(op, id.info.name, ErrNotOpen, fserrors.InvalidItem)
+	return fserrors.New(op, id.info.name, filesystem.ErrNotOpen, fserrors.InvalidItem)
 }
