@@ -205,8 +205,17 @@ func (ft *fileTable) Close() error {
 	ft.Lock()
 	defer ft.Unlock()
 	var err error
-	for _, f := range ft.files {
-		if cErr := f.goFile.Close(); cErr != nil {
+	for _, handle := range ft.files {
+		if handle == nil {
+			// `nil` handles may be present in the file table.
+			// Lower handle indices may be removed before
+			// higher ones, but the table will maintain its
+			// length.
+			// The table may also be at its minimum length
+			// with no open handles at all.
+			continue
+		}
+		if cErr := handle.goFile.Close(); cErr != nil {
 			if err == nil {
 				err = fmt.Errorf("failed to close: %w", cErr)
 			} else {
