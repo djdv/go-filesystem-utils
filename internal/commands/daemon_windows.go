@@ -71,10 +71,13 @@ func stopOnSignalLinear(shutdownSend wgShutdown, sig os.Signal) {
 
 func createAndWatchWindow(ctx context.Context, shutdownSend wgShutdown) error {
 	errs := make(chan error, 1)
+	shutdownSend.Add(1)
 	go func() {
-		defer shutdownSend.Done()
-		runtime.LockOSThread()         // The window and message processor
-		defer runtime.UnlockOSThread() // must be on the same thread.
+		runtime.LockOSThread() // The window and message processor
+		defer func() {         // must be on the same thread.
+			runtime.UnlockOSThread()
+			shutdownSend.Done()
+		}()
 		hWnd, err := createEventWindow("go-fs", shutdownSend)
 		errs <- err
 		if err != nil {
