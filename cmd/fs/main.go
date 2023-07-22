@@ -84,16 +84,3 @@ func exitWithErr(err error) {
 	os.Stderr.WriteString(errStr)
 	os.Exit(code)
 }
-
-func isWrapped(err error) bool {
-	if errors.Unwrap(err) != nil {
-		return true
-	}
-	joinErrs, ok := err.(interface {
-		Unwrap() []error
-	})
-	if ok {
-		return len(joinErrs.Unwrap()) > 1
-	}
-	return false
-}
