@@ -228,7 +228,7 @@ func Mount() command.Command {
 		synopsis = "Mount file systems."
 	)
 	if subcommands := makeMountSubcommands(); len(subcommands) != 0 {
-		return command.SubcommandGroup(name, synopsis, makeMountSubcommands())
+		return command.SubcommandGroup(name, synopsis, subcommands)
 	}
 	const usage = "No mount host APIs were built into this executable."
 	return command.MakeNiladicCommand(
