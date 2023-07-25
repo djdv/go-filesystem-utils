@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	perrors "github.com/djdv/p9/errors"
@@ -240,7 +241,9 @@ func (dir *Directory) Mkdir(name string, permissions p9.FileMode, uid p9.UID, gi
 }
 
 func (dir *Directory) Readdir(offset uint64, count uint32) (p9.Dirents, error) {
-	return dir.to9Ents(offset, count)
+	const entrySize = unsafe.Sizeof(p9.Dirent{})
+	countDecimal := count / uint32(entrySize) // Bytes -> index.
+	return dir.to9Ents(offset, countDecimal)
 }
 
 func (dir *Directory) Rename(newDir p9.File, newName string) error {
