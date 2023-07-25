@@ -581,6 +581,12 @@ func parseMultiaddrList(parameter string) ([]multiaddr.Multiaddr, error) {
 	return maddrs, nil
 }
 
-func prefixIDFlag(system filesystem.ID) string {
-	return strings.ToLower(string(system)) + "-"
+func prefixIDFlag[
+	T interface {
+		~string
+		filesystem.Host | filesystem.ID
+	},
+](ID T,
+) string {
+	return strings.ToLower(string(ID)) + "-"
 }
