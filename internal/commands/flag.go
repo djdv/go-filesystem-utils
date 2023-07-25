@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
+	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/p9/p9"
 	"github.com/multiformats/go-multiaddr"
@@ -578,4 +579,8 @@ func parseMultiaddrList(parameter string) ([]multiaddr.Multiaddr, error) {
 		maddrs = append(maddrs, maddr)
 	}
 	return maddrs, nil
+}
+
+func prefixIDFlag(system filesystem.ID) string {
+	return strings.ToLower(string(system)) + "-"
 }

@@ -142,6 +142,7 @@ func makeMountPointGuests[
 ) mountPointGuests {
 	guests := make(mountPointGuests)
 	makeIPFSGuests[HC](guests, path)
+	guests[p9fs.GuestID] = newMountPointFunc[HC, p9fs.Guest](path)
 	return guests
 }
 
