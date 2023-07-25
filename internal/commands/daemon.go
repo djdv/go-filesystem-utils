@@ -349,21 +349,15 @@ func handleStopSequence(ctx context.Context,
 	mount mountSubsystem, mntStop <-chan shutdownDisposition,
 	errs wgErrs, log ulog.Logger,
 ) *sync.WaitGroup {
-	var serverWg,
-		mountWg sync.WaitGroup
 	errs.Add(2)
-	serverWg.Add(1)
-	mountWg.Add(1)
+	var serviceWg sync.WaitGroup
+	serviceWg.Add(1)
 	go func() {
-		defer serverWg.Done()
+		defer serviceWg.Done()
 		serverStopper(ctx, server, srvStop, errs, log)
-	}()
-	go func() {
-		serverWg.Wait()
 		unmountAll(mount, mntStop, errs, log)
-		mountWg.Done()
 	}()
-	return &mountWg
+	return &serviceWg
 }
 
 func listenOn(listener *p9fs.Listener, permissions p9.FileMode,
