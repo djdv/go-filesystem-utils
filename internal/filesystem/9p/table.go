@@ -81,7 +81,7 @@ func (ft *fileTableSync) to9Ents(offset uint64, count uint32) (p9.Dirents, error
 		names, files = ft.flatten(offset, count)
 		ents         = make(p9.Dirents, len(names))
 	)
-
+	offset++
 	for i, name := range names {
 		q, _, _, err := files[i].GetAttr(p9.AttrMask{})
 		if err != nil {
@@ -89,10 +89,11 @@ func (ft *fileTableSync) to9Ents(offset uint64, count uint32) (p9.Dirents, error
 		}
 		ents[i] = p9.Dirent{
 			QID:    q,
-			Offset: offset + uint64(i) + 1,
+			Offset: offset,
 			Type:   q.Type,
 			Name:   name,
 		}
+		offset++
 	}
 	return ents, nil
 }
