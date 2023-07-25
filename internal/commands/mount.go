@@ -272,6 +272,7 @@ func makeHostCommands() []command.Command {
 	var (
 		commandMakers = []makeCommand{
 			makeFUSECommand,
+			makePlan9HostCommand,
 		}
 		commands = make([]command.Command, 0, len(commandMakers))
 	)

@@ -90,6 +90,7 @@ func makeMountPointHosts(path ninePath, autoUnlink bool) mountPointHosts {
 	var (
 		hostMakers = []makeHostsFunc{
 			makeFUSEHost,
+			makePlan9Host,
 		}
 		hosts = make(mountPointHosts, len(hostMakers))
 	)
