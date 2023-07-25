@@ -20,7 +20,6 @@ import (
 )
 
 type (
-	closer func() error
 	// Host is the cgofuse specific parameters
 	// of a mount point.
 	Host struct {
@@ -52,8 +51,6 @@ const (
 	mountedFusePath = posixRoot + mountedFileName
 	mountedFilePath = string(os.PathSeparator) + mountedFileName
 )
-
-func (close closer) Close() error { return close() }
 
 func (mh *Host) HostID() filesystem.Host { return HostID }
 
@@ -170,7 +167,7 @@ func (mh *Host) Mount(fsys fs.FS) (io.Closer, error) {
 	if err := doMount(fuseHost, target, args); err != nil {
 		return nil, err
 	}
-	return closer(func() error {
+	return generic.Closer(func() error {
 		if fuseHost.Unmount() {
 			mh.sysquirks.unmount()
 			return nil
