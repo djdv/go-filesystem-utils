@@ -293,7 +293,6 @@ func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	)
 	entries, err := readEntries(ctx, entryChan, count)
 	if err != nil {
-		stream.ch = nil
 		err = readdirErr(op, filesystem.Root, err)
 		pd.err = err
 	}

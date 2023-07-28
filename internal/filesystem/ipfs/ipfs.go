@@ -499,7 +499,6 @@ func (id *ipfsDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	)
 	entries, err := readEntries(ctx, entryChan, count)
 	if err != nil {
-		stream.ch = nil
 		err = readdirErr(op, id.info.name, err)
 		id.err = err
 	}
