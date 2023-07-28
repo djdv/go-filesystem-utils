@@ -150,18 +150,18 @@ func (fsys *IPNS) Close() error {
 }
 
 func (fsys *IPNS) Stat(name string) (fs.FileInfo, error) {
+	const op = "stat"
 	if name == filesystem.Root {
 		return &fsys.info, nil
 	}
-	cid, err := fsys.toCID(name)
+	cid, err := fsys.toCID(op, name)
 	if err != nil {
 		return nil, err
 	}
 	return fs.Stat(fsys.ipfs, cid.String())
 }
 
-func (fsys *IPNS) toCID(goPath string) (cid.Cid, error) {
-	const op = "IPNS.toResolved"
+func (fsys *IPNS) toCID(op, goPath string) (cid.Cid, error) {
 	var (
 		names     = strings.Split(goPath, "/")
 		root      = names[0]
@@ -243,7 +243,7 @@ func (fsys *IPNS) Open(name string) (fs.File, error) {
 	if !fs.ValidPath(name) {
 		return nil, fserrors.New(op, name, filesystem.ErrPath, fserrors.InvalidItem)
 	}
-	cid, err := fsys.toCID(name)
+	cid, err := fsys.toCID(op, name)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +256,7 @@ func (fsys *IPNS) Open(name string) (fs.File, error) {
 		file: file,
 	}
 	nFile.refreshFn = func() error {
-		fetchedCID, err := fsys.toCID(name)
+		fetchedCID, err := fsys.toCID(op, name)
 		if err != nil {
 			return err
 		}

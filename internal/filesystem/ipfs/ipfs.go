@@ -172,7 +172,7 @@ func (fsys *IPFS) Stat(name string) (fs.FileInfo, error) {
 	if name == filesystem.Root {
 		return &fsys.info, nil
 	}
-	cid, err := fsys.toCID(name)
+	cid, err := fsys.toCID(op, name)
 	if err != nil {
 		return nil, err
 	}
@@ -183,8 +183,7 @@ func (fsys *IPFS) Stat(name string) (fs.FileInfo, error) {
 	return info, nil
 }
 
-func (fsys *IPFS) toCID(goPath string) (cid.Cid, error) {
-	const op = "IPFS.toCID"
+func (fsys *IPFS) toCID(op, goPath string) (cid.Cid, error) {
 	// NOTE: core.Resolve{Path,Node} is typically correct for this
 	// but we're trying to avoid communicating with the node
 	// as much as possible, and ResolveX is expensive when
@@ -314,7 +313,7 @@ func (fsys *IPFS) Open(name string) (fs.File, error) {
 	if !fs.ValidPath(name) {
 		return nil, fserrors.New(op, name, filesystem.ErrPath, fserrors.InvalidItem)
 	}
-	cid, err := fsys.toCID(name)
+	cid, err := fsys.toCID(op, name)
 	if err != nil {
 		return nil, err
 	}
