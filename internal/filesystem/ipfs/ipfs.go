@@ -168,7 +168,7 @@ func (fsys *IPFS) Close() error {
 }
 
 func (fsys *IPFS) Stat(name string) (fs.FileInfo, error) {
-	const op = "IPFS.Stat"
+	const op = "stat"
 	if name == filesystem.Root {
 		return &fsys.info, nil
 	}
@@ -463,12 +463,12 @@ func (fsys *IPFS) openFile(cid cid.Cid, info *nodeInfo) (fs.File, error) {
 func (id *ipfsDirectory) Stat() (fs.FileInfo, error) { return id.info, nil }
 
 func (id *ipfsDirectory) Read([]byte) (int, error) {
-	const op = "ipfsDirectory.Read"
+	const op = "read"
 	return -1, fserrors.New(op, id.info.name, filesystem.ErrIsDir, fserrors.IsDir)
 }
 
 func (id *ipfsDirectory) StreamDir() <-chan filesystem.StreamDirEntry {
-	const op = "ipfsDirectory.StreamDir"
+	const op = "streamdir"
 	stream := id.stream
 	if stream == nil {
 		errs := make(chan filesystem.StreamDirEntry, 1)
@@ -483,7 +483,7 @@ func (id *ipfsDirectory) StreamDir() <-chan filesystem.StreamDirEntry {
 }
 
 func (id *ipfsDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
-	const op = "ipfsDirectory.ReadDir"
+	const op = "readdir"
 	if err := id.err; err != nil {
 		return nil, err
 	}
@@ -506,7 +506,7 @@ func (id *ipfsDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 }
 
 func (id *ipfsDirectory) Close() error {
-	const op = "ipfsDirectory.Close"
+	const op = "close"
 	if stream := id.stream; stream != nil {
 		stream.CancelFunc()
 		id.stream = nil

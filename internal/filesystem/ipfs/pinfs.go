@@ -272,12 +272,12 @@ func (pi *pinDirectoryInfo) Sys() any           { return pi }
 
 func (pd *pinDirectory) Stat() (fs.FileInfo, error) { return &pd.info, nil }
 func (*pinDirectory) Read([]byte) (int, error) {
-	const op = "pinDirectory.Read"
+	const op = "read"
 	return -1, fserrors.New(op, filesystem.Root, filesystem.ErrIsDir, fserrors.IsDir)
 }
 
 func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
-	const op = "pinDirectory.ReadDir"
+	const op = "readdir"
 	if err := pd.err; err != nil {
 		return nil, err
 	}
@@ -300,7 +300,7 @@ func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 }
 
 func (pd *pinDirectory) StreamDir() <-chan filesystem.StreamDirEntry {
-	const op = "pinDirectory.StreamDir"
+	const op = "streamdir"
 	stream := pd.stream
 	if stream == nil {
 		errs := make(chan filesystem.StreamDirEntry, 1)
@@ -315,7 +315,7 @@ func (pd *pinDirectory) StreamDir() <-chan filesystem.StreamDirEntry {
 }
 
 func (pd *pinDirectory) Close() error {
-	const op = "pinStream.Close"
+	const op = "close"
 	if stream := pd.stream; stream != nil {
 		stream.CancelFunc()
 		pd.stream = nil

@@ -172,7 +172,7 @@ func (kfs *KeyFS) openRoot() (fs.ReadDirFile, error) {
 }
 
 func (*keyDirectory) Read([]byte) (int, error) {
-	const op = "keyDirectory.Read"
+	const op = "read"
 	return -1, fserrors.New(op, filesystem.Root, filesystem.ErrIsDir, fserrors.IsDir)
 }
 
@@ -186,7 +186,7 @@ func (kd *keyDirectory) IsDir() bool        { return kd.Mode().IsDir() }
 func (kd *keyDirectory) Sys() any           { return kd }
 
 func (kd *keyDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
-	const op = "keyDirectory.ReadDir"
+	const op = "readdir"
 	if err := kd.err; err != nil {
 		return nil, err
 	}
@@ -210,7 +210,7 @@ func (kd *keyDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 }
 
 func (kd *keyDirectory) Close() error {
-	const op = "keyDirectory.Close"
+	const op = "close"
 	if stream := kd.stream; stream != nil {
 		stream.CancelFunc()
 		kd.stream = nil
