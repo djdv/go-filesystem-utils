@@ -71,14 +71,14 @@ func NewIPNS(core coreiface.CoreAPI, ipfs fs.FS, options ...IPNSOption) (*IPNS, 
 			return nil, err
 		}
 	}
-	if err := settings.fillInDefaults(core); err != nil {
+	if err := settings.fillInDefaults(); err != nil {
 		fsys.cancel()
 		return nil, err
 	}
 	return fsys, nil
 }
 
-func (settings *ipnsSettings) fillInDefaults(core coreiface.CoreAPI) error {
+func (settings *ipnsSettings) fillInDefaults() error {
 	fsys := settings.IPNS
 	if fsys.ctx == nil {
 		fsys.ctx, fsys.cancel = context.WithCancel(context.Background())
@@ -91,9 +91,6 @@ func (settings *ipnsSettings) fillInDefaults(core coreiface.CoreAPI) error {
 	}
 	if fsys.expiry == 0 {
 		fsys.expiry = 1 * time.Minute
-	}
-	if fsys.ipfs != nil {
-		return nil
 	}
 	return nil
 }
