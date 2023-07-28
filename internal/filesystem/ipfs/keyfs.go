@@ -203,7 +203,6 @@ func (kd *keyDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	}
 	ents, err := readEntries(ctx, entries, count)
 	if err != nil {
-		stream.ch = nil
 		err = readdirErr(op, filesystem.Root, err)
 		kd.err = err
 	}
