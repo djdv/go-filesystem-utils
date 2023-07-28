@@ -44,6 +44,7 @@ type (
 	ipfsDirectory struct {
 		stream *entryStream
 		info   *nodeInfo
+		err    error
 		cid    cid.Cid
 	}
 )
@@ -483,6 +484,9 @@ func (id *ipfsDirectory) StreamDir() <-chan filesystem.StreamDirEntry {
 
 func (id *ipfsDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	const op = "ipfsDirectory.ReadDir"
+	if err := id.err; err != nil {
+		return nil, err
+	}
 	stream := id.stream
 	if stream == nil {
 		// TODO: We don't have an error kind
@@ -497,6 +501,7 @@ func (id *ipfsDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	if err != nil {
 		stream.ch = nil
 		err = readdirErr(op, id.info.name, err)
+		id.err = err
 	}
 	return entries, err
 }

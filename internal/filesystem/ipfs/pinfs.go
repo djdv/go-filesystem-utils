@@ -36,6 +36,7 @@ type (
 	pinDirectory struct {
 		*pinShared
 		stream *entryStream
+		err    error
 	}
 	pinDirEntry struct {
 		coreiface.Pin
@@ -277,6 +278,9 @@ func (*pinDirectory) Read([]byte) (int, error) {
 
 func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	const op = "pinDirectory.ReadDir"
+	if err := pd.err; err != nil {
+		return nil, err
+	}
 	stream := pd.stream
 	if stream == nil {
 		// TODO: We don't have an error kind
@@ -291,6 +295,7 @@ func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	if err != nil {
 		stream.ch = nil
 		err = readdirErr(op, filesystem.Root, err)
+		pd.err = err
 	}
 	return entries, err
 }

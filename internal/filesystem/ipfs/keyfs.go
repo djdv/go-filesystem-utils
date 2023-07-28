@@ -26,6 +26,7 @@ type (
 	keyDirectory struct {
 		ipns   fs.FS
 		stream *entryStream
+		err    error
 		mode   fs.FileMode
 	}
 	keyDirEntry struct {
@@ -186,6 +187,9 @@ func (kd *keyDirectory) Sys() any           { return kd }
 
 func (kd *keyDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	const op = "keyDirectory.ReadDir"
+	if err := kd.err; err != nil {
+		return nil, err
+	}
 	stream := kd.stream
 	if stream == nil {
 		return nil, fserrors.New(op, filesystem.Root, filesystem.ErrNotOpen, fserrors.IO)
@@ -201,6 +205,7 @@ func (kd *keyDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	if err != nil {
 		stream.ch = nil
 		err = readdirErr(op, filesystem.Root, err)
+		kd.err = err
 	}
 	return ents, err
 }
