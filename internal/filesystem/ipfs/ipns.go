@@ -16,7 +16,6 @@ import (
 	coreiface "github.com/ipfs/boxo/coreiface"
 	corepath "github.com/ipfs/boxo/coreiface/path"
 	"github.com/ipfs/go-cid"
-	ipld "github.com/ipfs/go-ipld-format"
 )
 
 type (
@@ -196,11 +195,11 @@ func (fsys *IPNS) toCID(op, goPath string) (cid.Cid, error) {
 	if ipfs, ok := fsys.ipfs.(*IPFS); ok {
 		leafCid, err = ipfs.walkLinks(rootCID, names[1:])
 	} else {
-		leafCid, err = walkLinks(rootCID, names[1:], func(c cid.Cid) (ipld.Node, error) {
-			ctx, cancel := fsys.nodeContext()
-			defer cancel()
-			return fsys.core.Dag().Get(ctx, c)
-		})
+		var (
+			ctx      = fsys.ctx
+			resolver = newPathResolver(fsys.core)
+		)
+		leafCid, err = walkLinks(ctx, rootCID, names[1:], resolver)
 	}
 	if err != nil {
 		kind := resolveErrKind(err)
