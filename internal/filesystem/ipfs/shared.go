@@ -3,9 +3,9 @@ package ipfs
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
+	"path"
 	"strings"
 	"time"
 
@@ -16,6 +16,8 @@ import (
 	dag "github.com/ipfs/boxo/ipld/merkledag"
 	"github.com/ipfs/boxo/ipld/unixfs"
 	unixpb "github.com/ipfs/boxo/ipld/unixfs/pb"
+	ipath "github.com/ipfs/boxo/path"
+	"github.com/ipfs/boxo/path/resolver"
 	"github.com/ipfs/go-cid"
 	ipfscmds "github.com/ipfs/go-ipfs-cmds"
 	cbor "github.com/ipfs/go-ipld-cbor"
@@ -368,37 +370,20 @@ func drainThenSendErr(ch chan filesystem.StreamDirEntry, err error) {
 	ch <- newErrorEntry(err)
 }
 
-func walkLinks(root cid.Cid, names []string, getNodeFn getNodeFunc) (cid.Cid, error) {
-	node, err := getNodeFn(root)
-	if err != nil {
-		return cid.Cid{}, err
-	}
+func walkLinks(ctx context.Context,
+	root cid.Cid, names []string,
+	resolver resolver.Resolver,
+) (cid.Cid, error) {
 	var (
-		leafCid cid.Cid
-		end     = len(names) - 1
+		iPath      = ipath.FromCid(root)
+		components = append(
+			[]string{string(iPath)},
+			names...,
+		)
+		nodePath = ipath.FromString(path.Join(components...))
 	)
-	for i, name := range names {
-		object, _, err := node.Resolve([]string{name})
-		if err != nil {
-			return cid.Cid{}, err
-		}
-		link, ok := object.(*ipld.Link)
-		if !ok {
-			return cid.Cid{}, fmt.Errorf(
-				"expected: `%T` got: `%T`",
-				link, object,
-			)
-		}
-		leafCid = link.Cid
-		if i == end {
-			break
-		}
-		node, err = getNodeFn(leafCid)
-		if err != nil {
-			return cid.Cid{}, err
-		}
-	}
-	return leafCid, nil
+	leaf, _, err := resolver.ResolveToLastNode(ctx, nodePath)
+	return leaf, err
 }
 
 func fsTypeName(mode fs.FileMode) string {

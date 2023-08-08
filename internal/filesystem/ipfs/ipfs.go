@@ -300,9 +300,11 @@ func (fsys *IPFS) nodeContext() (context.Context, context.CancelFunc) {
 }
 
 func (fsys *IPFS) walkLinks(root cid.Cid, names []string) (cid.Cid, error) {
-	return walkLinks(root, names, func(c cid.Cid) (ipld.Node, error) {
-		return fsys.getNode(c)
-	})
+	var (
+		ctx      = fsys.ctx
+		resolver = newPathResolver(fsys.core)
+	)
+	return walkLinks(ctx, root, names, resolver)
 }
 
 func (fsys *IPFS) Open(name string) (fs.File, error) {
