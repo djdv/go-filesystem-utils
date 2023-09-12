@@ -14,6 +14,7 @@ import (
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-unixfsnode"
+	dagpb "github.com/ipld/go-codec-dagpb"
 )
 
 type (
@@ -28,12 +29,13 @@ type (
 
 func newPathResolver(api coreiface.CoreAPI) resolver.Resolver {
 	var (
-		blockstore     = newCoreBlockStore(api.Block())
-		fetcher        = makeBlockFetcher(api.Dag())
-		service        = blockservice.New(blockstore, fetcher)
-		config         = bsfetcher.NewFetcherConfig(service)
-		fetcherFactory = config.WithReifier(unixfsnode.Reify)
+		blockstore = newCoreBlockStore(api.Block())
+		fetcher    = makeBlockFetcher(api.Dag())
+		service    = blockservice.New(blockstore, fetcher)
+		config     = bsfetcher.NewFetcherConfig(service)
 	)
+	config.PrototypeChooser = dagpb.AddSupportToChooser(config.PrototypeChooser)
+	fetcherFactory := config.WithReifier(unixfsnode.Reify)
 	return resolver.NewBasicResolver(fetcherFactory)
 }
 
