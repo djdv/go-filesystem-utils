@@ -14,6 +14,8 @@ import (
 	coreiface "github.com/ipfs/boxo/coreiface"
 	coreoptions "github.com/ipfs/boxo/coreiface/options"
 	corepath "github.com/ipfs/boxo/coreiface/path"
+	ipath "github.com/ipfs/boxo/path"
+	"github.com/ipfs/boxo/path/resolver"
 	"github.com/ipfs/go-cid"
 	cbor "github.com/ipfs/go-ipld-cbor"
 	ipld "github.com/ipfs/go-ipld-format"
@@ -30,6 +32,7 @@ type (
 		ctx         context.Context
 		cancel      context.CancelFunc
 		core        coreiface.CoreAPI
+		resolver    resolver.Resolver
 		nodeCache   *ipfsNodeCache
 		dirCache    *ipfsDirCache
 		info        nodeInfo
@@ -76,6 +79,7 @@ func NewIPFS(core coreiface.CoreAPI, options ...IPFSOption) (*IPFS, error) {
 		fsys.cancel()
 		return nil, err
 	}
+	fsys.resolver = newPathResolver(fsys.getNode)
 	return fsys, nil
 }
 
@@ -201,7 +205,7 @@ func (fsys *IPFS) toCID(op, goPath string) (cid.Cid, error) {
 	if len(names) == 1 {
 		return rootCID, nil
 	}
-	nodeCID, err := fsys.walkLinks(rootCID, names[1:])
+	nodeCID, err := fsys.resolvePath(goPath)
 	if err != nil {
 		kind := resolveErrKind(err)
 		return cid.Cid{}, fserrors.New(op, goPath, err, kind)
@@ -299,12 +303,14 @@ func (fsys *IPFS) nodeContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, timeout)
 }
 
-func (fsys *IPFS) walkLinks(root cid.Cid, names []string) (cid.Cid, error) {
+func (fsys *IPFS) resolvePath(goPath string) (cid.Cid, error) {
 	var (
-		ctx      = fsys.ctx
-		resolver = newPathResolver(fsys.core)
+		ctx          = fsys.ctx
+		resolver     = fsys.resolver
+		iPath        = ipath.FromString(goPath)
+		leaf, _, err = resolver.ResolveToLastNode(ctx, iPath)
 	)
-	return walkLinks(ctx, root, names, resolver)
+	return leaf, err
 }
 
 func (fsys *IPFS) Open(name string) (fs.File, error) {
