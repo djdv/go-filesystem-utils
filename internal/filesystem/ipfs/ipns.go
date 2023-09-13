@@ -15,7 +15,10 @@ import (
 	lru "github.com/hashicorp/golang-lru/v2"
 	coreiface "github.com/ipfs/boxo/coreiface"
 	corepath "github.com/ipfs/boxo/coreiface/path"
+	ipath "github.com/ipfs/boxo/path"
+	"github.com/ipfs/boxo/path/resolver"
 	"github.com/ipfs/go-cid"
+	ipld "github.com/ipfs/go-ipld-format"
 )
 
 type (
@@ -27,6 +30,7 @@ type (
 	IPNS          struct {
 		ctx         context.Context
 		core        coreiface.CoreAPI
+		resolver    resolver.Resolver
 		ipfs        fs.FS
 		cancel      context.CancelFunc
 		rootCache   *ipnsRootCache
@@ -187,25 +191,41 @@ func (fsys *IPNS) toCID(op, goPath string) (cid.Cid, error) {
 		return rootCID, nil
 	}
 	var (
-		leafCid cid.Cid
-		err     error
-	)
-	// Re-use cid cache if available.
-	// Otherwise resolve all directly.
-	if ipfs, ok := fsys.ipfs.(*IPFS); ok {
-		leafCid, err = ipfs.walkLinks(rootCID, names[1:])
-	} else {
-		var (
-			ctx      = fsys.ctx
-			resolver = newPathResolver(fsys.core)
+		components = append(
+			[]string{rootCID.String()},
+			names[1:]...,
 		)
-		leafCid, err = walkLinks(ctx, rootCID, names[1:], resolver)
-	}
+		ipfsPath     = path.Join(components...)
+		leafCid, err = fsys.resolvePath(ipfsPath)
+	)
 	if err != nil {
 		kind := resolveErrKind(err)
 		return cid.Cid{}, fserrors.New(op, goPath, err, kind)
 	}
 	return leafCid, nil
+}
+
+func (fsys *IPNS) fetchNode(cid cid.Cid) (ipld.Node, error) {
+	ctx, cancel := fsys.nodeContext()
+	defer cancel()
+	return fsys.core.Dag().Get(ctx, cid)
+}
+
+func (fsys *IPNS) resolvePath(goPath string) (cid.Cid, error) {
+	if ipfs, ok := fsys.ipfs.(*IPFS); ok {
+		return ipfs.resolvePath(goPath)
+	}
+	resolver := fsys.resolver
+	if resolver == nil {
+		resolver = newPathResolver(fsys.fetchNode)
+		fsys.resolver = resolver
+	}
+	var (
+		ctx          = fsys.ctx
+		iPath        = ipath.FromString(goPath)
+		leaf, _, err = resolver.ResolveToLastNode(ctx, iPath)
+	)
+	return leaf, err
 }
 
 func (fsys *IPNS) nodeContext() (context.Context, context.CancelFunc) {

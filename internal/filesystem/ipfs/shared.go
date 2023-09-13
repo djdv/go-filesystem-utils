@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"io/fs"
-	"path"
 	"strings"
 	"time"
 
@@ -16,9 +15,6 @@ import (
 	dag "github.com/ipfs/boxo/ipld/merkledag"
 	"github.com/ipfs/boxo/ipld/unixfs"
 	unixpb "github.com/ipfs/boxo/ipld/unixfs/pb"
-	ipath "github.com/ipfs/boxo/path"
-	"github.com/ipfs/boxo/path/resolver"
-	"github.com/ipfs/go-cid"
 	ipfscmds "github.com/ipfs/go-ipfs-cmds"
 	cbor "github.com/ipfs/go-ipld-cbor"
 	ipld "github.com/ipfs/go-ipld-format"
@@ -56,7 +52,6 @@ type (
 		modTime     time.Time
 		permissions fs.FileMode
 	}
-	getNodeFunc func(cid.Cid) (ipld.Node, error)
 )
 
 const (
@@ -368,22 +363,6 @@ func accumulateRelayClose(ctx context.Context,
 func drainThenSendErr(ch chan filesystem.StreamDirEntry, err error) {
 	generic.DrainBuffer(ch)
 	ch <- newErrorEntry(err)
-}
-
-func walkLinks(ctx context.Context,
-	root cid.Cid, names []string,
-	resolver resolver.Resolver,
-) (cid.Cid, error) {
-	var (
-		iPath      = ipath.FromCid(root)
-		components = append(
-			[]string{string(iPath)},
-			names...,
-		)
-		nodePath = ipath.FromString(path.Join(components...))
-	)
-	leaf, _, err := resolver.ResolveToLastNode(ctx, nodePath)
-	return leaf, err
 }
 
 func fsTypeName(mode fs.FileMode) string {
