@@ -15,6 +15,7 @@ import (
 	dag "github.com/ipfs/boxo/ipld/merkledag"
 	"github.com/ipfs/boxo/ipld/unixfs"
 	unixpb "github.com/ipfs/boxo/ipld/unixfs/pb"
+	"github.com/ipfs/boxo/path/resolver"
 	ipfscmds "github.com/ipfs/go-ipfs-cmds"
 	cbor "github.com/ipfs/go-ipld-cbor"
 	ipld "github.com/ipfs/go-ipld-format"
@@ -257,6 +258,10 @@ func cidErrKind(err error) fserrors.Kind {
 }
 
 func resolveErrKind(err error) fserrors.Kind {
+	var resolveErr resolver.ErrNoLink
+	if errors.As(err, &resolveErr) {
+		return fserrors.NotExist
+	}
 	// XXX: Upstream doesn't define error values
 	// to compare against. We have to fallback to strings.
 	// This could break at any time.
