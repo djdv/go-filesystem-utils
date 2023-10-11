@@ -96,6 +96,21 @@ const (
 	errShutdownDisposition = generic.ConstError("invalid shutdown disposition")
 )
 
+// Daemon constructs the command which
+// hosts the file system service server.
+func Daemon() command.Command {
+	const (
+		name     = daemonCommandName
+		synopsis = "Host system services."
+	)
+	usage := header("File system service daemon.") +
+		"\n\n" + synopsis
+	return command.MakeVariadicCommand[daemonOptions](
+		name, synopsis, usage, daemonExecute,
+		command.WithSubcommands(Service()),
+	)
+}
+
 func (do *daemonOptions) BindFlags(flagSet *flag.FlagSet) {
 	const (
 		verboseName  = "verbose"
@@ -112,9 +127,12 @@ func (do *daemonOptions) BindFlags(flagSet *flag.FlagSet) {
 			}
 			return nil
 		})
+}
+
+func bindDaemonFlags(flagSet *flag.FlagSet, options *daemonOptions) {
 	const serverUsage = "listening socket `maddr`" +
 		"\ncan be specified multiple times and/or comma separated"
-	flagSetFunc(flagSet, serverFlagName, serverUsage, do,
+	flagSetFunc(flagSet, serverFlagName, serverUsage, options,
 		func(value []multiaddr.Multiaddr, settings *daemonSettings) error {
 			settings.serverMaddrs = append(settings.serverMaddrs, value...)
 			return nil
@@ -129,7 +147,7 @@ func (do *daemonOptions) BindFlags(flagSet *flag.FlagSet) {
 		exitName  = exitAfterFlagName
 		exitUsage = "check every `interval` (e.g. \"30s\") and shutdown the daemon if its idle"
 	)
-	flagSetFunc(flagSet, exitName, exitUsage, do,
+	flagSetFunc(flagSet, exitName, exitUsage, options,
 		func(value time.Duration, settings *daemonSettings) error {
 			settings.exitInterval = value
 			return nil
@@ -138,7 +156,7 @@ func (do *daemonOptions) BindFlags(flagSet *flag.FlagSet) {
 		uidName  = apiFlagPrefix + "uid"
 		uidUsage = "file owner's `uid`"
 	)
-	flagSetFunc(flagSet, uidName, uidUsage, do,
+	flagSetFunc(flagSet, uidName, uidUsage, options,
 		func(value p9.UID, settings *daemonSettings) error {
 			settings.nineIDs.uid = value
 			return nil
@@ -149,7 +167,7 @@ func (do *daemonOptions) BindFlags(flagSet *flag.FlagSet) {
 		gidName  = apiFlagPrefix + "gid"
 		gidUsage = "file owner's `gid`"
 	)
-	flagSetFunc(flagSet, gidName, gidUsage, do,
+	flagSetFunc(flagSet, gidName, gidUsage, options,
 		func(value p9.GID, settings *daemonSettings) error {
 			settings.nineIDs.gid = value
 			return nil
@@ -161,7 +179,7 @@ func (do *daemonOptions) BindFlags(flagSet *flag.FlagSet) {
 		permissionsUsage = "`permissions` to use when creating service files"
 	)
 	apiPermissions := fs.FileMode(apiPermissionsDefault)
-	flagSetFunc(flagSet, permissionsName, permissionsUsage, do,
+	flagSetFunc(flagSet, permissionsName, permissionsUsage, options,
 		func(value string, settings *daemonSettings) error {
 			permissions, err := parsePOSIXPermissions(apiPermissions, value)
 			if err != nil {
@@ -176,13 +194,7 @@ func (do *daemonOptions) BindFlags(flagSet *flag.FlagSet) {
 }
 
 func (do daemonOptions) make() (daemonSettings, error) {
-	settings := daemonSettings{
-		nineIDs: nineIDs{
-			uid: apiUIDDefault,
-			gid: apiGIDDefault,
-		},
-		permissions: apiPermissionsDefault,
-	}
+	settings := makeDaemonSettings()
 	if err := generic.ApplyOptions(&settings, do...); err != nil {
 		return daemonSettings{}, err
 	}
@@ -199,16 +211,14 @@ func (do daemonOptions) make() (daemonSettings, error) {
 	return settings, nil
 }
 
-// Daemon constructs the command which
-// hosts the file system service server.
-func Daemon() command.Command {
-	const (
-		name     = daemonCommandName
-		synopsis = "Host system services."
-	)
-	usage := header("File system service daemon.") +
-		"\n\n" + synopsis
-	return command.MakeVariadicCommand[daemonOptions](name, synopsis, usage, daemonExecute)
+func makeDaemonSettings() daemonSettings {
+	return daemonSettings{
+		nineIDs: nineIDs{
+			uid: apiUIDDefault,
+			gid: apiGIDDefault,
+		},
+		permissions: apiPermissionsDefault,
+	}
 }
 
 func daemonExecute(ctx context.Context, options ...daemonOption) error {
@@ -216,9 +226,13 @@ func daemonExecute(ctx context.Context, options ...daemonOption) error {
 	if err != nil {
 		return err
 	}
+	return daemonRun(ctx, &settings)
+}
+
+func daemonRun(ctx context.Context, settings *daemonSettings) error {
 	dCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	system, err := newSystem(dCtx, &settings)
+	system, err := newSystem(dCtx, settings)
 	if err != nil {
 		return err
 	}

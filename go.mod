@@ -14,6 +14,7 @@ require (
 	github.com/ipfs/go-ipld-format v0.5.0
 	github.com/ipfs/kubo v0.21.0
 	github.com/jaevor/go-nanoid v1.3.0
+	github.com/kardianos/service v1.2.2
 	github.com/mattn/go-colorable v0.1.4
 	github.com/muesli/termenv v0.15.1
 	github.com/multiformats/go-multiaddr v0.9.0
@@ -99,3 +100,5 @@ require (
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	lukechampine.com/blake3 v1.2.1 // indirect
 )
+
+replace github.com/kardianos/service => github.com/djdv/service v1.2.1-0.20230705182121-36b49552050b
