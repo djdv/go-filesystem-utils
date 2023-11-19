@@ -106,7 +106,7 @@ func (o9 plan9GuestOptions) make() (plan9GuestSettings, error) {
 	if settings.Maddr == nil {
 		var (
 			flagPrefix = prefixIDFlag(p9fs.GuestID)
-			srvName    = flagPrefix + p9ServerFlagSuffix
+			srvName    = flagPrefix + p9ServerFlagName
 		)
 		return plan9GuestSettings{}, fmt.Errorf(
 			"flag `-%s` must be provided for 9P guests",
