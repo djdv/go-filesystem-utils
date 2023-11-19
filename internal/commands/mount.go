@@ -273,6 +273,7 @@ func makeHostCommands() []command.Command {
 	var (
 		commandMakers = []makeCommand{
 			makeFUSECommand,
+			makeNFSCommand,
 		}
 		commands = make([]command.Command, 0, len(commandMakers))
 	)
