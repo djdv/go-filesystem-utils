@@ -143,6 +143,7 @@ func makeMountPointGuests[
 ) mountPointGuests {
 	guests := make(mountPointGuests)
 	makeIPFSGuests[HC](guests, path)
+	makeNFSGuest[HC](guests, path)
 	return guests
 }
 
