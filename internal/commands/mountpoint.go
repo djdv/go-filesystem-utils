@@ -90,6 +90,7 @@ func makeMountPointHosts(path ninePath, autoUnlink bool) mountPointHosts {
 	var (
 		hostMakers = []makeHostsFunc{
 			makeFUSEHost,
+			makePlan9Host,
 		}
 		hosts = make(mountPointHosts, len(hostMakers))
 	)
@@ -142,6 +143,7 @@ func makeMountPointGuests[
 ) mountPointGuests {
 	guests := make(mountPointGuests)
 	makeIPFSGuests[HC](guests, path)
+	guests[p9fs.GuestID] = newMountPointFunc[HC, p9fs.Guest](path)
 	return guests
 }
 

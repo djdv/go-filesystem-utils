@@ -71,10 +71,6 @@ func guestOverlayText(overlay, overlaid filesystem.ID) string {
 	return string(overlay) + " is an " + string(overlaid) + " overlay"
 }
 
-func prefixIDFlag(system filesystem.ID) string {
-	return strings.ToLower(string(system)) + "-"
-}
-
 func (*ipfsOptions) usage(filesystem.Host) string {
 	return string(ipfs.IPFSID) + " provides an empty root directory." +
 		"\nChild paths are forwarded to the IPFS API."

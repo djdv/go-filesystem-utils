@@ -272,6 +272,7 @@ func makeHostCommands() []command.Command {
 	var (
 		commandMakers = []makeCommand{
 			makeFUSECommand,
+			makePlan9HostCommand,
 		}
 		commands = make([]command.Command, 0, len(commandMakers))
 	)
@@ -292,6 +293,7 @@ func makeGuestCommands[
 ](host filesystem.Host,
 ) []command.Command {
 	guests := makeIPFSCommands[HC, HM](host)
+	guests = append(guests, makePlan9GuestCommand[HC, HM](host))
 	sortCommands(guests)
 	return guests
 }
