@@ -26,6 +26,7 @@ require (
 	github.com/multiformats/go-multibase v0.2.0
 	github.com/u-root/uio v0.0.0-20230305220412-3e8cd9d6bf63
 	github.com/willscott/go-nfs v0.0.2
+	github.com/willscott/go-nfs-client v0.0.0-20240104095149-b44639837b00
 	github.com/winfsp/cgofuse v1.5.1-0.20230130140708-f87f5db493b5
 	golang.org/x/exp v0.0.0-20230321023759-10a507213a29
 	golang.org/x/sys v0.16.0
@@ -84,7 +85,6 @@ require (
 	github.com/rs/cors v1.7.0 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/whyrusleeping/cbor-gen v0.0.0-20230126041949-52956bd4c9aa // indirect
-	github.com/willscott/go-nfs-client v0.0.0-20240104095149-b44639837b00 // indirect
 	github.com/yuin/goldmark v1.5.2 // indirect
 	github.com/yuin/goldmark-emoji v1.0.1 // indirect
 	go.opentelemetry.io/otel v1.16.0 // indirect
