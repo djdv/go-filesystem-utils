@@ -11,6 +11,7 @@ import (
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
 	coreiface "github.com/ipfs/boxo/coreiface"
 	"github.com/multiformats/go-multiaddr"
+	maddrc "github.com/djdv/go-filesystem-utils/internal/multiaddr"
 )
 
 type (
@@ -36,7 +37,7 @@ func (*IPFSGuest) GuestID() filesystem.ID { return IPFSID }
 func (ig *IPFSGuest) UnmarshalJSON(b []byte) error {
 	// multiformats/go-multiaddr issue #100
 	var maddrWorkaround struct {
-		APIMaddr multiaddrContainer `json:"apiMaddr,omitempty"`
+		APIMaddr maddrc.Multiaddr `json:"apiMaddr,omitempty"`
 	}
 	if err := json.Unmarshal(b, &maddrWorkaround); err != nil {
 		return err
