@@ -22,7 +22,7 @@ type (
 	plan9HostOptions  []plan9HostOption
 )
 
-const p9GuestSrvFlagName = "server"
+const p9ServerFlagName = "server"
 
 func makePlan9HostCommand() command.Command {
 	return makeMountSubcommand(
@@ -49,19 +49,7 @@ func (*plan9HostOptions) usage(guest filesystem.ID) string {
 		string(guest) + " as a 9P file server"
 }
 
-func (o9 *plan9HostOptions) BindFlags(flagSet *flag.FlagSet) {
-	// TODO: - dedupe with guest
-	var (
-		flagPrefix = prefixIDFlag(p9fs.HostID)
-		srvUsage   = "9P2000.L file system server `maddr`"
-		srvName    = flagPrefix + p9GuestSrvFlagName
-	)
-	flagSetFunc(flagSet, srvName, srvUsage, o9,
-		func(value multiaddr.Multiaddr, settings *plan9HostSettings) error {
-			settings.Maddr = value
-			return nil
-		})
-}
+func (*plan9HostOptions) BindFlags(*flag.FlagSet) { /* NOOP */ }
 
 func (o9 plan9HostOptions) make() (plan9HostSettings, error) {
 	return makeWithOptions(o9...)
@@ -101,7 +89,7 @@ func (o9 *plan9GuestOptions) BindFlags(flagSet *flag.FlagSet) {
 	var (
 		flagPrefix = prefixIDFlag(p9fs.GuestID)
 		srvUsage   = "9P2000.L file system server `maddr`"
-		srvName    = flagPrefix + p9GuestSrvFlagName
+		srvName    = flagPrefix + p9ServerFlagName
 	)
 	flagSetFunc(flagSet, srvName, srvUsage, o9,
 		func(value multiaddr.Multiaddr, settings *plan9GuestSettings) error {
@@ -118,7 +106,7 @@ func (o9 plan9GuestOptions) make() (plan9GuestSettings, error) {
 	if settings.Maddr == nil {
 		var (
 			flagPrefix = prefixIDFlag(p9fs.GuestID)
-			srvName    = flagPrefix + p9GuestSrvFlagName
+			srvName    = flagPrefix + p9ServerFlagSuffix
 		)
 		return plan9GuestSettings{}, fmt.Errorf(
 			"flag `-%s` must be provided for 9P guests",

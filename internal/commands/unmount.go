@@ -146,6 +146,7 @@ func newDecodeTargetFunc() p9fs.DecodeTargetFunc {
 	var (
 		decoderMakers = []makeDecoderFunc{
 			unmarshalFUSE,
+			unmarshalPlan9,
 		}
 		decoders = make(decoders, len(decoderMakers))
 	)
