@@ -6,7 +6,7 @@ require (
 	github.com/adrg/xdg v0.4.0
 	github.com/charmbracelet/glamour v0.6.0
 	github.com/djdv/p9 v0.2.1-0.20230601152255-7d74b92b80b0
-	github.com/hashicorp/golang-lru/v2 v2.0.2
+	github.com/hashicorp/golang-lru/arc/v2 v2.0.7
 	github.com/ipfs/boxo v0.10.2-0.20230629143123-2d3edc552442
 	github.com/ipfs/go-cid v0.4.1
 	github.com/ipfs/go-ipfs-cmds v0.9.0
@@ -25,6 +25,8 @@ require (
 	golang.org/x/sys v0.9.0
 	golang.org/x/term v0.9.0
 )
+
+require github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 
 require (
 	github.com/alecthomas/chroma v0.10.0 // indirect

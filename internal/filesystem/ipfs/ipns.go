@@ -12,7 +12,7 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
-	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/hashicorp/golang-lru/arc/v2"
 	coreiface "github.com/ipfs/boxo/coreiface"
 	corepath "github.com/ipfs/boxo/coreiface/path"
 	ipath "github.com/ipfs/boxo/path"
@@ -26,7 +26,7 @@ type (
 		*cid.Cid
 		*time.Time
 	}
-	ipnsRootCache = lru.ARCCache[string, ipnsRecord]
+	ipnsRootCache = arc.ARCCache[string, ipnsRecord]
 	IPNS          struct {
 		ctx         context.Context
 		core        coreiface.CoreAPI
@@ -99,7 +99,7 @@ func (settings *ipnsSettings) fillInDefaults() error {
 }
 
 func (settings *ipnsSettings) initRootCache(cacheSize int) error {
-	rootCache, err := lru.NewARC[string, ipnsRecord](cacheSize)
+	rootCache, err := arc.NewARC[string, ipnsRecord](cacheSize)
 	if err != nil {
 		return err
 	}

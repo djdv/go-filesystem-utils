@@ -10,7 +10,7 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
-	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/hashicorp/golang-lru/arc/v2"
 	coreiface "github.com/ipfs/boxo/coreiface"
 	coreoptions "github.com/ipfs/boxo/coreiface/options"
 	corepath "github.com/ipfs/boxo/coreiface/path"
@@ -26,8 +26,8 @@ type (
 		ipld.Node
 		*nodeInfo
 	}
-	ipfsNodeCache = lru.ARCCache[cid.Cid, ipfsRecord]
-	ipfsDirCache  = lru.ARCCache[cid.Cid, []filesystem.StreamDirEntry]
+	ipfsNodeCache = arc.ARCCache[cid.Cid, ipfsRecord]
+	ipfsDirCache  = arc.ARCCache[cid.Cid, []filesystem.StreamDirEntry]
 	IPFS          struct {
 		ctx         context.Context
 		cancel      context.CancelFunc
@@ -102,7 +102,7 @@ func (settings *ipfsSettings) fillInDefaults() error {
 }
 
 func (settings *ipfsSettings) initNodeCache(count int) error {
-	nodeCache, err := lru.NewARC[cid.Cid, ipfsRecord](count)
+	nodeCache, err := arc.NewARC[cid.Cid, ipfsRecord](count)
 	if err != nil {
 		return err
 	}
@@ -111,7 +111,7 @@ func (settings *ipfsSettings) initNodeCache(count int) error {
 }
 
 func (settings *ipfsSettings) initDirectoryCache(count int) error {
-	dirCache, err := lru.NewARC[cid.Cid, []filesystem.StreamDirEntry](count)
+	dirCache, err := arc.NewARC[cid.Cid, []filesystem.StreamDirEntry](count)
 	if err != nil {
 		return err
 	}
