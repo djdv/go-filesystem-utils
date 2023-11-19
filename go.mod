@@ -6,6 +6,7 @@ require (
 	github.com/adrg/xdg v0.4.0
 	github.com/charmbracelet/glamour v0.6.0
 	github.com/djdv/p9 v0.2.1-0.20230601152255-7d74b92b80b0
+	github.com/go-git/go-billy/v5 v5.4.1
 	github.com/hashicorp/golang-lru/arc/v2 v2.0.7
 	github.com/ipfs/boxo v0.10.2-0.20230629143123-2d3edc552442
 	github.com/ipfs/go-cid v0.4.1
@@ -22,11 +23,9 @@ require (
 	github.com/u-root/uio v0.0.0-20230305220412-3e8cd9d6bf63
 	github.com/winfsp/cgofuse v1.5.1-0.20230130140708-f87f5db493b5
 	golang.org/x/exp v0.0.0-20230321023759-10a507213a29
-	golang.org/x/sys v0.9.0
-	golang.org/x/term v0.9.0
+	golang.org/x/sys v0.12.0
+	golang.org/x/term v0.12.0
 )
-
-require github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 
 require (
 	github.com/alecthomas/chroma v0.10.0 // indirect
@@ -39,9 +38,10 @@ require (
 	github.com/go-logr/logr v1.2.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/google/uuid v1.3.0 // indirect
+	github.com/google/uuid v1.3.1 // indirect
 	github.com/gorilla/css v1.0.0 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
+	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/ipfs/bbloom v0.0.4 // indirect
 	github.com/ipfs/go-bitfield v1.1.0 // indirect
 	github.com/ipfs/go-block-format v0.1.2
@@ -91,13 +91,12 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.24.0 // indirect
-	golang.org/x/crypto v0.10.0 // indirect
+	golang.org/x/crypto v0.13.0 // indirect
 	golang.org/x/mod v0.10.0 // indirect
-	golang.org/x/net v0.10.0 // indirect
+	golang.org/x/net v0.15.0 // indirect
 	golang.org/x/sync v0.2.0 // indirect
 	golang.org/x/tools v0.9.1 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/protobuf v1.30.0 // indirect
-	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	lukechampine.com/blake3 v1.2.1 // indirect
 )
