@@ -21,3 +21,18 @@ func makeNFSHost(ninePath, bool) (filesystem.Host, p9fs.MakeGuestFunc) {
 func unmarshalNFS() (filesystem.Host, decodeFunc) {
 	return nfsHost, nil
 }
+
+func makeNFSGuestCommand[
+	HC mountCmdHost[HT, HM],
+	HM marshaller,
+	HT any,
+](host filesystem.Host,
+) command.Command {
+	return nil
+}
+
+func makeNFSGuest[
+	HC mountPointHost[T],
+	T any,
+](mountPointGuests, ninePath,
+) { /*NOOP*/ }

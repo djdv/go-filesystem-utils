@@ -294,6 +294,9 @@ func makeGuestCommands[
 ](host filesystem.Host,
 ) []command.Command {
 	guests := makeIPFSCommands[HC, HM](host)
+	if nfsGuest := makeNFSGuestCommand[HC, HM](host); nfsGuest != nil {
+		guests = append(guests, nfsGuest)
+	}
 	sortCommands(guests)
 	return guests
 }
