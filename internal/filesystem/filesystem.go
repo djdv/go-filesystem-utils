@@ -128,6 +128,30 @@ func OpenFile(fsys fs.FS, name string, flag int, perm fs.FileMode) (fs.File, err
 	return nil, fmt.Errorf(`open "%s": operation not supported`, name)
 }
 
+func Lstat(fsys fs.FS, name string) (fs.FileInfo, error) {
+	if fsys, ok := fsys.(SymlinkFS); ok {
+		return fsys.Lstat(name)
+	}
+	const op = "lstat"
+	return nil, unsupportedOpErr(op, name)
+}
+
+func Symlink(fsys fs.FS, oldname, newname string) error {
+	if fsys, ok := fsys.(SymlinkFS); ok {
+		return fsys.Symlink(oldname, newname)
+	}
+	const op = "symlink"
+	return unsupportedOpErr2(op, oldname, newname)
+}
+
+func Readlink(fsys fs.FS, name string) (string, error) {
+	if fsys, ok := fsys.(SymlinkFS); ok {
+		return fsys.Readlink(name)
+	}
+	const op = "readlink"
+	return "", unsupportedOpErr(op, name)
+}
+
 func Truncate(fsys fs.FS, name string, size int64) error {
 	file, err := OpenFile(fsys, name, os.O_WRONLY|os.O_CREATE, 0o666)
 	if err != nil {
