@@ -138,6 +138,14 @@ func OpenFile(fsys fs.FS, name string, flag int, perm fs.FileMode) (fs.File, err
 	return nil, fmt.Errorf(`open "%s": operation not supported`, name)
 }
 
+func CreateFile(fsys fs.FS, name string) (fs.File, error) {
+	if fsys, ok := fsys.(CreateFileFS); ok {
+		return fsys.CreateFile(name)
+	}
+	const op = "createfile"
+	return nil, unsupportedOpErr(op, name)
+}
+
 func Lstat(fsys fs.FS, name string) (fs.FileInfo, error) {
 	if fsys, ok := fsys.(SymlinkFS); ok {
 		return fsys.Lstat(name)
