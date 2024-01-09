@@ -190,3 +190,17 @@ func StreamDir(ctx context.Context, count int, directory fs.ReadDirFile) <-chan 
 	}()
 	return stream
 }
+
+func unsupportedOpErr(op, name string) error {
+	return fmt.Errorf(
+		op+` "%s": %w`,
+		name, errors.ErrUnsupported,
+	)
+}
+
+func unsupportedOpErr2(op, name1, name2 string) error {
+	return fmt.Errorf(
+		op+` "%s" -> "%s": %w`,
+		name1, name2, errors.ErrUnsupported,
+	)
+}
