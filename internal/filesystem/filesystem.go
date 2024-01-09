@@ -146,6 +146,14 @@ func CreateFile(fsys fs.FS, name string) (fs.File, error) {
 	return nil, unsupportedOpErr(op, name)
 }
 
+func Remove(fsys fs.FS, name string) error {
+	if fsys, ok := fsys.(RemoveFS); ok {
+		return fsys.Remove(name)
+	}
+	const op = "remove"
+	return unsupportedOpErr(op, name)
+}
+
 func Lstat(fsys fs.FS, name string) (fs.FileInfo, error) {
 	if fsys, ok := fsys.(SymlinkFS); ok {
 		return fsys.Lstat(name)
