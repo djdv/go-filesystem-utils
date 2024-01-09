@@ -178,6 +178,14 @@ func Readlink(fsys fs.FS, name string) (string, error) {
 	return "", unsupportedOpErr(op, name)
 }
 
+func Rename(fsys fs.FS, oldName, newName string) error {
+	if fsys, ok := fsys.(RenameFS); ok {
+		return fsys.Rename(oldName, newName)
+	}
+	const op = "rename"
+	return unsupportedOpErr2(op, oldName, newName)
+}
+
 func Truncate(fsys fs.FS, name string, size int64) error {
 	file, err := OpenFile(fsys, name, os.O_WRONLY|os.O_CREATE, 0o666)
 	if err != nil {
