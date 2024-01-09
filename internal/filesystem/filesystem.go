@@ -38,6 +38,7 @@ type (
 	}
 	SymlinkFS interface {
 		fs.FS
+		Lstat(name string) (fs.FileInfo, error)
 		Symlink(oldname, newname string) error
 		Readlink(name string) (string, error)
 	}
