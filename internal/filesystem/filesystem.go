@@ -192,15 +192,15 @@ func Truncate(fsys fs.FS, name string, size int64) error {
 	if err != nil {
 		return err
 	}
-	truncater, ok := file.(TruncateFile)
-	if !ok {
+	if fsys, ok := file.(TruncateFile); ok {
 		return errors.Join(
-			fmt.Errorf(`truncate "%s": operation not supported`, name),
+			fsys.Truncate(size),
 			file.Close(),
 		)
 	}
+	const op = "truncate"
 	return errors.Join(
-		truncater.Truncate(size),
+		unsupportedOpErr(op, name),
 		file.Close(),
 	)
 }
