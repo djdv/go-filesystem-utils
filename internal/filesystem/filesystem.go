@@ -106,7 +106,9 @@ const (
 	ExecuteUser
 	WriteUser
 	ReadUser
+)
 
+const (
 	Root = "."
 
 	ErrPath     = generic.ConstError("path not valid")
