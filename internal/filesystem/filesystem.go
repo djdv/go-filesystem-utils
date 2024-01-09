@@ -118,6 +118,16 @@ const (
 
 func (dw dirEntryWrapper) Error() error { return dw.error }
 
+func FSID(fsys fs.FS) (ID, error) {
+	if fsys, ok := fsys.(IDFS); ok {
+		return fsys.ID(), nil
+	}
+	return "", fmt.Errorf(
+		"id %T: %w",
+		fsys, errors.ErrUnsupported,
+	)
+}
+
 func OpenFile(fsys fs.FS, name string, flag int, perm fs.FileMode) (fs.File, error) {
 	if fsys, ok := fsys.(OpenFileFS); ok {
 		return fsys.OpenFile(name, flag, perm)
