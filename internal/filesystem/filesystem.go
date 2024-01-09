@@ -135,7 +135,8 @@ func OpenFile(fsys fs.FS, name string, flag int, perm fs.FileMode) (fs.File, err
 	if flag == os.O_RDONLY {
 		return fsys.Open(name)
 	}
-	return nil, fmt.Errorf(`open "%s": operation not supported`, name)
+	const op = "open"
+	return nil, unsupportedOpErr(op, name)
 }
 
 func CreateFile(fsys fs.FS, name string) (fs.File, error) {
