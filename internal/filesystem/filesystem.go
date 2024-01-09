@@ -204,6 +204,14 @@ func Truncate(fsys fs.FS, name string, size int64) error {
 	)
 }
 
+func Mkdir(fsys fs.FS, name string, perm fs.FileMode) error {
+	if fsys, ok := fsys.(MkdirFS); ok {
+		return fsys.Mkdir(name, perm)
+	}
+	const op = "mkdir"
+	return unsupportedOpErr(op, name)
+}
+
 // StreamDir reads the directory
 // and returns a channel of directory entry results.
 //
