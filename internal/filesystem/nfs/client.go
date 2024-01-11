@@ -62,10 +62,7 @@ type (
 	ClientOption func(*clientSettings) error
 )
 
-const (
-	errStale               = generic.ConstError("handle became stale")
-	GuestID  filesystem.ID = "NFS"
-)
+const errStale = generic.ConstError("handle became stale")
 
 func NewNFSGuest(maddr multiaddr.Multiaddr, options ...ClientOption) (*goFS, error) {
 	var (
