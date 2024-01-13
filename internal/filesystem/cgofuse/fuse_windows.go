@@ -11,7 +11,7 @@ import (
 const (
 	cgoDepPanic   = "cgofuse: cannot find winfsp"
 	cgoDepMessage = "WinFSP(http://www.secfs.net/winfsp/) is required" +
-		"to mount on this platform, but it was not found"
+		" to mount on this platform, but it was not found"
 
 	systemNameOpt = "FileSystemName="
 	volNameOpt    = "volname="
