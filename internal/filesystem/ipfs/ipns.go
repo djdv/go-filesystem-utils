@@ -398,7 +398,7 @@ func (nf *ipnsFile) Seek(offset int64, whence int) (int64, error) {
 	if seeker, ok := nf.file.(io.Seeker); ok {
 		return seeker.Seek(offset, whence)
 	}
-	return 0, fserrors.ErrUnsupported
+	return 0, errors.ErrUnsupported
 }
 
 func (nf *ipnsFile) Read(b []byte) (int, error) {
