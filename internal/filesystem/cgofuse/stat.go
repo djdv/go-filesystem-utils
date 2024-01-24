@@ -1,8 +1,10 @@
 package cgofuse
 
 import (
+	"errors"
 	"io/fs"
 
+	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	"github.com/winfsp/cgofuse/fuse"
 )
 
@@ -54,6 +56,11 @@ func (gw *goWrapper) infoFromHandle(fh fileDescriptor) (fs.FileInfo, error) {
 func (gw *goWrapper) infoFromPath(path string) (fs.FileInfo, error) {
 	goPath, err := fuseToGo(path)
 	if err != nil {
+		return nil, err
+	}
+	if stat, err := filesystem.Lstat(gw.FS, goPath); err == nil {
+		return stat, nil
+	} else if !errors.Is(err, errors.ErrUnsupported) {
 		return nil, err
 	}
 	return fs.Stat(gw.FS, goPath)
