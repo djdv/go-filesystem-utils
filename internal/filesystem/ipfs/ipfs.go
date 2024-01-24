@@ -319,7 +319,7 @@ func (fsys *IPFS) Open(name string) (fs.File, error) {
 	}
 	const op = "open"
 	if !fs.ValidPath(name) {
-		return nil, fserrors.New(op, name, filesystem.ErrPath, fserrors.InvalidItem)
+		return nil, fserrors.New(op, name, fs.ErrInvalid, fserrors.InvalidItem)
 	}
 	cid, err := fsys.toCID(op, name)
 	if err != nil {
@@ -482,7 +482,7 @@ func (id *ipfsDirectory) StreamDir() <-chan filesystem.StreamDirEntry {
 		// TODO: We don't have an error kind
 		// that translates into EBADF
 		errs <- newErrorEntry(
-			fserrors.New(op, id.info.name, filesystem.ErrNotOpen, fserrors.IO),
+			fserrors.New(op, id.info.name, fs.ErrClosed, fserrors.IO),
 		)
 		return errs
 	}
@@ -498,7 +498,7 @@ func (id *ipfsDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	if stream == nil {
 		// TODO: We don't have an error kind
 		// that translates into EBADF
-		return nil, fserrors.New(op, id.info.name, filesystem.ErrNotOpen, fserrors.IO)
+		return nil, fserrors.New(op, id.info.name, fs.ErrClosed, fserrors.IO)
 	}
 	var (
 		ctx       = stream.Context
@@ -519,5 +519,5 @@ func (id *ipfsDirectory) Close() error {
 		id.stream = nil
 		return nil
 	}
-	return fserrors.New(op, id.info.name, filesystem.ErrNotOpen, fserrors.InvalidItem)
+	return fserrors.New(op, id.info.name, fs.ErrClosed, fserrors.InvalidItem)
 }

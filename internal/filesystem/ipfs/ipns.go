@@ -257,7 +257,7 @@ func (fsys *IPNS) Open(name string) (fs.File, error) {
 	}
 	const op = "open"
 	if !fs.ValidPath(name) {
-		return nil, fserrors.New(op, name, filesystem.ErrPath, fserrors.InvalidItem)
+		return nil, fserrors.New(op, name, fs.ErrInvalid, fserrors.InvalidItem)
 	}
 	cid, err := fsys.toCID(op, name)
 	if err != nil {

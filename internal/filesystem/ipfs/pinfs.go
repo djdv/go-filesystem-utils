@@ -129,7 +129,7 @@ func (pfs *PinFS) Stat(name string) (fs.FileInfo, error) {
 	if subsys := pfs.ipfs; subsys != nil {
 		return fs.Stat(subsys, name)
 	}
-	return nil, fserrors.New(op, name, filesystem.ErrNotFound, fserrors.NotExist)
+	return nil, fserrors.New(op, name, fs.ErrNotExist, fserrors.NotExist)
 }
 
 func (pfs *PinFS) Open(name string) (fs.File, error) {
@@ -140,7 +140,7 @@ func (pfs *PinFS) Open(name string) (fs.File, error) {
 	if subsys := pfs.ipfs; subsys != nil {
 		return subsys.Open(name)
 	}
-	return nil, fserrors.New(op, name, filesystem.ErrNotFound, fserrors.NotExist)
+	return nil, fserrors.New(op, name, fs.ErrNotExist, fserrors.NotExist)
 }
 
 func (pfs *PinFS) openRoot() (fs.ReadDirFile, error) {
@@ -285,7 +285,7 @@ func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	if stream == nil {
 		// TODO: We don't have an error kind
 		// that translates into EBADF
-		return nil, fserrors.New(op, filesystem.Root, filesystem.ErrNotOpen, fserrors.IO)
+		return nil, fserrors.New(op, filesystem.Root, fs.ErrClosed, fserrors.IO)
 	}
 	var (
 		ctx       = stream.Context
@@ -307,7 +307,7 @@ func (pd *pinDirectory) StreamDir() <-chan filesystem.StreamDirEntry {
 		// TODO: We don't have an error kind
 		// that translates into EBADF
 		errs <- newErrorEntry(
-			fserrors.New(op, filesystem.Root, filesystem.ErrNotOpen, fserrors.IO),
+			fserrors.New(op, filesystem.Root, fs.ErrClosed, fserrors.IO),
 		)
 		return errs
 	}
@@ -323,7 +323,7 @@ func (pd *pinDirectory) Close() error {
 	}
 	// TODO: We don't have an error kind
 	// that translates into EBADF
-	return fserrors.New(op, filesystem.Root, filesystem.ErrNotOpen, fserrors.IO)
+	return fserrors.New(op, filesystem.Root, fs.ErrClosed, fserrors.IO)
 }
 
 func (pe *pinDirEntry) Name() string {

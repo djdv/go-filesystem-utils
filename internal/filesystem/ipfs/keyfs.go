@@ -112,7 +112,7 @@ func (kfs *KeyFS) Stat(name string) (fs.FileInfo, error) {
 	if subsys := kfs.ipns; subsys != nil {
 		return fs.Stat(subsys, name)
 	}
-	return nil, fserrors.New(op, name, filesystem.ErrNotFound, fserrors.NotExist)
+	return nil, fserrors.New(op, name, fs.ErrNotExist, fserrors.NotExist)
 }
 
 func (kfs *KeyFS) Open(name string) (fs.File, error) {
@@ -131,7 +131,7 @@ func (kfs *KeyFS) Open(name string) (fs.File, error) {
 	if subsys := kfs.ipns; subsys != nil {
 		return subsys.Open(translated)
 	}
-	return nil, fserrors.New(op, name, filesystem.ErrNotFound, fserrors.NotExist)
+	return nil, fserrors.New(op, name, fs.ErrNotExist, fserrors.NotExist)
 }
 
 func (kfs *KeyFS) openRoot() (fs.ReadDirFile, error) {
@@ -192,7 +192,7 @@ func (kd *keyDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	}
 	stream := kd.stream
 	if stream == nil {
-		return nil, fserrors.New(op, filesystem.Root, filesystem.ErrNotOpen, fserrors.IO)
+		return nil, fserrors.New(op, filesystem.Root, fs.ErrClosed, fserrors.IO)
 	}
 	var (
 		ctx     = stream.Context
@@ -216,7 +216,7 @@ func (kd *keyDirectory) Close() error {
 		kd.stream = nil
 		return nil
 	}
-	return fserrors.New(op, filesystem.Root, filesystem.ErrNotOpen, fserrors.InvalidItem)
+	return fserrors.New(op, filesystem.Root, fs.ErrClosed, fserrors.InvalidItem)
 }
 
 func pathWithoutNamespace(key coreiface.Key) string {
