@@ -32,11 +32,6 @@ type (
 		// (So that cross API locks can be possible. E.g. FUSE+9P accessing the same `fs.File`)
 		ioMu sync.Mutex
 	}
-	seekerFile interface {
-		fs.File
-		io.Seeker
-	}
-
 	fillFunc = func(name string, stat *fuse.Stat_t, ofst int64) bool
 )
 
