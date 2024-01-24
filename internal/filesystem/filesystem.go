@@ -124,10 +124,8 @@ func FSID(fsys fs.FS) (ID, error) {
 	if fsys, ok := fsys.(IDFS); ok {
 		return fsys.ID(), nil
 	}
-	return "", fmt.Errorf(
-		"id %T: %w",
-		fsys, errors.ErrUnsupported,
-	)
+	const op = "id"
+	return "", unsupportedOpErrAnonymous(op, fsys)
 }
 
 func OpenFile(fsys fs.FS, name string, flag int, perm fs.FileMode) (fs.File, error) {
@@ -261,6 +259,14 @@ func StreamDir(ctx context.Context, count int, directory fs.ReadDirFile) <-chan 
 	return stream
 }
 
+func Seek(file fs.File, offset int64, whence int) (int64, error) {
+	if seeker, ok := file.(io.Seeker); ok {
+		return seeker.Seek(offset, whence)
+	}
+	const op = "seek"
+	return -1, unsupportedOpErrAnonymous(op, file)
+}
+
 func unsupportedOpErr(op, name string) error {
 	return fmt.Errorf(
 		op+` "%s": %w`,
@@ -272,5 +278,12 @@ func unsupportedOpErr2(op, name1, name2 string) error {
 	return fmt.Errorf(
 		op+` "%s" -> "%s": %w`,
 		name1, name2, errors.ErrUnsupported,
+	)
+}
+
+func unsupportedOpErrAnonymous(op string, subject any) error {
+	return fmt.Errorf(
+		op+` %T: %w`,
+		subject, errors.ErrUnsupported,
 	)
 }
