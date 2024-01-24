@@ -37,9 +37,20 @@ type (
 		Remove(name string) error
 	}
 	SymlinkFS interface {
+		LinkStater
+		LinkMaker
+		LinkReader
+	}
+	LinkStater interface {
 		fs.FS
 		Lstat(name string) (fs.FileInfo, error)
+	}
+	LinkMaker interface {
+		fs.FS
 		Symlink(oldname, newname string) error
+	}
+	LinkReader interface {
+		fs.FS
 		Readlink(name string) (string, error)
 	}
 	RenameFS interface {
@@ -153,7 +164,7 @@ func Remove(fsys fs.FS, name string) error {
 }
 
 func Lstat(fsys fs.FS, name string) (fs.FileInfo, error) {
-	if fsys, ok := fsys.(SymlinkFS); ok {
+	if fsys, ok := fsys.(LinkStater); ok {
 		return fsys.Lstat(name)
 	}
 	const op = "lstat"
@@ -161,7 +172,7 @@ func Lstat(fsys fs.FS, name string) (fs.FileInfo, error) {
 }
 
 func Symlink(fsys fs.FS, oldname, newname string) error {
-	if fsys, ok := fsys.(SymlinkFS); ok {
+	if fsys, ok := fsys.(LinkMaker); ok {
 		return fsys.Symlink(oldname, newname)
 	}
 	const op = "symlink"
@@ -169,7 +180,7 @@ func Symlink(fsys fs.FS, oldname, newname string) error {
 }
 
 func Readlink(fsys fs.FS, name string) (string, error) {
-	if fsys, ok := fsys.(SymlinkFS); ok {
+	if fsys, ok := fsys.(LinkReader); ok {
 		return fsys.Readlink(name)
 	}
 	const op = "readlink"
