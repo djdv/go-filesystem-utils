@@ -135,6 +135,13 @@ func (emptyRoot) ReadDir(count int) ([]fs.DirEntry, error) {
 	return nil, nil
 }
 
+func validatePath(op, name string) error {
+	if fs.ValidPath(name) {
+		return nil
+	}
+	return fserrors.New(op, name, fs.ErrInvalid, fserrors.InvalidItem)
+}
+
 func statNode(node ipld.Node, info *nodeInfo) error {
 	switch typedNode := node.(type) {
 	case *dag.ProtoNode:
