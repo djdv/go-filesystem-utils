@@ -111,9 +111,6 @@ const (
 const (
 	Root = "."
 
-	ErrPath     = generic.ConstError("path not valid")
-	ErrNotFound = generic.ConstError("file not found")
-	ErrNotOpen  = generic.ConstError("file is not open")
 	ErrIsDir    = generic.ConstError("file is a directory")
 	ErrIsNotDir = generic.ConstError("file is not a directory")
 )
