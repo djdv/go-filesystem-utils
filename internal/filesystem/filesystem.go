@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 )
 
@@ -271,22 +272,18 @@ func Seek(file fs.File, offset int64, whence int) (int64, error) {
 }
 
 func unsupportedOpErr(op, name string) error {
-	return fmt.Errorf(
-		op+` "%s": %w`,
-		name, errors.ErrUnsupported,
-	)
+	return fserrors.New(op, name, errors.ErrUnsupported, fserrors.InvalidOperation)
 }
 
 func unsupportedOpErr2(op, name1, name2 string) error {
-	return fmt.Errorf(
-		op+` "%s" -> "%s": %w`,
-		name1, name2, errors.ErrUnsupported,
+	name := fmt.Sprintf(
+		`"%s" -> "%s"`,
+		name1, name2,
 	)
+	return fserrors.New(op, name, errors.ErrUnsupported, fserrors.InvalidOperation)
 }
 
 func unsupportedOpErrAnonymous(op string, subject any) error {
-	return fmt.Errorf(
-		op+` %T: %w`,
-		subject, errors.ErrUnsupported,
-	)
+	name := fmt.Sprintf("%T", subject)
+	return unsupportedOpErr(op, name)
 }
