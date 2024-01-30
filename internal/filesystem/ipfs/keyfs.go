@@ -2,25 +2,42 @@ package ipfs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
+	"github.com/djdv/go-filesystem-utils/internal/generic"
 	coreiface "github.com/ipfs/boxo/coreiface"
+	coreoptions "github.com/ipfs/boxo/coreiface/options"
+	corepath "github.com/ipfs/boxo/coreiface/path"
 )
 
 type (
+	keyfsCacheEntry struct {
+		last     time.Time
+		snapshot []coreiface.Key
+	}
 	KeyFS struct {
 		keyAPI      coreiface.KeyAPI
+		dag         coreiface.APIDagService
+		names       coreiface.NameAPI
+		pins        coreiface.PinAPI
 		ipns        fs.FS
 		ctx         context.Context
 		cancel      context.CancelFunc
-		permissions fs.FileMode
+		info        nodeInfo
+		nodeTimeout time.Duration
+		cache       keyfsCacheEntry
+		cacheMu     sync.Mutex
+		linkLimit   uint
+		expiry      time.Duration
 	}
 	KeyFSOption  func(*KeyFS) error
 	keyDirectory struct {
@@ -46,10 +63,34 @@ func WithIPNS(ipns fs.FS) KeyFSOption {
 	return func(ka *KeyFS) error { ka.ipns = ipns; return nil }
 }
 
+func WithNameService(names coreiface.NameAPI) KeyFSOption {
+	return func(ka *KeyFS) error { ka.names = names; return nil }
+}
+
+func WithPinService(pins coreiface.PinAPI) KeyFSOption {
+	return func(ka *KeyFS) error { ka.pins = pins; return nil }
+}
+
+// CacheKeysFor will cache responses from the node and consider
+// them valid for the duration. Negative values retain the
+// cache forever. A 0 value disables caching.
+func CacheKeysFor(duration time.Duration) KeyFSOption {
+	return func(kfs *KeyFS) error {
+		kfs.expiry = duration
+		return nil
+	}
+}
+
 func NewKeyFS(core coreiface.KeyAPI, options ...KeyFSOption) (*KeyFS, error) {
+	const permissions = readAll | executeAll
 	fsys := &KeyFS{
-		permissions: readAll | executeAll,
-		keyAPI:      core,
+		info: nodeInfo{
+			modTime: time.Now(),
+			name:    filesystem.Root,
+			mode:    fs.ModeDir | permissions,
+		},
+		keyAPI:    core,
+		linkLimit: 40, // Arbitrary.
 	}
 	for _, setter := range options {
 		if err := setter(fsys); err != nil {
@@ -68,8 +109,21 @@ func (fsys *KeyFS) setContext(ctx context.Context) {
 	fsys.ctx, fsys.cancel = context.WithCancel(ctx)
 }
 
+func (fsys *KeyFS) setNodeTimeout(timeout time.Duration) {
+	fsys.nodeTimeout = timeout
+}
+
+func (fsys *KeyFS) setLinkLimit(limit uint) {
+	fsys.linkLimit = limit
+}
+
 func (fsys *KeyFS) setPermissions(permissions fs.FileMode) {
-	fsys.permissions = permissions.Perm()
+	typ := fsys.info.mode.Type()
+	fsys.info.mode = typ | permissions.Perm()
+}
+
+func (kfs *KeyFS) setDag(dag coreiface.APIDagService) {
+	kfs.dag = dag
 }
 
 func (ki *KeyFS) Close() error {
@@ -77,61 +131,199 @@ func (ki *KeyFS) Close() error {
 	return nil
 }
 
-// TODO: probably inefficient. Review.
-// TODO: deceptive name. This may translate the name.
-// but it won't if we don't have such a key
-// (which is fine for non-named IPNS paths).
-func (ki *KeyFS) translateName(name string) (string, error) {
-	keys, err := ki.keyAPI.List(ki.ctx)
+func (ki *KeyFS) nodeContext() (context.Context, context.CancelFunc) {
+	var (
+		ctx     = ki.ctx
+		timeout = ki.nodeTimeout
+	)
+	if timeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
+func (ki *KeyFS) getKeys() ([]coreiface.Key, error) {
+	expiry := ki.expiry
+	if cacheDisabled := expiry == 0; cacheDisabled {
+		return ki.fetchKeys()
+	}
+	ki.cacheMu.Lock()
+	defer ki.cacheMu.Unlock()
+	if cache := ki.cache; time.Since(cache.last) < expiry {
+		return cache.snapshot, nil
+	}
+	keys, err := ki.fetchKeys()
+	if err != nil {
+		return nil, err
+	}
+	ki.cache = keyfsCacheEntry{
+		snapshot: keys,
+		last:     time.Now(),
+	}
+	return keys, nil
+}
+
+func (ki *KeyFS) fetchKeys() ([]coreiface.Key, error) {
+	ctx, cancel := ki.nodeContext()
+	defer cancel()
+	return ki.keyAPI.List(ctx)
+}
+
+// maybeTranslateName will translate the first component
+// of `name` if the component is the name of a key that we have.
+// Otherwise `name` is returned unchanged.
+func (ki *KeyFS) maybeTranslateName(name string) (string, error) {
+	keys, err := ki.getKeys()
 	if err != nil {
 		return "", err
 	}
+	const separator = "/"
 	var (
-		components = strings.Split(name, "/")
+		components = strings.Split(name, separator)
 		keyName    = components[0]
 	)
 	for _, key := range keys {
-		if key.Name() == keyName {
-			keyName = pathWithoutNamespace(key)
-			break
+		if key.Name() != keyName {
+			continue
 		}
+		tail := components[1:]
+		components = append(
+			[]string{pathWithoutNamespace(key)},
+			tail...,
+		)
+		return strings.Join(components, separator), nil
 	}
-	components = append([]string{keyName}, components[1:]...)
-	keyName = strings.Join(components, "/")
-	return keyName, nil
+	return name, nil
+}
+
+func (kfs *KeyFS) Lstat(name string) (fs.FileInfo, error) {
+	const op = "lstat"
+	return kfs.stat(op, name, filesystem.Lstat)
 }
 
 func (kfs *KeyFS) Stat(name string) (fs.FileInfo, error) {
 	const op = "stat"
-	if name == filesystem.Root {
-		return &keyDirectory{
-			mode: fs.ModeDir | kfs.permissions,
-			ipns: kfs.ipns,
-		}, nil
-	}
-	if subsys := kfs.ipns; subsys != nil {
-		return fs.Stat(subsys, name)
-	}
-	return nil, fserrors.New(op, name, fs.ErrNotExist, fserrors.NotExist)
+	return kfs.stat(op, name, filesystem.Lstat)
 }
 
-func (kfs *KeyFS) Open(name string) (fs.File, error) {
-	const op = "open"
+func (kfs *KeyFS) stat(op, name string, statFn statFunc) (fs.FileInfo, error) {
 	if name == filesystem.Root {
-		file, err := kfs.openRoot()
-		if err != nil {
-			return nil, err
-		}
-		return file, nil
+		return &kfs.info, nil
 	}
-	translated, err := kfs.translateName(name)
+	ipns := kfs.ipns
+	if ipns == nil {
+		return nil, fserrors.New(op, name, fs.ErrNotExist, fserrors.NotExist)
+	}
+	translated, err := kfs.maybeTranslateName(name)
 	if err != nil {
 		return nil, fserrors.New(op, name, err, fserrors.IO)
 	}
-	if subsys := kfs.ipns; subsys != nil {
-		return subsys.Open(translated)
+	return statFn(ipns, translated)
+}
+
+func (kfs *KeyFS) Symlink(oldname, newname string) error {
+	const op = "symlink"
+	dag, names, err := kfs.symlinkAPIs()
+	if err != nil {
+		return fserrors.New(op, newname, err, fserrors.InvalidOperation)
 	}
-	return nil, fserrors.New(op, name, fs.ErrNotExist, fserrors.NotExist)
+	var (
+		api         = kfs.keyAPI
+		ctx, cancel = kfs.nodeContext()
+	)
+	defer cancel()
+	key, err := api.Generate(ctx, newname)
+	if err != nil {
+		return fserrors.New(op, newname, err, fserrors.IO)
+	}
+	linkCid, err := makeAndAddLink(ctx, oldname, dag)
+	if err != nil {
+		return fserrors.New(op, newname, err, fserrors.IO)
+	}
+	path := corepath.IpfsPath(linkCid)
+	if pins := kfs.pins; pins != nil {
+		if err := pins.Add(ctx, path); err != nil {
+			return fserrors.New(op, newname, err, fserrors.IO)
+		}
+	}
+	if _, err := names.Publish(ctx, path,
+		coreoptions.Name.Key(key.Name()),
+		coreoptions.Name.AllowOffline(true),
+	); err != nil {
+		return fserrors.New(op, newname, err, fserrors.IO)
+	}
+	return nil
+}
+
+func (kfs *KeyFS) symlinkAPIs() (coreiface.APIDagService, coreiface.NameAPI, error) {
+	var (
+		dag   = kfs.dag
+		names = kfs.names
+		errs  []error
+	)
+	if dag == nil {
+		const err = generic.ConstError("system created without dag service option")
+		errs = append(errs, err)
+	}
+	if names == nil {
+		const err = generic.ConstError("system created without name service option")
+		errs = append(errs, err)
+	}
+	if errs == nil {
+		return dag, names, nil
+	}
+	errs = append([]error{errors.ErrUnsupported}, errs...)
+	return nil, nil, errors.Join(errs...)
+}
+
+func (kfs *KeyFS) Readlink(name string) (string, error) {
+	const op = "readlink"
+	if name == filesystem.Root {
+		const kind = fserrors.InvalidItem
+		return "", fserrors.New(op, name, errRootLink, kind)
+	}
+	if subsys := kfs.ipns; subsys != nil {
+		return filesystem.Readlink(subsys, name)
+	}
+	return "", fserrors.New(op, name, fs.ErrNotExist, fserrors.NotExist)
+}
+
+func (kfs *KeyFS) Open(name string) (fs.File, error) {
+	const depth = 0
+	return kfs.open(name, depth)
+}
+
+func (kfs *KeyFS) open(name string, depth uint) (fs.File, error) {
+	const op = "open"
+	if name == filesystem.Root {
+		return kfs.openRoot()
+	}
+	if err := validatePath(op, name); err != nil {
+		return nil, err
+	}
+	ipns := kfs.ipns
+	if ipns == nil {
+		return nil, fserrors.New(op, name, fs.ErrNotExist, fserrors.NotExist)
+	}
+	translated, err := kfs.maybeTranslateName(name)
+	if err != nil {
+		return nil, fserrors.New(op, name, err, fserrors.IO)
+	}
+	info, err := kfs.Lstat(translated)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode().Type() == fs.ModeSymlink {
+		if depth++; depth >= kfs.linkLimit {
+			return nil, linkLimitError(op, name, kfs.linkLimit)
+		}
+		target, err := filesystem.Readlink(ipns, translated)
+		if err != nil {
+			return nil, err
+		}
+		return kfs.open(target, depth)
+	}
+	return ipns.Open(translated)
 }
 
 func (kfs *KeyFS) openRoot() (fs.ReadDirFile, error) {
@@ -145,24 +337,31 @@ func (kfs *KeyFS) openRoot() (fs.ReadDirFile, error) {
 	}
 	var (
 		dirCtx, dirCancel = context.WithCancel(rootCtx)
-		entries           = make(chan filesystem.StreamDirEntry)
+		entries           = make(chan filesystem.StreamDirEntry, 1)
+		permissions       = kfs.info.mode.Perm()
 	)
 	go func() {
-		keys, err := kfs.keyAPI.List(dirCtx)
+		defer close(entries)
+		keys, err := kfs.getKeys()
 		if err != nil {
 			dirCancel()
+			entries <- errorEntry{error: err}
+			return
 		}
 		for _, key := range keys {
-			entries <- &keyDirEntry{
-				permissions: kfs.permissions,
+			select {
+			case entries <- &keyDirEntry{
+				permissions: permissions,
 				Key:         key,
 				ipns:        kfs.ipns,
+			}:
+			case <-dirCtx.Done():
+				return
 			}
 		}
-		close(entries)
 	}()
 	return &keyDirectory{
-		mode: fs.ModeDir | kfs.permissions,
+		mode: fs.ModeDir | permissions,
 		ipns: kfs.ipns,
 		stream: &entryStream{
 			Context: dirCtx, CancelFunc: dirCancel,
@@ -244,7 +443,7 @@ func (ke *keyDirEntry) Type() fs.FileMode {
 	if err != nil {
 		return fs.ModeIrregular
 	}
-	return info.Mode() & fs.ModeType
+	return info.Mode().Type()
 }
 
 func (ke *keyDirEntry) IsDir() bool { return ke.Type()&fs.ModeDir != 0 }

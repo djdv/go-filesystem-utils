@@ -14,6 +14,7 @@ import (
 	coreiface "github.com/ipfs/boxo/coreiface"
 	coreoptions "github.com/ipfs/boxo/coreiface/options"
 	corepath "github.com/ipfs/boxo/coreiface/path"
+	files "github.com/ipfs/boxo/files"
 	ipath "github.com/ipfs/boxo/path"
 	"github.com/ipfs/boxo/path/resolver"
 	"github.com/ipfs/go-cid"
@@ -37,6 +38,7 @@ type (
 		dirCache    *ipfsDirCache
 		info        nodeInfo
 		nodeTimeout time.Duration
+		linkLimit   uint
 	}
 	ipfsSettings struct {
 		*IPFS
@@ -65,6 +67,7 @@ func NewIPFS(core coreiface.CoreAPI, options ...IPFSOption) (*IPFS, error) {
 			},
 			core:        core,
 			nodeTimeout: 1 * time.Minute,
+			linkLimit:   40, // Arbitrary.
 		}
 		settings = ipfsSettings{
 			IPFS:             fsys,
@@ -145,21 +148,18 @@ func WithDirectoryCacheCount(cacheCount int) IPFSOption {
 	}
 }
 
-// WithNodeTimeout sets a timeout duration to use
-// when communicating with the IPFS API/node.
-// If <= 0, operations will not time out,
-// and will remain pending until the file system is closed.
-func WithNodeTimeout(duration time.Duration) IPFSOption {
-	return func(ifs *ipfsSettings) error {
-		ifs.nodeTimeout = duration
-		return nil
-	}
-}
-
 func (*IPFS) ID() filesystem.ID { return IPFSID }
 
 func (fsys *IPFS) setContext(ctx context.Context) {
 	fsys.ctx, fsys.cancel = context.WithCancel(ctx)
+}
+
+func (fsys *IPFS) setNodeTimeout(timeout time.Duration) {
+	fsys.nodeTimeout = timeout
+}
+
+func (fsys *IPFS) setLinkLimit(limit uint) {
+	fsys.linkLimit = limit
 }
 
 func (fsys *IPFS) setPermissions(permissions fs.FileMode) {
@@ -171,20 +171,91 @@ func (fsys *IPFS) Close() error {
 	return nil
 }
 
-func (fsys *IPFS) Stat(name string) (fs.FileInfo, error) {
-	const op = "stat"
+func (fsys *IPFS) Lstat(name string) (fs.FileInfo, error) {
+	const op = "lstat"
+	info, _, err := fsys.lstat(op, name)
+	return info, err
+}
+
+func (fsys *IPFS) lstat(op, name string) (fs.FileInfo, cid.Cid, error) {
 	if name == filesystem.Root {
-		return &fsys.info, nil
+		return &fsys.info, cid.Cid{}, nil
 	}
 	cid, err := fsys.toCID(op, name)
 	if err != nil {
-		return nil, err
+		return nil, cid, err
 	}
 	info, err := fsys.getInfo(name, cid)
 	if err != nil {
-		return nil, fserrors.New(op, name, err, fserrors.IO)
+		const kind = fserrors.IO
+		return nil, cid, fserrors.New(op, name, err, kind)
 	}
-	return info, nil
+	return info, cid, nil
+}
+
+func (fsys *IPFS) Stat(name string) (fs.FileInfo, error) {
+	const depth = 0
+	return fsys.stat(name, depth)
+}
+
+func (fsys *IPFS) stat(name string, depth uint) (fs.FileInfo, error) {
+	const op = "stat"
+	info, cid, err := fsys.lstat(op, name)
+	if err != nil {
+		return nil, err
+	}
+	if isLink := info.Mode()&fs.ModeSymlink != 0; !isLink {
+		return info, nil
+	}
+	if depth++; depth >= fsys.linkLimit {
+		return nil, linkLimitError(op, name, fsys.linkLimit)
+	}
+	target, err := fsys.resolveCIDSymlink(op, name, cid)
+	if err != nil {
+		return nil, err
+	}
+	return fsys.stat(target, depth)
+}
+
+func (fsys *IPFS) Readlink(name string) (string, error) {
+	const op = "readlink"
+	if name == filesystem.Root {
+		const kind = fserrors.InvalidItem
+		return "", fserrors.New(op, name, errRootLink, kind)
+	}
+	cid, err := fsys.toCID(op, name)
+	if err != nil {
+		return "", err
+	}
+	return fsys.resolveCIDSymlink(op, name, cid)
+}
+
+func readNodeLink(op, name string, node files.Node) (string, error) {
+	link, ok := node.(*files.Symlink)
+	if !ok {
+		const kind = fserrors.InvalidItem
+		err := fmt.Errorf(
+			"expected node type: %T but got: %T",
+			link, node,
+		)
+		return "", fserrors.New(op, name, err, kind)
+	}
+	target := link.Target
+	if len(target) == 0 {
+		const kind = fserrors.InvalidItem
+		return "", fserrors.New(op, name, errEmptyLink, kind)
+	}
+	return target, nil
+}
+
+func (fsys *IPFS) resolveCIDSymlink(op, name string, cid cid.Cid) (string, error) {
+	var (
+		ufs         = fsys.core.Unixfs()
+		ctx, cancel = fsys.nodeContext()
+	)
+	defer cancel()
+	const allowedPrefix = "/ipfs/"
+	return getUnixFSLink(ctx, op, name, ufs, cid, allowedPrefix)
 }
 
 func (fsys *IPFS) toCID(op, goPath string) (cid.Cid, error) {
@@ -314,6 +385,11 @@ func (fsys *IPFS) resolvePath(goPath string) (cid.Cid, error) {
 }
 
 func (fsys *IPFS) Open(name string) (fs.File, error) {
+	const depth = 0
+	return fsys.open(name, depth)
+}
+
+func (fsys *IPFS) open(name string, depth uint) (fs.File, error) {
 	if name == filesystem.Root {
 		return emptyRoot{info: &fsys.info}, nil
 	}
@@ -325,23 +401,25 @@ func (fsys *IPFS) Open(name string) (fs.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	file, err := fsys.openCid(name, cid)
-	if err != nil {
-		return nil, fserrors.New(op, name, err, fserrors.IO)
-	}
-	return file, nil
-}
-
-func (fsys *IPFS) openCid(name string, cid cid.Cid) (fs.File, error) {
 	info, err := fsys.getInfo(name, cid)
 	if err != nil {
-		return nil, err
+		const kind = fserrors.IO
+		return nil, fserrors.New(op, name, err, kind)
 	}
 	switch typ := info.mode.Type(); typ {
 	case fs.FileMode(0):
 		return fsys.openFile(cid, info)
 	case fs.ModeDir:
 		return fsys.openDir(cid, info)
+	case fs.ModeSymlink:
+		if depth++; depth >= fsys.linkLimit {
+			return nil, linkLimitError(op, name, fsys.linkLimit)
+		}
+		target, err := fsys.resolveCIDSymlink(op, name, cid)
+		if err != nil {
+			return nil, err
+		}
+		return fsys.open(target, depth)
 	default:
 		return nil, fmt.Errorf(
 			"%w got: \"%s\" want: regular file or directory",
@@ -520,4 +598,13 @@ func (id *ipfsDirectory) Close() error {
 		return nil
 	}
 	return fserrors.New(op, id.info.name, fs.ErrClosed, fserrors.InvalidItem)
+}
+
+func linkLimitError(op, name string, limit uint) error {
+	const kind = fserrors.Recursion
+	err := fmt.Errorf(
+		"reached symbolic link resolution limit (%d) during operation",
+		limit,
+	)
+	return fserrors.New(op, name, err, kind)
 }
