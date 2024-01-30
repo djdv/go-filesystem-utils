@@ -2,6 +2,8 @@ package ipfs
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io/fs"
 	"sync"
 	"sync/atomic"
@@ -12,6 +14,7 @@ import (
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	coreiface "github.com/ipfs/boxo/coreiface"
 	coreoptions "github.com/ipfs/boxo/coreiface/options"
+	corepath "github.com/ipfs/boxo/coreiface/path"
 )
 
 type (
@@ -21,6 +24,7 @@ type (
 	}
 	pinShared struct {
 		api  coreiface.PinAPI
+		dag  coreiface.APIDagService
 		ipfs fs.FS
 		info pinDirectoryInfo
 	}
@@ -45,6 +49,7 @@ type (
 		size    int64
 	}
 	PinFSOption func(*PinFS) error
+	statFunc    func(fs.FS, string) (fs.FileInfo, error)
 )
 
 const PinFSID filesystem.ID = "PinFS"
@@ -86,6 +91,10 @@ func (pfs *PinFS) setPermissions(permissions fs.FileMode) {
 	pfs.info.permissions = permissions.Perm()
 }
 
+func (pfs *PinFS) setDag(dag coreiface.APIDagService) {
+	pfs.dag = dag
+}
+
 func (pfs *PinFS) initStatFunc() {
 	var (
 		ipfs        = pfs.ipfs
@@ -112,6 +121,9 @@ func (pfs *PinFS) initStatFunc() {
 	}
 }
 
+// CachePinsFor will cache responses from the node and consider
+// them valid for the duration. Negative values retain the
+// cache forever. A 0 value disables caching.
 func CachePinsFor(duration time.Duration) PinFSOption {
 	return func(pfs *PinFS) error {
 		pfs.expiry = duration
@@ -121,15 +133,66 @@ func CachePinsFor(duration time.Duration) PinFSOption {
 
 func (*PinFS) ID() filesystem.ID { return PinFSID }
 
+func (pfs *PinFS) Lstat(name string) (fs.FileInfo, error) {
+	const op = "lstat"
+	return pfs.stat(op, name, filesystem.Lstat)
+}
+
 func (pfs *PinFS) Stat(name string) (fs.FileInfo, error) {
 	const op = "stat"
+	return pfs.stat(op, name, fs.Stat)
+}
+
+func (pfs *PinFS) stat(op, name string, statFn statFunc) (fs.FileInfo, error) {
 	if name == filesystem.Root {
 		return &pfs.info, nil
 	}
 	if subsys := pfs.ipfs; subsys != nil {
-		return fs.Stat(subsys, name)
+		return statFn(subsys, name)
 	}
 	return nil, fserrors.New(op, name, fs.ErrNotExist, fserrors.NotExist)
+}
+
+func (pfs *PinFS) Symlink(oldname, newname string) error {
+	const op = "symlink"
+	pfs.cacheMu.Lock()
+	defer pfs.cacheMu.Unlock()
+	var (
+		dag         = pfs.dag
+		ctx, cancel = context.WithCancel(pfs.ctx)
+	)
+	defer cancel()
+	if dag == nil {
+		err := fmt.Errorf("%w - system created without dag service option",
+			errors.ErrUnsupported,
+		)
+		return fserrors.New(op, newname, err, fserrors.InvalidOperation)
+	}
+	linkCid, err := makeAndAddLink(ctx, oldname, dag)
+	if err != nil {
+		return fserrors.New(op, newname, err, fserrors.IO)
+	}
+	path := corepath.IpfsPath(linkCid)
+	if err := pfs.api.Add(ctx, path); err != nil {
+		return fserrors.New(op, newname, err, fserrors.IO)
+	}
+	if cacheEnabled := pfs.expiry > 0; cacheEnabled {
+		// We modified the pinset; invalidate the cache.
+		pfs.info.modTime.Store(new(time.Time))
+	}
+	return nil
+}
+
+func (pfs *PinFS) Readlink(name string) (string, error) {
+	const op = "readlink"
+	if name == filesystem.Root {
+		const kind = fserrors.InvalidItem
+		return "", fserrors.New(op, name, errRootLink, kind)
+	}
+	if subsys := pfs.ipfs; subsys != nil {
+		return filesystem.Readlink(subsys, name)
+	}
+	return "", fserrors.New(op, name, fs.ErrNotExist, fserrors.NotExist)
 }
 
 func (pfs *PinFS) Open(name string) (fs.File, error) {
@@ -162,8 +225,7 @@ func (pfs *PinFS) openRoot() (fs.ReadDirFile, error) {
 }
 
 func (pfs *PinFS) getEntries(ctx context.Context) (<-chan filesystem.StreamDirEntry, error) {
-	cacheDisabled := pfs.expiry == 0
-	if cacheDisabled {
+	if cacheDisabled := pfs.expiry == 0; cacheDisabled {
 		return pfs.fetchEntries(ctx)
 	}
 	pfs.cacheMu.Lock()

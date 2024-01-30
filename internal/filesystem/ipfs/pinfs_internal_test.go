@@ -12,6 +12,7 @@ var (
 	_ fs.FS                    = (*PinFS)(nil)
 	_ fs.StatFS                = (*PinFS)(nil)
 	_ filesystem.IDFS          = (*PinFS)(nil)
+	_ symlinkFS                = (*PinFS)(nil)
 	_ fs.File                  = (*pinDirectory)(nil)
 	_ fs.ReadDirFile           = (*pinDirectory)(nil)
 	_ filesystem.StreamDirFile = (*pinDirectory)(nil)
@@ -30,5 +31,6 @@ func testPinFSOptions(t *testing.T) {
 		nil,
 		WithContext[PinFSOption](context.Background()),
 		WithPermissions[PinFSOption](0),
+		WithDagService[PinFSOption](nil),
 	)
 }

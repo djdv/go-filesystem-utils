@@ -9,9 +9,9 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	p9fs "github.com/djdv/go-filesystem-utils/internal/filesystem/9p"
+	maddrc "github.com/djdv/go-filesystem-utils/internal/multiaddr"
 	coreiface "github.com/ipfs/boxo/coreiface"
 	"github.com/multiformats/go-multiaddr"
-	maddrc "github.com/djdv/go-filesystem-utils/internal/multiaddr"
 )
 
 type (
@@ -204,6 +204,7 @@ func (pg *PinFSGuest) MakeFS() (fs.FS, error) {
 		client.Pin(),
 		WithIPFS(ipfsFS),
 		CachePinsFor(pg.CacheExpiry),
+		WithDagService[PinFSOption](client.Dag()),
 	)
 }
 
@@ -241,12 +242,18 @@ func (kg *KeyFSGuest) MakeFS() (fs.FS, error) {
 	if err != nil {
 		return nil, err
 	}
-	// TODO: options
-	ipnsFS, err := NewIPNS(client, ipfs)
+	var ipnsOptions []IPNSOption
+	if expiry := kg.IPNSGuest.NodeExpiry; expiry != 0 {
+		ipnsOptions = []IPNSOption{CacheNodesFor(expiry)}
+	}
+	ipnsFS, err := NewIPNS(client, ipfs, ipnsOptions...)
 	if err != nil {
 		return nil, err
 	}
 	return NewKeyFS(client.Key(),
 		WithIPNS(ipnsFS),
+		WithDagService[KeyFSOption](client.Dag()),
+		WithNameService(client.Name()),
+		WithPinService(client.Pin()),
 	)
 }
