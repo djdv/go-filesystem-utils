@@ -27,6 +27,8 @@ const (
 	NotDir                       // Item is not a directory.
 	NotEmpty                     // Directory not empty.
 	ReadOnly                     // File system has no modification capabilities.
+	Recursion                    // Item has recurred too many times. E.g. an infinite symlink loop.
+	Closed                       // Item was never opened or has already been closed.
 )
 
 func (e *Error) Unwrap() error { return &e.PathError }
