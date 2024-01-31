@@ -128,6 +128,8 @@ var (
 		fserrors.IsDir:            -fuse.EISDIR,
 		fserrors.NotDir:           -fuse.ENOTDIR,
 		fserrors.NotEmpty:         -fuse.ENOTEMPTY,
+		fserrors.Recursion:        -fuse.ELOOP,
+		fserrors.Closed:           -fuse.EBADF,
 	}
 )
 
