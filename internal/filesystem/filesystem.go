@@ -36,11 +36,6 @@ type (
 		fs.FS
 		Remove(name string) error
 	}
-	SymlinkFS interface {
-		LinkStater
-		LinkMaker
-		LinkReader
-	}
 	LinkStater interface {
 		fs.FS
 		Lstat(name string) (fs.FileInfo, error)
