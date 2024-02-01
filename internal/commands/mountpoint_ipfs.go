@@ -112,11 +112,8 @@ func (io *ipfsOptions) bindFlagsVarient(system filesystem.ID, flagSet *flag.Flag
 			return nil
 		})
 	nodeCacheName := flagPrefix + "node-cache"
-	const (
-		defaultCacheCount = 64
-		nodeCacheUsage    = "number of nodes to keep in the cache" +
-			"\nnegative values disable node caching"
-	)
+	const nodeCacheUsage = "number of nodes to keep in the cache" +
+		"\nnegative values disable node caching"
 	flagSetFunc(flagSet, nodeCacheName, nodeCacheUsage, io,
 		func(value int, settings *ipfsSettings) error {
 			settings.NodeCacheCount = value
