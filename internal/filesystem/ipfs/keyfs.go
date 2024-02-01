@@ -391,7 +391,7 @@ func (kd *keyDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	}
 	stream := kd.stream
 	if stream == nil {
-		return nil, fserrors.New(op, filesystem.Root, fs.ErrClosed, fserrors.IO)
+		return nil, fserrors.New(op, filesystem.Root, fs.ErrClosed, fserrors.Closed)
 	}
 	var (
 		ctx     = stream.Context
@@ -415,7 +415,7 @@ func (kd *keyDirectory) Close() error {
 		kd.stream = nil
 		return nil
 	}
-	return fserrors.New(op, filesystem.Root, fs.ErrClosed, fserrors.InvalidItem)
+	return fserrors.New(op, filesystem.Root, fs.ErrClosed, fserrors.Closed)
 }
 
 func pathWithoutNamespace(key coreiface.Key) string {

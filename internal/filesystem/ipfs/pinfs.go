@@ -345,9 +345,7 @@ func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	}
 	stream := pd.stream
 	if stream == nil {
-		// TODO: We don't have an error kind
-		// that translates into EBADF
-		return nil, fserrors.New(op, filesystem.Root, fs.ErrClosed, fserrors.IO)
+		return nil, fserrors.New(op, filesystem.Root, fs.ErrClosed, fserrors.Closed)
 	}
 	var (
 		ctx       = stream.Context
@@ -363,17 +361,15 @@ func (pd *pinDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 
 func (pd *pinDirectory) StreamDir() <-chan filesystem.StreamDirEntry {
 	const op = "streamdir"
-	stream := pd.stream
-	if stream == nil {
-		errs := make(chan filesystem.StreamDirEntry, 1)
-		// TODO: We don't have an error kind
-		// that translates into EBADF
-		errs <- newErrorEntry(
-			fserrors.New(op, filesystem.Root, fs.ErrClosed, fserrors.IO),
-		)
-		return errs
+	if stream := pd.stream; stream != nil {
+		return stream.ch
 	}
-	return stream.ch
+	errs := make(chan filesystem.StreamDirEntry, 1)
+	errs <- newErrorEntry(
+		fserrors.New(op, filesystem.Root, fs.ErrClosed, fserrors.Closed),
+	)
+	close(errs)
+	return errs
 }
 
 func (pd *pinDirectory) Close() error {
@@ -383,9 +379,7 @@ func (pd *pinDirectory) Close() error {
 		pd.stream = nil
 		return nil
 	}
-	// TODO: We don't have an error kind
-	// that translates into EBADF
-	return fserrors.New(op, filesystem.Root, fs.ErrClosed, fserrors.IO)
+	return fserrors.New(op, filesystem.Root, fs.ErrClosed, fserrors.Closed)
 }
 
 func (pe *pinDirEntry) Name() string {
