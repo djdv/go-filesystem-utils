@@ -110,7 +110,8 @@ func parseFlags() (mode buildMode, tags string, output string) {
 		tagsUsage = "a comma-separated list of build tags" +
 			"\nsupported in addition to Go's standard tags:" +
 			"\nnofuse - build without FUSE host support" +
-			"\nnoipfs - build without IPFS guest support"
+			"\nnoipfs - build without IPFS guest support" +
+			"\nnonfs  - build without NFS host & guest support"
 	)
 	flagSet.StringVar(&tags, tagName, "", tagsUsage)
 	const (
