@@ -554,17 +554,15 @@ func (id *ipfsDirectory) Read([]byte) (int, error) {
 
 func (id *ipfsDirectory) StreamDir() <-chan filesystem.StreamDirEntry {
 	const op = "streamdir"
-	stream := id.stream
-	if stream == nil {
-		errs := make(chan filesystem.StreamDirEntry, 1)
-		// TODO: We don't have an error kind
-		// that translates into EBADF
-		errs <- newErrorEntry(
-			fserrors.New(op, id.info.name, fs.ErrClosed, fserrors.IO),
-		)
-		return errs
+	if stream := id.stream; stream != nil {
+		return stream.ch
 	}
-	return stream.ch
+	errs := make(chan filesystem.StreamDirEntry, 1)
+	errs <- newErrorEntry(
+		fserrors.New(op, id.info.name, fs.ErrClosed, fserrors.Closed),
+	)
+	close(errs)
+	return errs
 }
 
 func (id *ipfsDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
@@ -574,9 +572,7 @@ func (id *ipfsDirectory) ReadDir(count int) ([]fs.DirEntry, error) {
 	}
 	stream := id.stream
 	if stream == nil {
-		// TODO: We don't have an error kind
-		// that translates into EBADF
-		return nil, fserrors.New(op, id.info.name, fs.ErrClosed, fserrors.IO)
+		return nil, fserrors.New(op, id.info.name, fs.ErrClosed, fserrors.Closed)
 	}
 	var (
 		ctx       = stream.Context
@@ -597,7 +593,7 @@ func (id *ipfsDirectory) Close() error {
 		id.stream = nil
 		return nil
 	}
-	return fserrors.New(op, id.info.name, fs.ErrClosed, fserrors.InvalidItem)
+	return fserrors.New(op, id.info.name, fs.ErrClosed, fserrors.Closed)
 }
 
 func linkLimitError(op, name string, limit uint) error {
