@@ -184,7 +184,10 @@ func (po *pinFSOptions) BindFlags(flagSet *flag.FlagSet) {
 }
 
 func (po pinFSOptions) make() (pinFSSettings, error) {
-	return makeWithOptions(po...)
+	settings := pinFSSettings{
+		CacheExpiry: pinfsExpiryDefault,
+	}
+	return settings, generic.ApplyOptions(&settings, po...)
 }
 
 func (set pinFSSettings) marshal(string) ([]byte, error) {
