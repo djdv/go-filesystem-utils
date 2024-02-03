@@ -496,7 +496,7 @@ func flagSetFunc[
 	// `bool` flags don't require a value and this
 	// must be conveyed to the [flag] package.
 	if _, ok := any(setter).(func(bool, *ST) error); ok {
-		boolFunc(flagSet, name, usage, func(parameter string) error {
+		flagSet.BoolFunc(name, usage, func(parameter string) error {
 			return parseAndSet(parameter, options, setter)
 		})
 		return
