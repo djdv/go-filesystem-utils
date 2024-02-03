@@ -550,6 +550,12 @@ func parseFlag[V any](parameter string) (value V, err error) {
 		*typed, err = parseID[p9.UID](parameter)
 	case *p9.GID:
 		*typed, err = parseID[p9.GID](parameter)
+	case *uint:
+		var temp uint64
+		temp, err = strconv.ParseUint(parameter, 0, 64)
+		*typed = uint(temp)
+	case *uint64:
+		*typed, err = strconv.ParseUint(parameter, 0, 64)
 	case *uint32:
 		var temp uint64
 		temp, err = strconv.ParseUint(parameter, 0, 32)
