@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
+	"slices"
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
@@ -422,4 +423,16 @@ func newMountFile(idRoot p9.File,
 		return errors.Join(err, targetFile.Close())
 	}
 	return targetFile.Close()
+}
+
+func sortCommands(commands []command.Command) {
+	slices.SortFunc(
+		commands,
+		func(a, b command.Command) int {
+			return strings.Compare(
+				a.Name(),
+				b.Name(),
+			)
+		},
+	)
 }
