@@ -2,8 +2,8 @@ package ipfs
 
 import (
 	"context"
+	"errors"
 
-	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/ipfs/boxo/blockservice"
 	"github.com/ipfs/boxo/exchange"
 	bsfetcher "github.com/ipfs/boxo/fetcher/impl/blockservice"
@@ -64,19 +64,19 @@ func (getNodeFn fnBlockStore) GetSize(ctx context.Context, c cid.Cid) (int, erro
 func (fnBlockStore) HashOnRead(bool) {}
 
 func (fnBlockStore) Put(context.Context, blocks.Block) error {
-	return fserrors.ErrUnsupported
+	return errors.ErrUnsupported
 }
 
 func (fnBlockStore) PutMany(context.Context, []blocks.Block) error {
-	return fserrors.ErrUnsupported
+	return errors.ErrUnsupported
 }
 
 func (fnBlockStore) AllKeysChan(ctx context.Context) (<-chan cid.Cid, error) {
-	return nil, fserrors.ErrUnsupported
+	return nil, errors.ErrUnsupported
 }
 
 func (fnBlockStore) DeleteBlock(context.Context, cid.Cid) error {
-	return fserrors.ErrUnsupported
+	return errors.ErrUnsupported
 }
 
 func (getNodeFn fnBlockFetcher) GetBlock(_ context.Context, c cid.Cid) (blocks.Block, error) {

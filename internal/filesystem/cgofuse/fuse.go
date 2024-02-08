@@ -32,11 +32,6 @@ type (
 		// (So that cross API locks can be possible. E.g. FUSE+9P accessing the same `fs.File`)
 		ioMu sync.Mutex
 	}
-	seekerFile interface {
-		fs.File
-		io.Seeker
-	}
-
 	fillFunc = func(name string, stat *fuse.Stat_t, ofst int64) bool
 )
 
@@ -161,7 +156,7 @@ func (gw *goWrapper) Unlink(path string) errNo {
 
 func (gw *goWrapper) Symlink(target, newpath string) errNo {
 	defer gw.systemLock.CreateOrDelete(newpath)()
-	if linker, ok := gw.FS.(filesystem.SymlinkFS); ok {
+	if linker, ok := gw.FS.(filesystem.LinkMaker); ok {
 		goTarget, goNewPath, err := fuseToGoPair(target, newpath)
 		if err != nil {
 			gw.logError(newpath+"->"+target, err)
@@ -184,7 +179,7 @@ func (gw *goWrapper) Readlink(path string) (errNo, string) {
 	case "":
 		return -fuse.ENOENT, ""
 	default:
-		if extractor, ok := gw.FS.(filesystem.SymlinkFS); ok {
+		if extractor, ok := gw.FS.(filesystem.LinkReader); ok {
 			goPath, err := fuseToGo(path)
 			if err != nil {
 				gw.logError(path, err)

@@ -11,10 +11,7 @@ import (
 	"github.com/winfsp/cgofuse/fuse"
 )
 
-const (
-	goRoot       = "."
-	errEmptyPath = generic.ConstError("path argument is empty")
-)
+const errEmptyPath = generic.ConstError("path argument is empty")
 
 // fuseToGo converts a FUSE absolute path
 // to a relative [fs.FS] name.
@@ -30,7 +27,7 @@ func fuseToGo(path string) (string, error) {
 			Kind: fserrors.InvalidItem,
 		}
 	case posixRoot:
-		return goRoot, nil
+		return filesystem.Root, nil
 	}
 
 	// TODO: does fuse guarantee slash prefixed paths?
@@ -128,6 +125,8 @@ var (
 		fserrors.IsDir:            -fuse.EISDIR,
 		fserrors.NotDir:           -fuse.ENOTDIR,
 		fserrors.NotEmpty:         -fuse.ENOTEMPTY,
+		fserrors.Recursion:        -fuse.ELOOP,
+		fserrors.Closed:           -fuse.EBADF,
 	}
 )
 

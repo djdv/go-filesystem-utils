@@ -205,8 +205,7 @@ func streamDirCancels(t *testing.T, testFS fstest.MapFS) {
 
 func openRoot(t *testing.T, fsys fs.FS) fs.File {
 	t.Helper()
-	const fsRoot = "."
-	root, err := fsys.Open(fsRoot)
+	root, err := fsys.Open(filesystem.Root)
 	if err != nil {
 		t.Fatal(err)
 	}

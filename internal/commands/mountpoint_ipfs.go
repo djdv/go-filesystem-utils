@@ -71,10 +71,6 @@ func guestOverlayText(overlay, overlaid filesystem.ID) string {
 	return string(overlay) + " is an " + string(overlaid) + " overlay"
 }
 
-func prefixIDFlag(system filesystem.ID) string {
-	return strings.ToLower(string(system)) + "-"
-}
-
 func (*ipfsOptions) usage(filesystem.Host) string {
 	return string(ipfs.IPFSID) + " provides an empty root directory." +
 		"\nChild paths are forwarded to the IPFS API."
@@ -112,11 +108,8 @@ func (io *ipfsOptions) bindFlagsVarient(system filesystem.ID, flagSet *flag.Flag
 			return nil
 		})
 	nodeCacheName := flagPrefix + "node-cache"
-	const (
-		defaultCacheCount = 64
-		nodeCacheUsage    = "number of nodes to keep in the cache" +
-			"\nnegative values disable node caching"
-	)
+	const nodeCacheUsage = "number of nodes to keep in the cache" +
+		"\nnegative values disable node caching"
 	flagSetFunc(flagSet, nodeCacheName, nodeCacheUsage, io,
 		func(value int, settings *ipfsSettings) error {
 			settings.NodeCacheCount = value
@@ -187,7 +180,10 @@ func (po *pinFSOptions) BindFlags(flagSet *flag.FlagSet) {
 }
 
 func (po pinFSOptions) make() (pinFSSettings, error) {
-	return makeWithOptions(po...)
+	settings := pinFSSettings{
+		CacheExpiry: pinfsExpiryDefault,
+	}
+	return settings, generic.ApplyOptions(&settings, po...)
 }
 
 func (set pinFSSettings) marshal(string) ([]byte, error) {

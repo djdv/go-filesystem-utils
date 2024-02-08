@@ -14,7 +14,7 @@ runs:
       run: |
         $commandPath = Join-Path . ...
         $tagValues = & {
-            $tags = 'nofuse', 'noipfs'
+            $tags = 'nofuse', 'noipfs', 'nonfs'
             $combinations = @()
             $allCombinations = [Math]::Pow(2, $tags.Length)
             for ($i = 0; $i -lt $allCombinations; $i++) {

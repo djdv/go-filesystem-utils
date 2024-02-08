@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 )
 
@@ -36,9 +37,16 @@ type (
 		fs.FS
 		Remove(name string) error
 	}
-	SymlinkFS interface {
+	LinkStater interface {
+		fs.FS
+		Lstat(name string) (fs.FileInfo, error)
+	}
+	LinkMaker interface {
 		fs.FS
 		Symlink(oldname, newname string) error
+	}
+	LinkReader interface {
+		fs.FS
 		Readlink(name string) (string, error)
 	}
 	RenameFS interface {
@@ -105,17 +113,24 @@ const (
 	ExecuteUser
 	WriteUser
 	ReadUser
+)
 
+const (
 	Root = "."
 
-	ErrPath     = generic.ConstError("path not valid")
-	ErrNotFound = generic.ConstError("file not found")
-	ErrNotOpen  = generic.ConstError("file is not open")
 	ErrIsDir    = generic.ConstError("file is a directory")
 	ErrIsNotDir = generic.ConstError("file is not a directory")
 )
 
 func (dw dirEntryWrapper) Error() error { return dw.error }
+
+func FSID(fsys fs.FS) (ID, error) {
+	if fsys, ok := fsys.(IDFS); ok {
+		return fsys.ID(), nil
+	}
+	const op = "id"
+	return "", unsupportedOpErrAnonymous(op, fsys)
+}
 
 func OpenFile(fsys fs.FS, name string, flag int, perm fs.FileMode) (fs.File, error) {
 	if fsys, ok := fsys.(OpenFileFS); ok {
@@ -124,7 +139,56 @@ func OpenFile(fsys fs.FS, name string, flag int, perm fs.FileMode) (fs.File, err
 	if flag == os.O_RDONLY {
 		return fsys.Open(name)
 	}
-	return nil, fmt.Errorf(`open "%s": operation not supported`, name)
+	const op = "open"
+	return nil, unsupportedOpErr(op, name)
+}
+
+func CreateFile(fsys fs.FS, name string) (fs.File, error) {
+	if fsys, ok := fsys.(CreateFileFS); ok {
+		return fsys.CreateFile(name)
+	}
+	const op = "createfile"
+	return nil, unsupportedOpErr(op, name)
+}
+
+func Remove(fsys fs.FS, name string) error {
+	if fsys, ok := fsys.(RemoveFS); ok {
+		return fsys.Remove(name)
+	}
+	const op = "remove"
+	return unsupportedOpErr(op, name)
+}
+
+func Lstat(fsys fs.FS, name string) (fs.FileInfo, error) {
+	if fsys, ok := fsys.(LinkStater); ok {
+		return fsys.Lstat(name)
+	}
+	const op = "lstat"
+	return nil, unsupportedOpErr(op, name)
+}
+
+func Symlink(fsys fs.FS, oldname, newname string) error {
+	if fsys, ok := fsys.(LinkMaker); ok {
+		return fsys.Symlink(oldname, newname)
+	}
+	const op = "symlink"
+	return unsupportedOpErr2(op, oldname, newname)
+}
+
+func Readlink(fsys fs.FS, name string) (string, error) {
+	if fsys, ok := fsys.(LinkReader); ok {
+		return fsys.Readlink(name)
+	}
+	const op = "readlink"
+	return "", unsupportedOpErr(op, name)
+}
+
+func Rename(fsys fs.FS, oldName, newName string) error {
+	if fsys, ok := fsys.(RenameFS); ok {
+		return fsys.Rename(oldName, newName)
+	}
+	const op = "rename"
+	return unsupportedOpErr2(op, oldName, newName)
 }
 
 func Truncate(fsys fs.FS, name string, size int64) error {
@@ -132,17 +196,25 @@ func Truncate(fsys fs.FS, name string, size int64) error {
 	if err != nil {
 		return err
 	}
-	truncater, ok := file.(TruncateFile)
-	if !ok {
+	if fsys, ok := file.(TruncateFile); ok {
 		return errors.Join(
-			fmt.Errorf(`truncate "%s": operation not supported`, name),
+			fsys.Truncate(size),
 			file.Close(),
 		)
 	}
+	const op = "truncate"
 	return errors.Join(
-		truncater.Truncate(size),
+		unsupportedOpErr(op, name),
 		file.Close(),
 	)
+}
+
+func Mkdir(fsys fs.FS, name string, perm fs.FileMode) error {
+	if fsys, ok := fsys.(MkdirFS); ok {
+		return fsys.Mkdir(name, perm)
+	}
+	const op = "mkdir"
+	return unsupportedOpErr(op, name)
 }
 
 // StreamDir reads the directory
@@ -189,4 +261,29 @@ func StreamDir(ctx context.Context, count int, directory fs.ReadDirFile) <-chan 
 		}
 	}()
 	return stream
+}
+
+func Seek(file fs.File, offset int64, whence int) (int64, error) {
+	if seeker, ok := file.(io.Seeker); ok {
+		return seeker.Seek(offset, whence)
+	}
+	const op = "seek"
+	return -1, unsupportedOpErrAnonymous(op, file)
+}
+
+func unsupportedOpErr(op, name string) error {
+	return fserrors.New(op, name, errors.ErrUnsupported, fserrors.InvalidOperation)
+}
+
+func unsupportedOpErr2(op, name1, name2 string) error {
+	name := fmt.Sprintf(
+		`"%s" -> "%s"`,
+		name1, name2,
+	)
+	return fserrors.New(op, name, errors.ErrUnsupported, fserrors.InvalidOperation)
+}
+
+func unsupportedOpErrAnonymous(op string, subject any) error {
+	name := fmt.Sprintf("%T", subject)
+	return unsupportedOpErr(op, name)
 }

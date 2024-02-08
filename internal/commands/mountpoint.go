@@ -90,6 +90,7 @@ func makeMountPointHosts(path ninePath, autoUnlink bool) mountPointHosts {
 	var (
 		hostMakers = []makeHostsFunc{
 			makeFUSEHost,
+			makeNFSHost,
 		}
 		hosts = make(mountPointHosts, len(hostMakers))
 	)
@@ -142,6 +143,7 @@ func makeMountPointGuests[
 ) mountPointGuests {
 	guests := make(mountPointGuests)
 	makeIPFSGuests[HC](guests, path)
+	makeNFSGuest[HC](guests, path)
 	return guests
 }
 

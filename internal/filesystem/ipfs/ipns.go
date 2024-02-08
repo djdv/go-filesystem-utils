@@ -12,7 +12,7 @@ import (
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
-	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/hashicorp/golang-lru/arc/v2"
 	coreiface "github.com/ipfs/boxo/coreiface"
 	corepath "github.com/ipfs/boxo/coreiface/path"
 	ipath "github.com/ipfs/boxo/path"
@@ -26,7 +26,7 @@ type (
 		*cid.Cid
 		*time.Time
 	}
-	ipnsRootCache = lru.ARCCache[string, ipnsRecord]
+	ipnsRootCache = arc.ARCCache[string, ipnsRecord]
 	IPNS          struct {
 		ctx         context.Context
 		core        coreiface.CoreAPI
@@ -37,6 +37,7 @@ type (
 		info        nodeInfo
 		nodeTimeout time.Duration
 		expiry      time.Duration
+		linkLimit   uint
 	}
 	ipnsSettings struct {
 		*IPNS
@@ -63,6 +64,7 @@ func NewIPNS(core coreiface.CoreAPI, ipfs fs.FS, options ...IPNSOption) (*IPNS, 
 					readAll | executeAll,
 			},
 			nodeTimeout: 1 * time.Minute,
+			linkLimit:   40, // Arbitrary.
 		}
 		settings = ipnsSettings{
 			IPNS:             fsys,
@@ -99,7 +101,7 @@ func (settings *ipnsSettings) fillInDefaults() error {
 }
 
 func (settings *ipnsSettings) initRootCache(cacheSize int) error {
-	rootCache, err := lru.NewARC[string, ipnsRecord](cacheSize)
+	rootCache, err := arc.NewARC[string, ipnsRecord](cacheSize)
 	if err != nil {
 		return err
 	}
@@ -137,6 +139,10 @@ func (fsys *IPNS) setContext(ctx context.Context) {
 	fsys.ctx, fsys.cancel = context.WithCancel(ctx)
 }
 
+func (fsys *IPNS) setLinkLimit(limit uint) {
+	fsys.linkLimit = limit
+}
+
 func (fsys *IPNS) setPermissions(permissions fs.FileMode) {
 	fsys.info.mode = fsys.info.mode.Type() | permissions.Perm()
 }
@@ -149,8 +155,17 @@ func (fsys *IPNS) Close() error {
 	return nil
 }
 
+func (fsys *IPNS) Lstat(name string) (fs.FileInfo, error) {
+	const op = "lstat"
+	return fsys.stat(op, name, filesystem.Lstat)
+}
+
 func (fsys *IPNS) Stat(name string) (fs.FileInfo, error) {
 	const op = "stat"
+	return fsys.stat(op, name, fs.Stat)
+}
+
+func (fsys *IPNS) stat(op, name string, statFn statFunc) (fs.FileInfo, error) {
 	if name == filesystem.Root {
 		return &fsys.info, nil
 	}
@@ -158,7 +173,7 @@ func (fsys *IPNS) Stat(name string) (fs.FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return fs.Stat(fsys.ipfs, cid.String())
+	return statFn(fsys.ipfs, cid.String())
 }
 
 func (fsys *IPNS) toCID(op, goPath string) (cid.Cid, error) {
@@ -229,14 +244,11 @@ func (fsys *IPNS) resolvePath(goPath string) (cid.Cid, error) {
 }
 
 func (fsys *IPNS) nodeContext() (context.Context, context.CancelFunc) {
-	var (
-		ctx     = fsys.ctx
-		timeout = fsys.nodeTimeout
-	)
-	if timeout <= 0 {
-		return context.WithCancel(ctx)
+	ctx := fsys.ctx
+	if timeout := fsys.nodeTimeout; timeout > 0 {
+		return context.WithTimeout(ctx, timeout)
 	}
-	return context.WithTimeout(ctx, timeout)
+	return context.WithCancel(ctx)
 }
 
 func (fsys *IPNS) fetchCID(ctx context.Context, goPath string) (cid.Cid, error) {
@@ -251,22 +263,64 @@ func (fsys *IPNS) fetchCID(ctx context.Context, goPath string) (cid.Cid, error) 
 	return resolved.Cid(), nil
 }
 
+func (fsys *IPNS) Readlink(name string) (string, error) {
+	const op = "readlink"
+	if name == filesystem.Root {
+		const kind = fserrors.InvalidItem
+		return "", fserrors.New(op, name, errRootLink, kind)
+	}
+	cid, err := fsys.toCID(op, name)
+	if err != nil {
+		return "", err
+	}
+	return filesystem.Readlink(fsys.ipfs, cid.String())
+}
+
+func (fsys *IPNS) resolveCIDSymlink(op, name string, cid cid.Cid) (string, error) {
+	var (
+		ufs         = fsys.core.Unixfs()
+		ctx, cancel = fsys.nodeContext()
+	)
+	defer cancel()
+	const allowedPrefix = "/ipns/"
+	return getUnixFSLink(ctx, op, name, ufs, cid, allowedPrefix)
+}
+
 func (fsys *IPNS) Open(name string) (fs.File, error) {
+	const depth = 0
+	return fsys.open(name, depth)
+}
+
+func (fsys *IPNS) open(name string, depth uint) (fs.File, error) {
 	if name == filesystem.Root {
 		return emptyRoot{info: &fsys.info}, nil
 	}
 	const op = "open"
-	if !fs.ValidPath(name) {
-		return nil, fserrors.New(op, name, filesystem.ErrPath, fserrors.InvalidItem)
+	if err := validatePath(op, name); err != nil {
+		return nil, err
 	}
 	cid, err := fsys.toCID(op, name)
 	if err != nil {
 		return nil, err
 	}
 	ipfs := fsys.ipfs
+	info, err := filesystem.Lstat(ipfs, cid.String())
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode().Type() == fs.ModeSymlink {
+		if depth++; depth >= fsys.linkLimit {
+			return nil, linkLimitError(op, name, fsys.linkLimit)
+		}
+		target, err := fsys.resolveCIDSymlink(op, name, cid)
+		if err != nil {
+			return nil, err
+		}
+		return fsys.open(target, depth)
+	}
 	file, err := ipfs.Open(cid.String())
 	if err != nil {
-		return nil, fserrors.New(op, name, err, fserrors.IO)
+		return nil, err
 	}
 	nFile := ipnsFile{
 		file: file,
@@ -398,7 +452,7 @@ func (nf *ipnsFile) Seek(offset int64, whence int) (int64, error) {
 	if seeker, ok := nf.file.(io.Seeker); ok {
 		return seeker.Seek(offset, whence)
 	}
-	return 0, fserrors.ErrUnsupported
+	return 0, errors.ErrUnsupported
 }
 
 func (nf *ipnsFile) Read(b []byte) (int, error) {
@@ -412,19 +466,18 @@ func (nf *ipnsFile) ReadDir(count int) ([]fs.DirEntry, error) {
 	if err := nf.refreshFn(); err != nil {
 		return nil, err
 	}
-	// TODO: these kinds of things should
-	// use the new [errors.ErrUnsupported] value too.
 	file := nf.file
 	if directory, ok := file.(fs.ReadDirFile); ok {
 		return directory.ReadDir(count)
 	}
 	var (
 		name string
-		err  error = filesystem.ErrIsDir
-		kind       = fserrors.NotDir
+		err  error = errors.ErrUnsupported
+		kind fserrors.Kind
 	)
 	if info, sErr := file.Stat(); sErr == nil {
 		name = info.Name()
+		kind = fserrors.InvalidOperation
 	} else {
 		err = errors.Join(err, sErr)
 		kind = fserrors.IO

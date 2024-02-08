@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
+	"slices"
 	"strings"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
@@ -272,6 +273,7 @@ func makeHostCommands() []command.Command {
 	var (
 		commandMakers = []makeCommand{
 			makeFUSECommand,
+			makeNFSCommand,
 		}
 		commands = make([]command.Command, 0, len(commandMakers))
 	)
@@ -292,6 +294,9 @@ func makeGuestCommands[
 ](host filesystem.Host,
 ) []command.Command {
 	guests := makeIPFSCommands[HC, HM](host)
+	if nfsGuest := makeNFSGuestCommand[HC, HM](host); nfsGuest != nil {
+		guests = append(guests, nfsGuest)
+	}
 	sortCommands(guests)
 	return guests
 }
@@ -422,4 +427,16 @@ func newMountFile(idRoot p9.File,
 		return errors.Join(err, targetFile.Close())
 	}
 	return targetFile.Close()
+}
+
+func sortCommands(commands []command.Command) {
+	slices.SortFunc(
+		commands,
+		func(a, b command.Command) int {
+			return strings.Compare(
+				a.Name(),
+				b.Name(),
+			)
+		},
+	)
 }

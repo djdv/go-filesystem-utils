@@ -3,8 +3,10 @@ package ipfs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
+	"path"
 	"strings"
 	"time"
 
@@ -12,10 +14,13 @@ import (
 	fserrors "github.com/djdv/go-filesystem-utils/internal/filesystem/errors"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	coreiface "github.com/ipfs/boxo/coreiface"
-	dag "github.com/ipfs/boxo/ipld/merkledag"
+	corepath "github.com/ipfs/boxo/coreiface/path"
+	files "github.com/ipfs/boxo/files"
+	mdag "github.com/ipfs/boxo/ipld/merkledag"
 	"github.com/ipfs/boxo/ipld/unixfs"
 	unixpb "github.com/ipfs/boxo/ipld/unixfs/pb"
 	"github.com/ipfs/boxo/path/resolver"
+	"github.com/ipfs/go-cid"
 	ipfscmds "github.com/ipfs/go-ipfs-cmds"
 	cbor "github.com/ipfs/go-ipld-cbor"
 	ipld "github.com/ipfs/go-ipld-format"
@@ -27,9 +32,21 @@ type (
 		*T
 		setContext(context.Context)
 	}
+	nodeTimeoutSetter[T any] interface {
+		*T
+		setNodeTimeout(time.Duration)
+	}
+	linkLimitSetter[T any] interface {
+		*T
+		setLinkLimit(uint)
+	}
 	permissionSetter[T any] interface {
 		*T
 		setPermissions(fs.FileMode)
+	}
+	dagSetter[T any] interface {
+		*T
+		setDag(coreiface.APIDagService)
 	}
 	nodeInfo struct {
 		modTime time.Time
@@ -53,10 +70,20 @@ type (
 		modTime     time.Time
 		permissions fs.FileMode
 	}
+	symlinkRFS interface {
+		filesystem.LinkStater
+		filesystem.LinkReader
+	}
+	symlinkFS interface {
+		symlinkRFS
+		filesystem.LinkMaker
+	}
 )
 
 const (
 	errUnexpectedType = generic.ConstError("unexpected type")
+	errEmptyLink      = generic.ConstError("empty link target")
+	errRootLink       = generic.ConstError("root is not a symlink")
 	executeAll        = filesystem.ExecuteUser | filesystem.ExecuteGroup | filesystem.ExecuteOther
 	readAll           = filesystem.ReadUser | filesystem.ReadGroup | filesystem.ReadOther
 )
@@ -81,6 +108,37 @@ func WithContext[
 	}
 }
 
+// WithNodeTimeout sets a timeout duration to use
+// when communicating with the IPFS API/node.
+// If <= 0, operations will not time out,
+// and will remain pending until the file system is closed.
+func WithNodeTimeout[
+	OT generic.OptionFunc[T],
+	T any,
+	I nodeTimeoutSetter[T],
+](timeout time.Duration,
+) OT {
+	return func(settings *T) error {
+		any(settings).(I).setNodeTimeout(timeout)
+		return nil
+	}
+}
+
+// WithLinkLimit sets the maximum amount of times an
+// operation will resolve a symbolic link chain,
+// before it returns a recursion error.
+func WithLinkLimit[
+	OT generic.OptionFunc[T],
+	T any,
+	I linkLimitSetter[T],
+](limit uint,
+) OT {
+	return func(settings *T) error {
+		any(settings).(I).setLinkLimit(limit)
+		return nil
+	}
+}
+
 func WithPermissions[
 	OT generic.OptionFunc[T],
 	T any,
@@ -89,6 +147,20 @@ func WithPermissions[
 ) OT {
 	return func(mode *T) error {
 		any(mode).(I).setPermissions(permissions)
+		return nil
+	}
+}
+
+// WithDagService supplies a dag service to
+// use to add support for various write operations.
+func WithDagService[
+	OT generic.OptionFunc[T],
+	T any,
+	I dagSetter[T],
+](dag coreiface.APIDagService,
+) OT {
+	return func(mode *T) error {
+		any(mode).(I).setDag(dag)
 		return nil
 	}
 }
@@ -135,9 +207,16 @@ func (emptyRoot) ReadDir(count int) ([]fs.DirEntry, error) {
 	return nil, nil
 }
 
+func validatePath(op, name string) error {
+	if fs.ValidPath(name) {
+		return nil
+	}
+	return fserrors.New(op, name, fs.ErrInvalid, fserrors.InvalidItem)
+}
+
 func statNode(node ipld.Node, info *nodeInfo) error {
 	switch typedNode := node.(type) {
-	case *dag.ProtoNode:
+	case *mdag.ProtoNode:
 		return statProto(typedNode, info)
 	case *cbor.Node:
 		return statCbor(typedNode, info)
@@ -146,7 +225,7 @@ func statNode(node ipld.Node, info *nodeInfo) error {
 	}
 }
 
-func statProto(node *dag.ProtoNode, info *nodeInfo) error {
+func statProto(node *mdag.ProtoNode, info *nodeInfo) error {
 	ufsNode, err := unixfs.ExtractFSNode(node)
 	if err != nil {
 		return err
@@ -391,4 +470,69 @@ func fsTypeName(mode fs.FileMode) string {
 	default:
 		return "irregular"
 	}
+}
+
+func makeAndAddLink(ctx context.Context, target string, dag coreiface.APIDagService) (cid.Cid, error) {
+	dagData, err := unixfs.SymlinkData(target)
+	if err != nil {
+		return cid.Cid{}, err
+	}
+	dagNode := mdag.NodeWithData(dagData)
+	if err := dag.Add(ctx, dagNode); err != nil {
+		return cid.Cid{}, err
+	}
+	return dagNode.Cid(), nil
+}
+
+func getUnixFSLink(ctx context.Context,
+	op, name string,
+	ufs coreiface.UnixfsAPI, cid cid.Cid,
+	allowedPrefix string,
+) (string, error) {
+	cPath := corepath.IpfsPath(cid)
+	link, err := ufs.Get(ctx, cPath)
+	if err != nil {
+		const kind = fserrors.IO
+		return "", fserrors.New(op, name, err, kind)
+	}
+	return resolveNodeLink(op, name, link, allowedPrefix)
+}
+
+func resolveNodeLink(op, name string, node files.Node, prefix string) (string, error) {
+	target, err := readNodeLink(op, name, node)
+	if err != nil {
+		return "", err
+	}
+	// We allow 2 kinds of absolute links:
+	// 1) File system's root
+	// 2) Paths matching an explicitly allowed prefix
+	if strings.HasPrefix(target, prefix) {
+		target = strings.TrimPrefix(target, prefix)
+		return path.Clean(target), nil
+	}
+	switch target {
+	case "/":
+		return filesystem.Root, nil
+	case "..":
+		name = path.Dir(name)
+		fallthrough
+	case ".":
+		return path.Dir(name), nil
+	}
+	if target[0] == '/' {
+		const (
+			err  = generic.ConstError("link target must be relative")
+			kind = fserrors.InvalidItem
+		)
+		pair := fmt.Sprintf(
+			`%s -> %s`,
+			name, target,
+		)
+		return "", fserrors.New(op, pair, err, kind)
+	}
+	if target = path.Join("/"+name, target); target == "/" {
+		target = filesystem.Root
+	}
+	target = strings.TrimPrefix(target, "/")
+	return target, nil
 }

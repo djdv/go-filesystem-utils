@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
+	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/p9/p9"
 	"github.com/multiformats/go-multiaddr"
@@ -496,7 +497,7 @@ func flagSetFunc[
 	// `bool` flags don't require a value and this
 	// must be conveyed to the [flag] package.
 	if _, ok := any(setter).(func(bool, *ST) error); ok {
-		boolFunc(flagSet, name, usage, func(parameter string) error {
+		flagSet.BoolFunc(name, usage, func(parameter string) error {
 			return parseAndSet(parameter, options, setter)
 		})
 		return
@@ -550,6 +551,12 @@ func parseFlag[V any](parameter string) (value V, err error) {
 		*typed, err = parseID[p9.UID](parameter)
 	case *p9.GID:
 		*typed, err = parseID[p9.GID](parameter)
+	case *uint:
+		var temp uint64
+		temp, err = strconv.ParseUint(parameter, 0, 64)
+		*typed = uint(temp)
+	case *uint64:
+		*typed, err = strconv.ParseUint(parameter, 0, 64)
 	case *uint32:
 		var temp uint64
 		temp, err = strconv.ParseUint(parameter, 0, 32)
@@ -578,4 +585,8 @@ func parseMultiaddrList(parameter string) ([]multiaddr.Multiaddr, error) {
 		maddrs = append(maddrs, maddr)
 	}
 	return maddrs, nil
+}
+
+func prefixIDFlag(system filesystem.ID) string {
+	return strings.ToLower(string(system)) + "-"
 }

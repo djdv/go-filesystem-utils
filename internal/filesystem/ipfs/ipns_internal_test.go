@@ -13,6 +13,7 @@ var (
 	_ fs.FS           = (*IPNS)(nil)
 	_ fs.StatFS       = (*IPNS)(nil)
 	_ filesystem.IDFS = (*IPNS)(nil)
+	_ symlinkRFS      = (*IPNS)(nil)
 	_ fs.File         = (*ipnsFile)(nil)
 	_ fs.ReadDirFile  = (*ipnsFile)(nil)
 	_ io.Seeker       = (*ipnsFile)(nil)
@@ -31,5 +32,6 @@ func testIPNSOptions(t *testing.T) {
 		nil, nil,
 		WithContext[IPNSOption](context.Background()),
 		WithPermissions[IPNSOption](0),
+		WithLinkLimit[IPNSOption](0),
 	)
 }

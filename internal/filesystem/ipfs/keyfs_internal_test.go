@@ -12,6 +12,7 @@ var (
 	_ fs.FS           = (*KeyFS)(nil)
 	_ fs.StatFS       = (*KeyFS)(nil)
 	_ filesystem.IDFS = (*KeyFS)(nil)
+	_ symlinkFS       = (*KeyFS)(nil)
 	_ fs.File         = (*keyDirectory)(nil)
 	_ fs.ReadDirFile  = (*keyDirectory)(nil)
 )
@@ -29,5 +30,7 @@ func testKeyFSOptions(t *testing.T) {
 		nil,
 		WithContext[KeyFSOption](context.Background()),
 		WithPermissions[KeyFSOption](0),
+		WithDagService[KeyFSOption](nil),
+		WithLinkLimit[KeyFSOption](0),
 	)
 }
