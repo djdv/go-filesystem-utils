@@ -422,7 +422,7 @@ func newItalicUnderlineRenderer(renderer *glamour.TermRenderer) stringModiferFun
 
 func unquoteUsage(flg *flag.Flag) (name, usage string) {
 	name, usage = flag.UnquoteUsage(flg)
-	if name == "value" {
+	if name == "value" || name == "" {
 		if namer, ok := flg.Value.(ValueNamer); ok {
 			name = namer.Name()
 		}
