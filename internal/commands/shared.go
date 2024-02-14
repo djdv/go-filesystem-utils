@@ -11,20 +11,20 @@ const (
 	// E.g. a socket of path `/$ServerRootName/$serverName`.
 	serverName = "server"
 
-	// apiFlagPrefix should be prepended to all flag names
+	// flagPrefixAPI should be prepended to all flag names
 	// that relate to the `fs` service itself.
-	apiFlagPrefix = "api-"
+	flagPrefixAPI = "api-"
 
-	// serverFlagName is used by server and client commands
+	// flagNameServer is used by server and client commands
 	// to specify the listening channel;
 	// typically a socket multiaddr.
-	serverFlagName = apiFlagPrefix + "server"
+	flagNameServer = flagPrefixAPI + "server"
 
-	// exitAfterFlagName is used by server and client commands
+	// flagNameExitAfter is used by server and client commands
 	// to specify the idle check interval for the server.
 	// Client commands will relay this to server instances
 	// if they spawn one. Otherwise it is ignored (after parsing).
-	exitAfterFlagName = apiFlagPrefix + "exit-after"
+	flagNameExitAfter = flagPrefixAPI + "exit-after"
 
 	// For names; all commands that interact with
 	// that file's protocol should use appropriate

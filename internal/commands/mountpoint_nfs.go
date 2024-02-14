@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
@@ -111,65 +112,138 @@ func (*nfsGuestOptions) usage(filesystem.Host) string {
 }
 
 func (no *nfsGuestOptions) BindFlags(flagSet *flag.FlagSet) {
+	no.bindServerFlag(flagSet)
+	no.bindHostnameFlag(flagSet)
+	no.bindDirpathFlag(flagSet)
+	no.bindLinkSepFlag(flagSet)
+	no.bindLinkLimitFlag(flagSet)
+	no.bindUIDFlag(flagSet)
+	no.bindGIDFlag(flagSet)
+}
+
+func (no *nfsGuestOptions) bindServerFlag(flagSet *flag.FlagSet) {
+	const usage = "NFS server `maddr`"
 	var (
-		flagPrefix = prefixIDFlag(nfs.GuestID)
-		srvName    = flagPrefix + nfsServerFlagName
+		prefix   = prefixIDFlag(nfs.GuestID)
+		name     = prefix + nfsServerFlagName
+		getRefFn = func(settings *nfsGuestSettings) *multiaddr.Multiaddr {
+			return &settings.Maddr
+		}
 	)
-	const srvUsage = "NFS server `maddr`"
-	flagSetFunc(flagSet, srvName, srvUsage, no,
-		func(value multiaddr.Multiaddr, settings *nfsGuestSettings) error {
-			settings.Maddr = value
-			return nil
-		})
-	hostnameName := flagPrefix + "hostname"
-	const hostnameUsage = "client's `hostname`"
-	flagSetFunc(flagSet, hostnameName, hostnameUsage, no,
-		func(value string, settings *nfsGuestSettings) error {
-			settings.Hostname = value
-			return nil
-		})
-	flagSet.Lookup(hostnameName).
+	appendFlagValue(flagSet, name, usage,
+		no, multiaddr.NewMultiaddr, getRefFn)
+}
+
+func (no *nfsGuestOptions) bindHostnameFlag(flagSet *flag.FlagSet) {
+	const usage = "client's `hostname`"
+	var (
+		prefix   = prefixIDFlag(nfs.GuestID)
+		name     = prefix + "hostname"
+		getRefFn = func(settings *nfsGuestSettings) *string {
+			return &settings.Hostname
+		}
+		parseFn = newPassthroughFunc(name)
+	)
+	appendFlagValue(flagSet, name, usage,
+		no, parseFn, getRefFn)
+	flagSet.Lookup(name).
 		DefValue = "caller's hostname"
-	dirpathName := flagPrefix + "dirpath"
-	const dirpathUsage = "`dirpath` used when mounting the server"
-	flagSetFunc(flagSet, dirpathName, dirpathUsage, no,
-		func(value string, settings *nfsGuestSettings) error {
-			settings.Dirpath = value
-			return nil
-		})
-	flagSet.Lookup(dirpathName).
+}
+
+func (no *nfsGuestOptions) bindDirpathFlag(flagSet *flag.FlagSet) {
+	const usage = "`dirpath` used when mounting the server"
+	var (
+		prefix   = prefixIDFlag(nfs.GuestID)
+		name     = prefix + "dirpath"
+		getRefFn = func(settings *nfsGuestSettings) *string {
+			return &settings.Dirpath
+		}
+		parseFn = newPassthroughFunc(name)
+	)
+	appendFlagValue(flagSet, name, usage,
+		no, parseFn, getRefFn)
+	flagSet.Lookup(name).
 		DefValue = "/"
-	linkSepName := flagPrefix + "link-separator"
-	const linkSepUsage = "`separator` character to replace with `/` when parsing relative symlinks"
-	flagSetFunc(flagSet, linkSepName, linkSepUsage, no,
-		func(value string, settings *nfsGuestSettings) error {
-			settings.LinkSeparator = value
-			return nil
-		})
-	linkLimitName := flagPrefix + "link-limit"
-	const linkLimitUsage = "sets the maximum amount of times a symbolic link will be resolved in a link chain"
-	flagSetFunc(flagSet, linkLimitName, linkLimitUsage, no,
-		func(value uint, settings *nfsGuestSettings) error {
-			settings.LinkLimit = value
-			return nil
-		})
-	uidName := flagPrefix + "uid"
-	const uidUsage = "client's `uid`"
-	flagSetFunc(flagSet, uidName, uidUsage, no,
-		func(value uint32, settings *nfsGuestSettings) error {
-			settings.UID = value
-			return nil
-		})
-	flagSet.Lookup(uidName).
+}
+
+func (no *nfsGuestOptions) bindLinkSepFlag(flagSet *flag.FlagSet) {
+	const usage = "`separator` character to replace with `/` when parsing relative symlinks"
+	var (
+		prefix   = prefixIDFlag(nfs.GuestID)
+		name     = prefix + "link-separator"
+		getRefFn = func(settings *nfsGuestSettings) *string {
+			return &settings.LinkSeparator
+		}
+		parseFn = newPassthroughFunc(name)
+	)
+	appendFlagValue(flagSet, name, usage,
+		no, parseFn, getRefFn)
+}
+
+func (no *nfsGuestOptions) bindLinkLimitFlag(flagSet *flag.FlagSet) {
+	const usage = "sets the maximum amount of times a symbolic link will be resolved in a link chain"
+	var (
+		prefix   = prefixIDFlag(nfs.GuestID)
+		name     = prefix + "link-limit"
+		getRefFn = func(settings *nfsGuestSettings) *uint {
+			return &settings.LinkLimit
+		}
+		parseFn = func(argument string) (uint, error) {
+			const (
+				base    = 0
+				bitSize = 0
+			)
+			limit, err := strconv.ParseUint(argument, base, bitSize)
+			return uint(limit), err
+		}
+	)
+	appendFlagValue(flagSet, name, usage,
+		no, parseFn, getRefFn)
+}
+
+func (no *nfsGuestOptions) bindUIDFlag(flagSet *flag.FlagSet) {
+	const usage = "client's `uid`"
+	var (
+		prefix   = prefixIDFlag(nfs.GuestID)
+		name     = prefix + "uid"
+		getRefFn = func(settings *nfsGuestSettings) *uint32 {
+			return &settings.UID
+		}
+		parseFn = func(argument string) (uint32, error) {
+			const (
+				base    = 0
+				bitSize = 32
+			)
+			id, err := strconv.ParseUint(argument, base, bitSize)
+			return uint32(id), err
+		}
+	)
+	appendFlagValue(flagSet, name, usage,
+		no, parseFn, getRefFn)
+	flagSet.Lookup(name).
 		DefValue = "caller's uid"
-	gidName := flagPrefix + "gid"
-	const gidUsage = "client's `gid`"
-	flagSetFunc(flagSet, gidName, gidUsage, no,
-		func(value uint32, settings *nfsGuestSettings) error {
-			settings.GID = value
-			return nil
-		})
-	flagSet.Lookup(gidName).
+}
+
+func (no *nfsGuestOptions) bindGIDFlag(flagSet *flag.FlagSet) {
+	const usage = "client's `gid`"
+	var (
+		prefix   = prefixIDFlag(nfs.GuestID)
+		name     = prefix + "gid"
+		getRefFn = func(settings *nfsGuestSettings) *uint32 {
+			return &settings.GID
+		}
+		parseFn = func(argument string) (uint32, error) {
+			const (
+				base    = 0
+				bitSize = 32
+			)
+			id, err := strconv.ParseUint(argument, base, bitSize)
+			return uint32(id), err
+		}
+	)
+	appendFlagValue(flagSet, name, usage,
+		no, parseFn, getRefFn)
+	flagSet.Lookup(name).
 		DefValue = "caller's gid"
 }
 
@@ -180,8 +254,8 @@ func (no nfsGuestOptions) make() (nfsGuestSettings, error) {
 	}
 	if settings.Maddr == nil {
 		var (
-			flagPrefix = prefixIDFlag(nfs.GuestID)
-			srvName    = flagPrefix + nfsServerFlagName
+			prefix  = prefixIDFlag(nfs.GuestID)
+			srvName = prefix + nfsServerFlagName
 		)
 		return nfsGuestSettings{}, fmt.Errorf(
 			"flag `-%s` must be provided for NFS guests",

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,11 +36,11 @@ type (
 )
 
 const (
-	ipfsAPIFileName      = "api"
-	ipfsConfigEnv        = giconfig.EnvDir
-	ipfsConfigDefaultDir = giconfig.DefaultPathRoot
-	pinfsExpiryDefault   = 30 * time.Second
-	ipnsExpiryDefault    = 1 * time.Minute
+	ipfsAPIFileName    = "api"
+	ipfsConfigEnv      = giconfig.EnvDir
+	ipfsConfigDir      = giconfig.DefaultPathRoot
+	defaultPinfsExpiry = 30 * time.Second
+	defaultIPNSExpiry  = 1 * time.Minute
 )
 
 func makeIPFSCommands[
@@ -81,48 +82,90 @@ func (io *ipfsOptions) BindFlags(flagSet *flag.FlagSet) {
 }
 
 func (io *ipfsOptions) bindFlagsVarient(system filesystem.ID, flagSet *flag.FlagSet) {
+	io.bindAPIFlag(system, flagSet)
+	io.bindTimeoutFlag(system, flagSet)
+	io.bindNodeCacheFlag(system, flagSet)
+	io.bindDirCacheFlag(system, flagSet)
+}
+
+func (io *ipfsOptions) bindAPIFlag(system filesystem.ID, flagSet *flag.FlagSet) {
 	var (
-		flagPrefix = prefixIDFlag(system)
-		apiUsage   = string(system) + " API node `maddr`"
-		apiName    = flagPrefix + ipfsAPIFileName
+		prefix = prefixIDFlag(system)
+		usage  = string(system) + " API node `maddr`"
+		name   = prefix + ipfsAPIFileName
 	)
-	flagSetFunc(flagSet, apiName, apiUsage, io,
-		func(value multiaddr.Multiaddr, settings *ipfsSettings) error {
-			settings.APIMaddr = value
-			return nil
-		})
-	flagSet.Lookup(apiName).
+	getRefFn := func(settings *ipfsSettings) *multiaddr.Multiaddr {
+		return &settings.APIMaddr
+	}
+	appendFlagValue(flagSet, name, usage, io,
+		multiaddr.NewMultiaddr, getRefFn)
+	flagSet.Lookup(name).
 		DefValue = fmt.Sprintf(
 		"parses: %s, %s",
 		filepath.Join("$"+ipfsConfigEnv, ipfsAPIFileName),
-		filepath.Join(ipfsConfigDefaultDir, ipfsAPIFileName),
+		filepath.Join(ipfsConfigDir, ipfsAPIFileName),
 	)
-	const timeoutUsage = "timeout `duration` to use when communicating" +
+}
+
+func (io *ipfsOptions) bindTimeoutFlag(system filesystem.ID, flagSet *flag.FlagSet) {
+	const usage = "timeout `duration` to use when communicating" +
 		" with the API" +
 		"\nif <= 0, operations will remain pending" +
 		" until the operation completes, or the file or system is closed"
-	timeoutName := flagPrefix + "timeout"
-	flagSetFunc(flagSet, timeoutName, timeoutUsage, io,
-		func(value time.Duration, settings *ipfsSettings) error {
-			settings.APITimeout = value
-			return nil
-		})
-	nodeCacheName := flagPrefix + "node-cache"
-	const nodeCacheUsage = "number of nodes to keep in the cache" +
+	var (
+		prefix   = prefixIDFlag(system)
+		name     = prefix + "timeout"
+		getRefFn = func(settings *ipfsSettings) *time.Duration {
+			return &settings.APITimeout
+		}
+	)
+	appendFlagValue(flagSet, name, usage,
+		io, time.ParseDuration, getRefFn,
+	)
+}
+
+func (io *ipfsOptions) bindNodeCacheFlag(system filesystem.ID, flagSet *flag.FlagSet) {
+	const usage = "number of nodes to keep in the cache" +
 		"\nnegative values disable node caching"
-	flagSetFunc(flagSet, nodeCacheName, nodeCacheUsage, io,
-		func(value int, settings *ipfsSettings) error {
-			settings.NodeCacheCount = value
-			return nil
-		})
-	dirCacheName := flagPrefix + "directory-cache"
-	const dirCacheUsage = "number of directory entry lists to keep in the cache" +
+	var (
+		prefix  = prefixIDFlag(system)
+		name    = prefix + "node-cache"
+		parseFn = func(argument string) (int, error) {
+			const (
+				base    = 0
+				bitSize = 0
+			)
+			count, err := strconv.ParseInt(argument, base, bitSize)
+			return int(count), err
+		}
+		getRefFn = func(settings *ipfsSettings) *int {
+			return &settings.NodeCacheCount
+		}
+	)
+	appendFlagValue(flagSet, name, usage,
+		io, parseFn, getRefFn)
+}
+
+func (io *ipfsOptions) bindDirCacheFlag(system filesystem.ID, flagSet *flag.FlagSet) {
+	const usage = "number of directory entry lists to keep in the cache" +
 		"\nnegative values disable directory caching"
-	flagSetFunc(flagSet, dirCacheName, dirCacheUsage, io,
-		func(value int, settings *ipfsSettings) error {
-			settings.DirectoryCacheCount = value
-			return nil
-		})
+	var (
+		prefix  = prefixIDFlag(system)
+		name    = prefix + "directory-cache"
+		parseFn = func(argument string) (int, error) {
+			const (
+				base    = 0
+				bitSize = 0
+			)
+			count, err := strconv.ParseInt(argument, base, bitSize)
+			return int(count), err
+		}
+		getRefFn = func(settings *ipfsSettings) *int {
+			return &settings.DirectoryCacheCount
+		}
+	)
+	appendFlagValue(flagSet, name, usage,
+		io, parseFn, getRefFn)
 }
 
 func (io ipfsOptions) make() (ipfsSettings, error) {
@@ -155,6 +198,11 @@ func (*pinFSOptions) usage(filesystem.Host) string {
 }
 
 func (po *pinFSOptions) BindFlags(flagSet *flag.FlagSet) {
+	po.bindIPFSFlags(flagSet)
+	po.bindExpiryFlag(flagSet)
+}
+
+func (po *pinFSOptions) bindIPFSFlags(flagSet *flag.FlagSet) {
 	var ipfsOptions ipfsOptions
 	(&ipfsOptions).bindFlagsVarient(ipfs.PinFSID, flagSet)
 	*po = append(*po, func(settings *pinFSSettings) error {
@@ -165,23 +213,26 @@ func (po *pinFSOptions) BindFlags(flagSet *flag.FlagSet) {
 		settings.IPFSGuest = ipfs.IPFSGuest(subset)
 		return nil
 	})
+}
+
+func (po *pinFSOptions) bindExpiryFlag(flagSet *flag.FlagSet) {
 	const (
-		expiryName  = "pinfs-expiry"
-		expiryUsage = "`duration` pins are cached for" +
+		name  = "pinfs-expiry"
+		usage = "`duration` pins are cached for" +
 			"\nnegative values retain cache forever, 0 disables cache"
 	)
-	flagSetFunc(flagSet, expiryName, expiryUsage, po,
-		func(value time.Duration, settings *pinFSSettings) error {
-			settings.CacheExpiry = value
-			return nil
-		})
-	flagSet.Lookup(expiryName).
-		DefValue = pinfsExpiryDefault.String()
+	getRefFn := func(settings *pinFSSettings) *time.Duration {
+		return &settings.CacheExpiry
+	}
+	appendFlagValue(flagSet, name, usage,
+		po, time.ParseDuration, getRefFn)
+	flagSet.Lookup(name).
+		DefValue = defaultPinfsExpiry.String()
 }
 
 func (po pinFSOptions) make() (pinFSSettings, error) {
 	settings := pinFSSettings{
-		CacheExpiry: pinfsExpiryDefault,
+		CacheExpiry: defaultPinfsExpiry,
 	}
 	return settings, generic.ApplyOptions(&settings, po...)
 }
@@ -202,6 +253,11 @@ func (no *ipnsOptions) BindFlags(flagSet *flag.FlagSet) {
 }
 
 func (no *ipnsOptions) bindFlagsVarient(system filesystem.ID, flagSet *flag.FlagSet) {
+	no.bindIPFSFlags(system, flagSet)
+	no.bindExpiryFlag(system, flagSet)
+}
+
+func (no *ipnsOptions) bindIPFSFlags(system filesystem.ID, flagSet *flag.FlagSet) {
 	var ipfsOptions ipfsOptions
 	(&ipfsOptions).bindFlagsVarient(system, flagSet)
 	*no = append(*no, func(settings *ipnsSettings) error {
@@ -212,28 +268,31 @@ func (no *ipnsOptions) bindFlagsVarient(system filesystem.ID, flagSet *flag.Flag
 		settings.IPFSGuest = ipfs.IPFSGuest(subset)
 		return nil
 	})
+}
+
+func (no *ipnsOptions) bindExpiryFlag(system filesystem.ID, flagSet *flag.FlagSet) {
 	var (
-		flagPrefix = prefixIDFlag(system)
-		expiryName = flagPrefix + "expiry"
+		prefix = prefixIDFlag(system)
+		name   = prefix + "expiry"
 	)
 	const (
-		expiryUsage = "`duration` of how long a node is considered" +
-			"valid within the cache" +
+		usage = "`duration` of how long a node is considered" +
+			" valid within the cache" +
 			"\nafter this time, the node will be refreshed during" +
 			" its next operation"
 	)
-	flagSetFunc(flagSet, expiryName, expiryUsage, no,
-		func(value time.Duration, settings *ipnsSettings) error {
-			settings.NodeExpiry = value
-			return nil
-		})
-	flagSet.Lookup(expiryName).
-		DefValue = ipnsExpiryDefault.String()
+	getRefFn := func(settings *ipnsSettings) *time.Duration {
+		return &settings.NodeExpiry
+	}
+	appendFlagValue(flagSet, name, usage,
+		no, time.ParseDuration, getRefFn)
+	flagSet.Lookup(name).
+		DefValue = defaultIPNSExpiry.String()
 }
 
 func (no ipnsOptions) make() (ipnsSettings, error) {
 	settings := ipnsSettings{
-		NodeExpiry: ipnsExpiryDefault,
+		NodeExpiry: defaultIPNSExpiry,
 	}
 	return settings, generic.ApplyOptions(&settings, no...)
 }
@@ -286,7 +345,7 @@ func getIPFSAPIPath() (string, error) {
 	if ipfsPath, set := os.LookupEnv(ipfsConfigEnv); set {
 		target = filepath.Join(ipfsPath, ipfsAPIFileName)
 	} else {
-		target = filepath.Join(ipfsConfigDefaultDir, ipfsAPIFileName)
+		target = filepath.Join(ipfsConfigDir, ipfsAPIFileName)
 	}
 	return expandHomeShorthand(target)
 }

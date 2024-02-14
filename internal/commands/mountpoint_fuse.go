@@ -23,11 +23,15 @@ type (
 	fuseOption   func(*fuseSettings) error
 	fuseOptions  []fuseOption
 	fuseID       uint32
+	fuseFlagEnv  struct {
+		builtinFlags       []string
+		rawOptionsProvided bool
+	}
 )
 
 const (
-	fuseFlagPrefix     = "fuse-"
-	fuseRawOptionsName = fuseFlagPrefix + "options"
+	flagPrefixFuse         = "fuse-"
+	flagNameFuseRawOptions = flagPrefixFuse + "options"
 )
 
 func makeFUSECommand() command.Command {
@@ -69,125 +73,161 @@ func (*fuseOptions) usage(guest filesystem.ID) string {
 		"Flags that are common across FUSE implementations" +
 		" are provided by this command,\nbut implementation" +
 		" specific flags may be passed directly to the FUSE" +
-		" library\nvia the `-" + fuseRawOptionsName + "` flag" +
+		" library\nvia the `-" + flagNameFuseRawOptions + "` flag" +
 		" if required.\n\n" +
 		fuseHelpText +
 		"\n" + exampleCommand
 }
 
 func (fo *fuseOptions) BindFlags(flagSet *flag.FlagSet) {
+	var flagEnv fuseFlagEnv
+	fo.bindRawFlag(flagSet, &flagEnv)
+	fo.bindUIDFlag(flagSet, &flagEnv)
+	fo.bindGIDFlag(flagSet, &flagEnv)
+	fo.bindLogFlag(flagSet)
+	fo.bindReaddirPlusFlag(flagSet)
+	fo.bindCaseInsensitiveFlag(flagSet)
+	fo.bindDeleteAccessFlag(flagSet)
+}
+
+func (fo *fuseOptions) bindRawFlag(flagSet *flag.FlagSet, flagEnv *fuseFlagEnv) {
 	const (
-		prefix       = fuseFlagPrefix
-		optionsName  = fuseRawOptionsName
-		optionsUsage = "raw options passed directly to mount" +
+		name  = flagNameFuseRawOptions
+		usage = "raw options passed directly to mount" +
 			"\nmust be specified once per `FUSE flag`" +
-			"\n(E.g. `-" + optionsName +
+			"\n(E.g. `-" + name +
 			` "-o uid=0,gid=0" -` +
-			optionsName + " \"--VolumePrefix=somePrefix\"`)"
-		passthroughErr = "cannot combine" +
-			"-" + optionsName + "with built-in flags"
+			name + " \"--VolumePrefix=somePrefix\"`)"
 	)
 	var (
-		passthroughFlags []string
-		explicitFlags    []string
-	)
-	flagSetFunc(flagSet, optionsName, optionsUsage, fo,
-		func(value string, settings *fuseSettings) error {
-			if len(explicitFlags) != 0 {
-				return fmt.Errorf("%s: %s",
-					passthroughErr,
-					strings.Join(explicitFlags, ","),
-				)
+		parseFn = func(argument string) (string, error) {
+			flagEnv.rawOptionsProvided = true
+			if builtins := flagEnv.builtinFlags; len(builtins) != 0 {
+				return "", newCombinedFlagsError(builtins)
 			}
-			passthroughFlags = append(passthroughFlags, value)
-			settings.Options = append(settings.Options, value)
-			return nil
-		})
-	const (
-		uidKind     = "uid"
-		uidName     = prefix + uidKind
-		gidKind     = "gid"
-		gidName     = prefix + gidKind
-		explicitErr = "cannot combine built-in flags" +
-			"with -" + optionsName
-	)
-	var (
-		uidUsage, uidDefaultText = fuseIDFlagText(uidKind)
-		gidUsage, gidDefaultText = fuseIDFlagText(gidKind)
-		combinedCheck            = func() error {
-			if len(passthroughFlags) != 0 {
-				return fmt.Errorf("%s: %s",
-					explicitErr,
-					strings.Join(passthroughFlags, ","),
-				)
-			}
-			return nil
+			return argument, nil
+		}
+		getRefFn = func(settings *fuseSettings) *[]string {
+			return &settings.Options
 		}
 	)
-	flagSetFunc(flagSet, uidName, uidUsage, fo,
-		func(value fuseID, settings *fuseSettings) error {
-			if err := combinedCheck(); err != nil {
-				return err
-			}
-			explicitFlags = append(explicitFlags, uidName)
-			settings.UID = uint32(value)
-			return nil
-		})
-	flagSet.Lookup(uidName).
-		DefValue = uidDefaultText
-	flagSetFunc(flagSet, gidName, gidUsage, fo,
-		func(value fuseID, settings *fuseSettings) error {
-			if err := combinedCheck(); err != nil {
-				return err
-			}
-			explicitFlags = append(explicitFlags, gidName)
-			settings.GID = uint32(value)
-			return nil
-		})
-	flagSet.Lookup(gidName).
-		DefValue = gidDefaultText
-	const (
-		logName  = prefix + "log"
-		logUsage = "sets a log `prefix` and enables logging in FUSE operations"
-	)
-	flagSetFunc(flagSet, logName, logUsage, fo,
-		func(value string, settings *fuseSettings) error {
-			if value == "" {
-				return fmt.Errorf(`"%s" flag had empty value`, logName)
-			}
-			settings.LogPrefix = value
-			return nil
-		})
-	const (
-		readdirName  = prefix + "readdir-plus"
-		readdirUsage = "informs the host that the hosted file system has the readdir-plus capability"
-	)
-	flagSetFunc(flagSet, readdirName, readdirUsage, fo,
-		func(value bool, settings *fuseSettings) error {
-			settings.ReaddirPlus = value
-			return nil
-		})
+	appendFlagList(flagSet, name, usage,
+		fo, parseFn, getRefFn)
+}
 
-	flagSet.Lookup(readdirName).
+func newCombinedFlagsError(builtingFlags []string) error {
+	const explicitErr = "cannot combine raw options flag `-" +
+		flagNameFuseRawOptions + "` with built-in flags"
+	for i, flag := range builtingFlags {
+		builtingFlags[i] = "-" + flag
+	}
+	return fmt.Errorf("%s: %s",
+		explicitErr,
+		strings.Join(builtingFlags, ","),
+	)
+}
+
+func (fo *fuseOptions) bindUIDFlag(flagSet *flag.FlagSet, flagEnv *fuseFlagEnv) {
+	const (
+		kind = "uid"
+		name = flagPrefixFuse + kind
+	)
+	var (
+		usage, defaultText = fuseIDFlagText(kind)
+		parseFn            = func(argument string) (uint32, error) {
+			flagEnv.builtinFlags = append(flagEnv.builtinFlags, name)
+			if flagEnv.rawOptionsProvided {
+				return 0, newCombinedFlagsError(flagEnv.builtinFlags)
+			}
+			id, err := parseID[fuseID](argument)
+			return uint32(id), err
+		}
+		getRefFn = func(settings *fuseSettings) *uint32 {
+			return &settings.UID
+		}
+	)
+	appendFlagValue(flagSet, name, usage,
+		fo, parseFn, getRefFn)
+	flagSet.Lookup(name).
+		DefValue = defaultText
+}
+
+func (fo *fuseOptions) bindGIDFlag(flagSet *flag.FlagSet, flagEnv *fuseFlagEnv) {
+	const (
+		kind = "gid"
+		name = flagPrefixFuse + kind
+	)
+	var (
+		usage, defaultText = fuseIDFlagText(kind)
+		parseFn            = func(argument string) (uint32, error) {
+			flagEnv.builtinFlags = append(flagEnv.builtinFlags, name)
+			if flagEnv.rawOptionsProvided {
+				return 0, newCombinedFlagsError(flagEnv.builtinFlags)
+			}
+			id, err := parseID[fuseID](argument)
+			return uint32(id), err
+		}
+		getRefFn = func(settings *fuseSettings) *uint32 {
+			return &settings.GID
+		}
+	)
+	appendFlagValue(flagSet, name, usage,
+		fo, parseFn, getRefFn)
+	flagSet.Lookup(name).
+		DefValue = defaultText
+}
+
+func (fo *fuseOptions) bindLogFlag(flagSet *flag.FlagSet) {
+	const (
+		name  = flagPrefixFuse + "log"
+		usage = "sets a log `prefix` and enables logging in FUSE operations"
+	)
+	var (
+		parseFn  = newPassthroughFunc(name)
+		getRefFn = func(settings *fuseSettings) *string {
+			return &settings.LogPrefix
+		}
+	)
+	appendFlagValue(flagSet, name, usage,
+		fo, parseFn, getRefFn)
+}
+
+func (fo *fuseOptions) bindReaddirPlusFlag(flagSet *flag.FlagSet) {
+	const (
+		name  = flagPrefixFuse + "readdir-plus"
+		usage = "informs the host that the hosted file system has the readdir-plus capability"
+	)
+	getRefFn := func(settings *fuseSettings) *bool {
+		return &settings.ReaddirPlus
+	}
+	appendFlagValue(flagSet, name, usage,
+		fo, strconv.ParseBool, getRefFn)
+	flagSet.Lookup(name).
 		DefValue = strconv.FormatBool(readdirPlusCapible)
+}
+
+func (fo *fuseOptions) bindCaseInsensitiveFlag(flagSet *flag.FlagSet) {
 	const (
-		caseName  = prefix + "case-insensitive"
-		caseUsage = "informs the host that the hosted file system is case insensitive"
+		name  = flagPrefixFuse + "case-insensitive"
+		usage = "informs the host that the hosted file system is case insensitive"
 	)
-	flagSetFunc(flagSet, caseName, caseUsage, fo,
-		func(value bool, settings *fuseSettings) error {
-			settings.CaseInsensitive = value
-			return nil
-		})
+	getRefFn := func(settings *fuseSettings) *bool {
+		return &settings.CaseInsensitive
+	}
+	appendFlagValue(flagSet, name, usage,
+		fo, strconv.ParseBool, getRefFn)
+}
+
+func (fo *fuseOptions) bindDeleteAccessFlag(flagSet *flag.FlagSet) {
 	const (
-		deleteName  = prefix + "delete-access"
-		deleteUsage = "informs the host that the hosted file system implements \"Access\" which understands the \"DELETE_OK\" flag"
+		name  = flagPrefixFuse + "delete-access"
+		usage = "``informs the host that the hosted file system implements `access` which understands the `DELETE_OK` flag"
 	)
-	flagSetFunc(flagSet, deleteName, deleteUsage, fo,
-		func(value bool, settings *fuseSettings) error {
-			settings.DeleteAccess = value
-			return nil
-		})
+	getRefFn := func(settings *fuseSettings) *bool {
+		return &settings.DeleteAccess
+	}
+	appendFlagValue(flagSet, name, usage,
+		fo, strconv.ParseBool, getRefFn)
 }
 
 func (fo fuseOptions) make() (fuseSettings, error) {

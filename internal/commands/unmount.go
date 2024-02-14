@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"strconv"
 
 	"github.com/djdv/go-filesystem-utils/internal/command"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
@@ -42,25 +43,33 @@ func UnmountAll(b bool) UnmountOption {
 }
 
 func (uo *unmountCmdOptions) BindFlags(flagSet *flag.FlagSet) {
-	var clientOptions clientOptions
-	(&clientOptions).BindFlags(flagSet)
-	*uo = append(*uo, func(us *unmountCmdSettings) error {
-		subset, err := clientOptions.make()
-		if err != nil {
-			return err
-		}
-		us.clientSettings = subset
-		return nil
-	})
-	const (
-		allName  = "all"
-		allUsage = "unmount all"
-	)
-	flagSetFunc(flagSet, allName, allUsage, uo,
-		func(value bool, settings *unmountCmdSettings) error {
-			settings.apiOptions = append(settings.apiOptions, UnmountAll(value))
-			return nil
+	uo.bindClientFlags(flagSet)
+	uo.bindAllFlag(flagSet)
+}
+
+func (uo *unmountCmdOptions) bindClientFlags(flagSet *flag.FlagSet) {
+	extendFlagSet[*clientOptions](uo, flagSet,
+		func(settings *unmountCmdSettings) *clientSettings {
+			return &settings.clientSettings
 		})
+}
+
+func (uo *unmountCmdOptions) bindAllFlag(flagSet *flag.FlagSet) {
+	const (
+		name  = "all"
+		usage = "unmount all"
+	)
+	assignFn := func(settings *unmountCmdSettings, all bool) error {
+		if all {
+			settings.apiOptions = append(
+				settings.apiOptions,
+				UnmountAll(true),
+			)
+		}
+		return nil
+	}
+	appendFlagOption(flagSet, name, usage,
+		uo, strconv.ParseBool, assignFn)
 }
 
 func (uo unmountCmdOptions) make() (unmountCmdSettings, error) {

@@ -59,29 +59,33 @@ func Shutdown() command.Command {
 }
 
 func (so *shutdownOptions) BindFlags(flagSet *flag.FlagSet) {
-	var clientOptions clientOptions
-	(&clientOptions).BindFlags(flagSet)
-	*so = append(*so, func(ss *shutdownSettings) error {
-		subset, err := clientOptions.make()
-		if err != nil {
-			return err
-		}
-		ss.clientSettings = subset
-		return nil
-	})
-	const shutdownName = "level"
-	shutdownUsage := fmt.Sprintf(
-		"sets the `disposition` for shutdown"+
-			"\none of:"+
-			"\n%s",
-		shutdownLevelsTable(),
-	)
-	flagSetFunc(flagSet, shutdownName, shutdownUsage, so,
-		func(value shutdownDisposition, settings *shutdownSettings) error {
-			settings.disposition = value
-			return nil
+	so.bindClientFlags(flagSet)
+	so.bindLevelFlag(flagSet)
+}
+
+func (so *shutdownOptions) bindClientFlags(flagSet *flag.FlagSet) {
+	extendFlagSet[*clientOptions](so, flagSet,
+		func(settings *shutdownSettings) *clientSettings {
+			return &settings.clientSettings
 		})
-	flagSet.Lookup(shutdownName).
+}
+
+func (so *shutdownOptions) bindLevelFlag(flagSet *flag.FlagSet) {
+	const name = "level"
+	var (
+		usage = fmt.Sprintf(
+			"sets the `disposition` for shutdown"+
+				"\none of:"+
+				"\n%s",
+			shutdownLevelsTable(),
+		)
+		getRefFn = func(settings *shutdownSettings) *shutdownDisposition {
+			return &settings.disposition
+		}
+	)
+	appendFlagValue(flagSet, name, usage, so,
+		parseShutdownLevel, getRefFn)
+	flagSet.Lookup(name).
 		DefValue = dispositionDefault.String()
 }
 

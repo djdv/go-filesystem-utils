@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,7 +33,7 @@ type (
 )
 
 const (
-	exitIntervalDefault  = 30 * time.Second
+	defaultExitInterval  = 30 * time.Second
 	errServiceConnection = generic.ConstError("could not connect to service")
 	errCouldNotDial      = generic.ConstError("could not dial")
 )
@@ -70,39 +71,52 @@ func (cs *clientSettings) getClient(autoLaunchDaemon bool) (*Client, error) {
 }
 
 func (co *clientOptions) BindFlags(flagSet *flag.FlagSet) {
+	co.bindVerboseFlag(flagSet)
+	co.bindExitFlag(flagSet)
+	co.bindServerFlag(flagSet)
+}
+
+func (co *clientOptions) bindVerboseFlag(flagSet *flag.FlagSet) {
 	const (
-		verboseName  = "verbose"
-		verboseUsage = "enable client message logging"
+		name   = "verbose"
+		usage  = "enable client message logging"
+		prefix = "⬇️ client - "
+		flag   = 0
 	)
-	flagSetFunc(flagSet, verboseName, verboseUsage, co,
-		func(verbose bool, settings *clientSettings) error {
-			if verbose {
-				const (
-					prefix = "⬇️ client - "
-					flags  = 0
-				)
-				settings.log = log.New(os.Stderr, prefix, flags)
-			}
-			return nil
-		})
+	assignFn := func(settings *clientSettings, verbose bool) error {
+		if verbose {
+			settings.log = log.New(os.Stderr, prefix, flag)
+		} else {
+			settings.log = nil
+		}
+		return nil
+	}
+	appendFlagOption(flagSet, name, usage,
+		co, strconv.ParseBool, assignFn)
+}
+
+func (co *clientOptions) bindExitFlag(flagSet *flag.FlagSet) {
 	const (
-		exitName  = exitAfterFlagName
-		exitUsage = "passed to the daemon command if we launch it" +
+		name  = flagNameExitAfter
+		usage = "passed to the daemon command if we launch it" +
 			"\n(refer to daemon's helptext)"
 	)
-	flagSetFunc(flagSet, exitName, exitUsage, co,
-		func(value time.Duration, settings *clientSettings) error {
-			settings.exitInterval = value
-			return nil
-		})
-	flagSet.Lookup(exitName).
-		DefValue = exitIntervalDefault.String()
-	const serverUsage = "file system service `maddr`"
-	flagSetFunc(flagSet, serverFlagName, serverUsage, co,
-		func(value multiaddr.Multiaddr, settings *clientSettings) error {
-			settings.serviceMaddr = value
-			return nil
-		})
+	getRefFn := func(settings *clientSettings) *time.Duration {
+		return &settings.exitInterval
+	}
+	appendFlagValue(flagSet, name, usage, co,
+		time.ParseDuration, getRefFn)
+	flagSet.Lookup(name).
+		DefValue = defaultExitInterval.String()
+}
+
+func (co *clientOptions) bindServerFlag(flagSet *flag.FlagSet) {
+	const usage = "file system service `maddr`"
+	getRefFn := func(settings *clientSettings) *multiaddr.Multiaddr {
+		return &settings.serviceMaddr
+	}
+	appendFlagValue(flagSet, flagNameServer, usage, co,
+		multiaddr.NewMultiaddr, getRefFn)
 	serviceMaddrs, err := allServiceMaddrs()
 	if err != nil {
 		panic(err)
@@ -111,7 +125,7 @@ func (co *clientOptions) BindFlags(flagSet *flag.FlagSet) {
 	for i, maddr := range serviceMaddrs {
 		maddrStrings[i] = "`" + maddr.String() + "`"
 	}
-	flagSet.Lookup(serverFlagName).
+	flagSet.Lookup(flagNameServer).
 		DefValue = fmt.Sprintf(
 		"one of: %s",
 		strings.Join(maddrStrings, ", "),
@@ -120,7 +134,7 @@ func (co *clientOptions) BindFlags(flagSet *flag.FlagSet) {
 
 func (co clientOptions) make() (clientSettings, error) {
 	settings := clientSettings{
-		exitInterval: exitIntervalDefault,
+		exitInterval: defaultExitInterval,
 	}
 	return settings, generic.ApplyOptions(&settings, co...)
 }

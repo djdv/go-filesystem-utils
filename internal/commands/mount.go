@@ -101,16 +101,24 @@ func WithGID(gid p9.GID) MountOption {
 
 func (mo *mountCmdOptions[HT, GT, HM, GM, HC, GC]) BindFlags(flagSet *flag.FlagSet) {
 	type cmdSettings = mountCmdSettings[HM, GM]
-	var clientOptions clientOptions
-	(&clientOptions).BindFlags(flagSet)
-	*mo = append(*mo, func(ms *cmdSettings) error {
-		subset, err := clientOptions.make()
-		if err != nil {
-			return err
-		}
-		ms.clientSettings = subset
-		return nil
-	})
+	mo.bindClientFlags(flagSet)
+	mo.bindHostFlags(flagSet)
+	mo.bindGuestFlags(flagSet)
+	mo.bindUIDFlag(flagSet)
+	mo.bindGIDFlag(flagSet)
+	mo.bindPermissionsFlag(flagSet)
+}
+
+func (mo *mountCmdOptions[HT, GT, HM, GM, HC, GC]) bindClientFlags(flagSet *flag.FlagSet) {
+	type cmdSettings = mountCmdSettings[HM, GM]
+	extendFlagSet[*clientOptions](mo, flagSet,
+		func(settings *cmdSettings) *clientSettings {
+			return &settings.clientSettings
+		})
+}
+
+func (mo *mountCmdOptions[HT, GT, HM, GM, HC, GC]) bindHostFlags(flagSet *flag.FlagSet) {
+	type cmdSettings = mountCmdSettings[HM, GM]
 	var host HC = new(HT)
 	host.BindFlags(flagSet)
 	*mo = append(*mo, func(ms *cmdSettings) error {
@@ -121,6 +129,10 @@ func (mo *mountCmdOptions[HT, GT, HM, GM, HC, GC]) BindFlags(flagSet *flag.FlagS
 		ms.host = marshaller
 		return nil
 	})
+}
+
+func (mo *mountCmdOptions[HT, GT, HM, GM, HC, GC]) bindGuestFlags(flagSet *flag.FlagSet) {
+	type cmdSettings = mountCmdSettings[HM, GM]
 	var guest GC = new(GT)
 	guest.BindFlags(flagSet)
 	*mo = append(*mo, func(ms *cmdSettings) error {
@@ -131,61 +143,84 @@ func (mo *mountCmdOptions[HT, GT, HM, GM, HC, GC]) BindFlags(flagSet *flag.FlagS
 		ms.guest = marshaller
 		return nil
 	})
+}
+
+func (mo *mountCmdOptions[HT, GT, HM, GM, HC, GC]) bindUIDFlag(flagSet *flag.FlagSet) {
+	type cmdSettings = mountCmdSettings[HM, GM]
 	const (
-		prefix   = "api-"
-		uidName  = prefix + "uid"
-		uidUsage = "file owner's `uid`"
+		prefix = "api-"
+		name   = prefix + "uid"
+		usage  = "file owner's `uid`"
 	)
-	flagSetFunc(flagSet, uidName, uidUsage, mo,
-		func(value p9.UID, settings *cmdSettings) error {
-			settings.apiOptions = append(
-				settings.apiOptions,
-				WithUID(value),
-			)
-			return nil
-		})
-	flagSet.Lookup(uidName).
-		DefValue = idString(apiUIDDefault)
+	assignFn := func(settings *cmdSettings, uid p9.UID) error {
+		settings.apiOptions = append(
+			settings.apiOptions,
+			WithUID(uid),
+		)
+		return nil
+	}
+	appendFlagOption(flagSet, name, usage,
+		mo, parseID[p9.UID], assignFn)
+	flagSet.Lookup(name).
+		DefValue = idString(defaultAPIUID)
+}
+
+func (mo *mountCmdOptions[HT, GT, HM, GM, HC, GC]) bindGIDFlag(flagSet *flag.FlagSet) {
+	type cmdSettings = mountCmdSettings[HM, GM]
 	const (
-		gidName  = prefix + "gid"
-		gidUsage = "file owner's `gid`"
+		prefix = "api-"
+		name   = prefix + "gid"
+		usage  = "file owner's `gid`"
 	)
-	flagSetFunc(flagSet, gidName, gidUsage, mo,
-		func(value p9.GID, settings *cmdSettings) error {
-			settings.apiOptions = append(
-				settings.apiOptions,
-				WithGID(value),
-			)
-			return nil
-		})
-	flagSet.Lookup(gidName).
-		DefValue = idString(apiGIDDefault)
+	assignFn := func(settings *cmdSettings, gid p9.GID) error {
+		settings.apiOptions = append(
+			settings.apiOptions,
+			WithGID(gid),
+		)
+		return nil
+	}
+	appendFlagOption(flagSet, name, usage,
+		mo, parseID[p9.GID], assignFn)
+	flagSet.Lookup(name).
+		DefValue = idString(defaultAPIGID)
+}
+
+func (mo *mountCmdOptions[HT, GT, HM, GM, HC, GC]) bindPermissionsFlag(flagSet *flag.FlagSet) {
+	type cmdSettings = mountCmdSettings[HM, GM]
 	const (
-		permissionsName  = prefix + "permissions"
-		permissionsUsage = "`permissions` to use when creating service files"
+		prefix = "api-"
+		name   = prefix + "permissions"
+		usage  = "`permissions` to use when creating service files"
 	)
-	permissions := fs.FileMode(mountAPIPermissionsDefault &^ p9.FileModeMask)
-	flagSetFunc(flagSet, permissionsName, permissionsUsage, mo,
-		func(value string, settings *cmdSettings) error {
-			parsedPermissions, err := parsePOSIXPermissions(permissions, value)
+	var (
+		apiPermissions = fs.FileMode(mountAPIPermissionsDefault)
+		parseFn        = func(argument string) (p9.FileMode, error) {
+			permissions, err := parsePOSIXPermissions(apiPermissions, argument)
 			if err != nil {
-				return err
+				return 0, err
 			}
-			permissions = parsedPermissions
-			// TODO: [2023.05.20]
-			// patch `.Permissions()` method in 9P library.
-			// For whatever reason the (unexported)
-			// const `p9.permissionsMask` is defined as `01777`
-			// but should be `0o7777`
-			permissions9 := modeFromFS(permissions) &^ p9.FileModeMask
+			// Retain modifications of symbolic expressions
+			// between multiple flags instances / calls.
+			// As would be done with multiple calls of
+			// `chmod` when operating on a file's metadata.
+			apiPermissions = permissions
+			return modeFromFS(apiPermissions), nil
+		}
+		assignFn = func(settings *cmdSettings, permissions p9.FileMode) error {
 			settings.apiOptions = append(
 				settings.apiOptions,
-				WithPermissions(permissions9),
+				WithPermissions(permissions),
 			)
 			return nil
-		})
-	flagSet.Lookup(permissionsName).
-		DefValue = modeToSymbolicPermissions(permissions)
+		}
+	)
+	defaultText := modeToSymbolicPermissions(
+		fs.FileMode(mountAPIPermissionsDefault),
+	)
+	appendFlagOption(flagSet, name, usage,
+		mo, parseFn, assignFn)
+	flagSet.Lookup(name).
+		DefValue = defaultText
 }
 
 func (mo mountCmdOptions[HT, GT, HM, GM, HC, GC]) make() (mountCmdSettings[HM, GM], error) {
@@ -357,8 +392,8 @@ func makeMountCommand[
 func (c *Client) Mount(host filesystem.Host, fsid filesystem.ID, data [][]byte, options ...MountOption) error {
 	set := mountSettings{
 		permissions: mountAPIPermissionsDefault,
-		uid:         apiUIDDefault,
-		gid:         apiGIDDefault,
+		uid:         defaultAPIUID,
+		gid:         defaultAPIGID,
 	}
 	if err := generic.ApplyOptions(&set, options...); err != nil {
 		return err

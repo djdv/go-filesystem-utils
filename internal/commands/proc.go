@@ -88,7 +88,7 @@ func newDaemonCommand(exitInterval time.Duration) (*exec.Cmd, error) {
 		args = append(args,
 			fmt.Sprintf(
 				"-%s=%s",
-				exitAfterFlagName, exitInterval,
+				flagNameExitAfter, exitInterval,
 			),
 		)
 	}

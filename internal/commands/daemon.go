@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -88,100 +89,138 @@ type (
 
 const (
 	daemonCommandName     = "daemon"
-	apiUIDDefault         = p9.NoUID
-	apiGIDDefault         = p9.NoGID
-	apiPermissionsDefault = 0o751
+	defaultAPIUID         = p9.NoUID
+	defaultAPIGID         = p9.NoGID
+	defaultAPIPermissions = 0o751
 
 	errServe               = generic.ConstError("encountered error while serving")
 	errShutdownDisposition = generic.ConstError("invalid shutdown disposition")
 )
 
 func (do *daemonOptions) BindFlags(flagSet *flag.FlagSet) {
+	do.bindVerboseFlag(flagSet)
+	do.bindServerFlag(flagSet)
+	do.bindExitFlag(flagSet)
+	do.bindUIDFlag(flagSet)
+	do.bindGIDFlag(flagSet)
+	do.bindPermissionsFlag(flagSet)
+}
+
+func (do *daemonOptions) bindVerboseFlag(flagSet *flag.FlagSet) {
 	const (
-		verboseName  = "verbose"
-		verboseUsage = "enable server message logging"
+		name  = "verbose"
+		usage = "enable server message logging"
 	)
-	flagSetFunc(flagSet, verboseName, verboseUsage, do,
-		func(verbose bool, settings *daemonSettings) error {
-			if verbose {
-				const (
-					prefix = "⬆️ server - "
-					flags  = 0
-				)
-				settings.systemLog = log.New(os.Stderr, prefix, flags)
-			}
-			return nil
-		})
-	const serverUsage = "listening socket `maddr`" +
+	assignFn := func(settings *daemonSettings, verbose bool) error {
+		if verbose {
+			const (
+				prefix = "⬆️ server - "
+				flags  = 0
+			)
+			settings.systemLog = log.New(os.Stderr, prefix, flags)
+		}
+		return nil
+	}
+	appendFlagOption(flagSet, name, usage,
+		do, strconv.ParseBool, assignFn)
+}
+
+func (do *daemonOptions) bindServerFlag(flagSet *flag.FlagSet) {
+	const usage = "listening socket `maddr`" +
 		"\ncan be specified multiple times and/or comma separated"
-	flagSetFunc(flagSet, serverFlagName, serverUsage, do,
-		func(value []multiaddr.Multiaddr, settings *daemonSettings) error {
-			settings.serverMaddrs = append(settings.serverMaddrs, value...)
-			return nil
-		})
+
+	getRefFn := func(settings *daemonSettings) *[]multiaddr.Multiaddr {
+		return &settings.serverMaddrs
+	}
+	appendFlagList(flagSet, flagNameServer, usage,
+		do, multiaddr.NewMultiaddr, getRefFn)
 	userMaddrs, err := userServiceMaddrs()
 	if err != nil {
 		panic(err)
 	}
-	flagSet.Lookup(serverFlagName).
+	flagSet.Lookup(flagNameServer).
 		DefValue = userMaddrs[0].String()
+}
+
+func (do *daemonOptions) bindExitFlag(flagSet *flag.FlagSet) {
 	const (
-		exitName  = exitAfterFlagName
-		exitUsage = "check every `interval` (e.g. \"30s\") and shutdown the daemon if its idle"
+		name  = flagNameExitAfter
+		usage = "check every `interval` (e.g. \"30s\") and shutdown the daemon if its idle"
 	)
-	flagSetFunc(flagSet, exitName, exitUsage, do,
-		func(value time.Duration, settings *daemonSettings) error {
-			settings.exitInterval = value
-			return nil
-		})
+	getRefFn := func(settings *daemonSettings) *time.Duration {
+		return &settings.exitInterval
+	}
+	appendFlagValue(flagSet, name, usage,
+		do, time.ParseDuration, getRefFn)
+}
+
+func (do *daemonOptions) bindUIDFlag(flagSet *flag.FlagSet) {
 	const (
-		uidName  = apiFlagPrefix + "uid"
-		uidUsage = "file owner's `uid`"
+		name  = flagPrefixAPI + "uid"
+		usage = "file owner's `uid`"
 	)
-	flagSetFunc(flagSet, uidName, uidUsage, do,
-		func(value p9.UID, settings *daemonSettings) error {
-			settings.nineIDs.uid = value
-			return nil
-		})
-	flagSet.Lookup(uidName).
-		DefValue = idString(apiUIDDefault)
+	getRefFn := func(settings *daemonSettings) *p9.UID {
+		return &settings.nineIDs.uid
+	}
+	appendFlagValue(flagSet, name, usage,
+		do, parseID, getRefFn)
+	flagSet.Lookup(name).
+		DefValue = idString(defaultAPIUID)
+}
+
+func (do *daemonOptions) bindGIDFlag(flagSet *flag.FlagSet) {
 	const (
-		gidName  = apiFlagPrefix + "gid"
-		gidUsage = "file owner's `gid`"
+		name  = flagPrefixAPI + "gid"
+		usage = "file owner's `gid`"
 	)
-	flagSetFunc(flagSet, gidName, gidUsage, do,
-		func(value p9.GID, settings *daemonSettings) error {
-			settings.nineIDs.gid = value
-			return nil
-		})
-	flagSet.Lookup(gidName).
-		DefValue = idString(apiGIDDefault)
+	getRefFn := func(settings *daemonSettings) *p9.GID {
+		return &settings.nineIDs.gid
+	}
+	appendFlagValue(flagSet, name, usage,
+		do, parseID, getRefFn)
+	flagSet.Lookup(name).
+		DefValue = idString(defaultAPIGID)
+}
+
+func (do *daemonOptions) bindPermissionsFlag(flagSet *flag.FlagSet) {
 	const (
-		permissionsName  = apiFlagPrefix + "permissions"
-		permissionsUsage = "`permissions` to use when creating service files"
+		name  = flagPrefixAPI + "permissions"
+		usage = "`permissions` to use when creating service files"
 	)
-	apiPermissions := fs.FileMode(apiPermissionsDefault)
-	flagSetFunc(flagSet, permissionsName, permissionsUsage, do,
-		func(value string, settings *daemonSettings) error {
-			permissions, err := parsePOSIXPermissions(apiPermissions, value)
+	var (
+		apiPermissions = fs.FileMode(defaultAPIPermissions)
+		parseFn        = func(argument string) (fs.FileMode, error) {
+			permissions, err := parsePOSIXPermissions(apiPermissions, argument)
 			if err != nil {
-				return err
+				return 0, err
 			}
-			apiPermissions = permissions &^ fs.ModeType
-			settings.permissions = apiPermissions
-			return nil
-		})
-	flagSet.Lookup(permissionsName).
-		DefValue = modeToSymbolicPermissions(fs.FileMode(apiPermissionsDefault &^ p9.FileModeMask))
+			// Retain modifications of symbolic expressions
+			// between multiple flags instances / calls.
+			// As would be done with multiple calls of
+			// `chmod` when operating on a file's metadata.
+			apiPermissions = permissions
+			return apiPermissions, nil
+		}
+		getRefFn = func(settings *daemonSettings) *fs.FileMode {
+			return &settings.permissions
+		}
+		defaultPermissions = modeToSymbolicPermissions(
+			fs.FileMode(defaultAPIPermissions),
+		)
+	)
+	appendFlagValue(flagSet, name, usage,
+		do, parseFn, getRefFn)
+	flagSet.Lookup(name).
+		DefValue = defaultPermissions
 }
 
 func (do daemonOptions) make() (daemonSettings, error) {
 	settings := daemonSettings{
 		nineIDs: nineIDs{
-			uid: apiUIDDefault,
-			gid: apiGIDDefault,
+			uid: defaultAPIUID,
+			gid: defaultAPIGID,
 		},
-		permissions: apiPermissionsDefault,
+		permissions: defaultAPIPermissions,
 	}
 	if err := generic.ApplyOptions(&settings, do...); err != nil {
 		return daemonSettings{}, err

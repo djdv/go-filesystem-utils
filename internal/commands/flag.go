@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"encoding/csv"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -10,17 +9,18 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 	"unsafe"
 
+	"github.com/djdv/go-filesystem-utils/internal/command"
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	"github.com/djdv/p9/p9"
-	"github.com/multiformats/go-multiaddr"
 )
 
 type (
+	// optionsReference is any
+	// `*optionSlice`.
 	optionsReference[
 		OS optionSlice[OT, T],
 		OT generic.OptionFunc[T],
@@ -28,29 +28,57 @@ type (
 	] interface {
 		*OS
 	}
+	// optionSlice is any
+	// `[]generic.OptionFunc`.
 	optionSlice[
 		OT generic.OptionFunc[T],
 		T any,
 	] interface {
 		~[]OT
 	}
-	// standard [flag.funcValue] extended
-	// for [command.ValueNamer].
+	// settingsConstructor is any [optionSlice]
+	// that can utilize itself to construct `T`
+	// via a `make` method.
+	settingsConstructor[
+		option generic.OptionFunc[T],
+		T any,
+	] interface {
+		optionSlice[option, T]
+		make() (T, error)
+	}
+	// optionBinder is any [optionsReference]
+	// that can bind itself to a [flag.FlagSet].
+	optionBinder[
+		constructor settingsConstructor[option, T],
+		option generic.OptionFunc[T],
+		T any,
+	] interface {
+		optionsReference[constructor, option, T]
+		command.FlagBinder
+	}
+	// genericFuncValue extends [flag.funcValue]
+	// to add [command.ValueNamer] support.
 	// (Because standard uses internal types
 	// in a way we can't access;
 	// see: [flag.UnquoteUsage]'s implementation.)
 	genericFuncValue[T any] func(string) error
+
+	// genericBoolFuncValue implements [flag.Value]'s
+	// `isBoolFlag` extension.
+	genericBoolFuncValue[T any] struct{ genericFuncValue[T] }
 )
 
 func (gf genericFuncValue[T]) Set(s string) error { return gf(s) }
 func (gf genericFuncValue[T]) String() string     { return "" }
 func (gf genericFuncValue[T]) Name() string {
-	name := reflect.TypeOf((*T)(nil)).Elem().String()
+	name := reflect.TypeOf([0]T{}).Elem().String()
 	if index := strings.LastIndexByte(name, '.'); index != -1 {
 		name = name[index+1:] // Remove [QualifiedIdent] prefix.
 	}
 	return strings.ToLower(name)
 }
+
+func (gb genericBoolFuncValue[T]) IsBoolFlag() bool { return true }
 
 const (
 	permMaximum    = 0o7777
@@ -485,108 +513,167 @@ func underline(text string) string {
 	)
 }
 
-func flagSetFunc[
-	OSR optionsReference[OS, OT, ST],
-	OS optionSlice[OT, ST],
-	OT generic.OptionFunc[ST],
-	setterFn func(VT, *ST) error,
-	ST, VT any,
+// appendFlagValue uses `parseFn` and `getRefFn`,
+// to create a [flag.Value] which will be
+// bound to the `flagSet`.
+// `parseFn` translates string input arguments
+// into a typed Go value.
+// `getRefFn` returns an address where the
+// parsed value, should be written to.
+// An option value will be appended to
+// `optionsPtr` upon a successful parse.
+func appendFlagValue[
+	optionsRef optionsReference[options, optionT, settingsT],
+	options optionSlice[optionT, settingsT],
+	optionT generic.OptionFunc[settingsT],
+	parseFunc func(string) (valueT, error),
+	getRefFunc func(*settingsT) *valueT,
+	settingsT, valueT any,
 ](flagSet *flag.FlagSet, name, usage string,
-	options OSR, setter setterFn,
+	optionsPtr optionsRef, parseFn parseFunc, getRefFn getRefFunc,
 ) {
+	assignFn := func(settings *settingsT, value valueT) error {
+		valuePtr := getRefFn(settings)
+		*valuePtr = value
+		return nil
+	}
+	appendFlagOption(flagSet, name, usage,
+		optionsPtr, parseFn, assignFn)
+}
+
+// appendFlagList uses `parseFn` and `getRefFn`,
+// to create a [flag.Value] which will be
+// bound to the `flagSet`.
+// `parseFn` translates string input arguments
+// into a typed Go value.
+// `getRefFn` returns an address to a slice,
+// where the parsed value gets appended to.
+// An option value will be appended to
+// `optionsPtr` upon a successful parse.
+func appendFlagList[optionsRef optionsReference[options, optionT, settingsT],
+	options optionSlice[optionT, settingsT],
+	optionT generic.OptionFunc[settingsT],
+	parseFunc ~func(string) (valueT, error) |
+		~func(string) ([]valueT, error),
+	getRefFunc func(*settingsT) *[]valueT,
+	settingsT, valueT any,
+](flagSet *flag.FlagSet, name, usage string,
+	optionsPtr optionsRef, parseFn parseFunc, getRefFn getRefFunc,
+) {
+	switch parseFn := any(parseFn).(type) {
+	case func(string) (valueT, error):
+		assignFn := func(settings *settingsT, typed valueT) error {
+			valuesPtr := getRefFn(settings)
+			*valuesPtr = append(*valuesPtr, typed)
+			return nil
+		}
+		appendFlagOption(flagSet, name, usage,
+			optionsPtr, parseFn, assignFn)
+	case func(string) ([]valueT, error):
+		assignFn := func(settings *settingsT, typed []valueT) error {
+			valuesPtr := getRefFn(settings)
+			*valuesPtr = append(*valuesPtr, typed...)
+			return nil
+		}
+		appendFlagOption(flagSet, name, usage,
+			optionsPtr, parseFn, assignFn)
+	}
+}
+
+// appendFlagOption uses `parseFn` `assignFn`
+// to create a [flag.Value] which will be
+// bound to the `flagSet`.
+// `parseFn` translates string input arguments
+// into a typed Go value.
+// `assignFn` receives a `*settingsT`, and the parsed value;
+// where it is responsible for validating, transforming,
+// assigning, etc. the value.
+// An option value will be appended to
+// `optionsPtr` upon a successful parse.
+// `assignFn`'s error value it returned by this appended option.
+func appendFlagOption[
+	optionsRef optionsReference[options, optionT, settingsT],
+	options optionSlice[optionT, settingsT],
+	optionT generic.OptionFunc[settingsT],
+	parseFunc func(string) (valueT, error),
+	assignFunc func(*settingsT, valueT) error,
+	settingsT, valueT any,
+](flagSet *flag.FlagSet, name, usage string,
+	optionsPtr optionsRef, parseFn parseFunc, assignFn assignFunc,
+) {
+	var (
+		parseFlag = func(argument string) error {
+			typed, err := parseFn(argument)
+			if err != nil {
+				return err
+			}
+			*optionsPtr = append(
+				*optionsPtr,
+				func(settings *settingsT) error {
+					return assignFn(settings, typed)
+				},
+			)
+			return nil
+		}
+		value = newFlagValue[valueT](parseFlag)
+	)
+	flagSet.Var(value, name, usage)
+}
+
+func newFlagValue[T any](parseFn func(string) error) flag.Value {
+	valueFn := genericFuncValue[T](parseFn)
 	// `bool` flags don't require a value and this
 	// must be conveyed to the [flag] package.
-	if _, ok := any(setter).(func(bool, *ST) error); ok {
-		flagSet.BoolFunc(name, usage, func(parameter string) error {
-			return parseAndSet(parameter, options, setter)
-		})
-		return
+	if _, isBool := any([0]T{}).([0]bool); !isBool {
+		return valueFn
 	}
-	funcFlag[VT](flagSet, name, usage, func(parameter string) error {
-		return parseAndSet(parameter, options, setter)
-	})
+	return genericBoolFuncValue[T]{
+		genericFuncValue: valueFn,
+	}
 }
 
-func funcFlag[T any](flagSet *flag.FlagSet, name, usage string, fn func(string) error) {
-	flagSet.Var(genericFuncValue[T](fn), name, usage)
-}
-
-func parseAndSet[
-	OSR optionsReference[OS, OT, ST],
-	OS optionSlice[OT, ST],
-	OT generic.OptionFunc[ST],
-	setterFn func(VT, *ST) error,
-	ST, VT any,
-](parameter string, options OSR, setter setterFn,
-) error {
-	value, err := parseFlag[VT](parameter)
-	if err != nil {
-		return err
-	}
-	*options = append(*options, func(settings *ST) error {
-		return setter(value, settings)
-	})
-	return nil
-}
-
-func parseFlag[V any](parameter string) (value V, err error) {
-	switch typed := any(&value).(type) {
-	case *string:
-		*typed = parameter
-	case *bool:
-		*typed, err = strconv.ParseBool(parameter)
-	case *time.Duration:
-		*typed, err = time.ParseDuration(parameter)
-	case *[]multiaddr.Multiaddr:
-		*typed, err = parseMultiaddrList(parameter)
-	case *multiaddr.Multiaddr:
-		*typed, err = multiaddr.NewMultiaddr(parameter)
-	case *shutdownDisposition:
-		*typed, err = parseShutdownLevel(parameter)
-	case *int:
-		*typed, err = strconv.Atoi(parameter)
-	case *fuseID:
-		*typed, err = parseID[fuseID](parameter)
-	case *p9.UID:
-		*typed, err = parseID[p9.UID](parameter)
-	case *p9.GID:
-		*typed, err = parseID[p9.GID](parameter)
-	case *uint:
-		var temp uint64
-		temp, err = strconv.ParseUint(parameter, 0, 64)
-		*typed = uint(temp)
-	case *uint64:
-		*typed, err = strconv.ParseUint(parameter, 0, 64)
-	case *uint32:
-		var temp uint64
-		temp, err = strconv.ParseUint(parameter, 0, 32)
-		*typed = uint32(temp)
-	default:
-		err = fmt.Errorf("parser: unexpected type: %T", value)
-	}
-	return
-}
-
-func parseMultiaddrList(parameter string) ([]multiaddr.Multiaddr, error) {
-	var (
-		reader            = strings.NewReader(parameter)
-		csvReader         = csv.NewReader(reader)
-		maddrStrings, err = csvReader.Read()
-	)
-	if err != nil {
-		return nil, err
-	}
-	maddrs := make([]multiaddr.Multiaddr, 0, len(maddrStrings))
-	for _, maddrString := range maddrStrings {
-		maddr, err := multiaddr.NewMultiaddr(maddrString)
-		if err != nil {
-			return nil, err
+func newPassthroughFunc(name string) func(string) (string, error) {
+	return func(argument string) (string, error) {
+		if argument != "" {
+			return argument, nil
 		}
-		maddrs = append(maddrs, maddr)
+		return "", fmt.Errorf(
+			"flag `-%s` had empty value",
+			name,
+		)
 	}
-	return maddrs, nil
 }
 
 func prefixIDFlag(system filesystem.ID) string {
 	return strings.ToLower(string(system)) + "-"
+}
+
+// extendFlagSet will initialize a base [command.FlagBinder],
+// which is bound to the `flagSet`.
+// A function which calls the base's constructor,
+// and assigns it to the address returned from `getRefFn`;
+// will be appended to `options`, as a [generic.OptionFunc].
+func extendFlagSet[
+	binder optionBinder[constructor, baseOption, baseT],
+	constructor settingsConstructor[baseOption, baseT],
+	baseT, extendedT any,
+	getRefFunc func(*extendedT) *baseT,
+	baseOption generic.OptionFunc[baseT],
+	extOptionsPtr optionsReference[extOptions, extOption, extendedT],
+	extOptions optionSlice[extOption, extendedT],
+	extOption generic.OptionFunc[extendedT],
+](options extOptionsPtr, flagSet *flag.FlagSet, getRefFn getRefFunc,
+) {
+	var base constructor
+	binder(&base).BindFlags(flagSet)
+	*options = append(*options,
+		func(extended *extendedT) error {
+			subset, err := base.make()
+			if err != nil {
+				return err
+			}
+			*(getRefFn(extended)) = subset
+			return nil
+		},
+	)
 }
