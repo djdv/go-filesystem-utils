@@ -128,7 +128,6 @@ func (do *daemonOptions) bindVerboseFlag(flagSet *flag.FlagSet) {
 func (do *daemonOptions) bindServerFlag(flagSet *flag.FlagSet) {
 	const usage = "listening socket `maddr`" +
 		"\ncan be specified multiple times and/or comma separated"
-
 	getRefFn := func(settings *daemonSettings) *[]multiaddr.Multiaddr {
 		return &settings.serverMaddrs
 	}
