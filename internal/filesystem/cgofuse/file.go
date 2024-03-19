@@ -11,32 +11,32 @@ import (
 	"github.com/winfsp/cgofuse/fuse"
 )
 
-func (gw *goWrapper) Create(path string, flags int, mode uint32) (errNo, fileDescriptor) {
-	defer gw.systemLock.CreateOrDelete(path)()
+func (fsys *fileSystem) Create(path string, flags int, mode uint32) (errNo, fileDescriptor) {
+	defer fsys.systemLock.CreateOrDelete(path)()
 	name, err := fuseToGo(path)
 	if err != nil {
-		gw.logError(path, err)
+		fsys.logError(path, err)
 		return interpretError(err), errorHandle
 	}
 	var (
 		fsFlags     = goFlagsFromFuse(flags)
 		permissions = fuseToGoPermissions(mode)
 	)
-	file, err := filesystem.OpenFile(gw.FS, name, fsFlags, permissions)
+	file, err := filesystem.OpenFile(fsys.FS, name, fsFlags, permissions)
 	if err != nil {
-		gw.logError(path, err)
+		fsys.logError(path, err)
 		return interpretError(err), errorHandle
 	}
-	handle, err := gw.fileTable.add(file)
+	handle, err := fsys.fileTable.add(file)
 	if err != nil {
-		gw.logError(path, err)
+		fsys.logError(path, err)
 		return -fuse.EMFILE, errorHandle
 	}
 	return operationSuccess, handle
 }
 
-func (gw *goWrapper) exists(name string) bool {
-	_, err := fs.Stat(gw.FS, name)
+func (fsys *fileSystem) exists(name string) bool {
+	_, err := fs.Stat(fsys.FS, name)
 	if err == nil {
 		return true
 	}
@@ -47,24 +47,24 @@ func (gw *goWrapper) exists(name string) bool {
 	return true
 }
 
-func (gw *goWrapper) Mknod(path string, mode uint32, dev uint64) errNo {
-	defer gw.systemLock.CreateOrDelete(path)()
+func (fsys *fileSystem) Mknod(path string, mode uint32, dev uint64) errNo {
+	defer fsys.systemLock.CreateOrDelete(path)()
 	name, err := fuseToGo(path)
 	if err != nil {
-		gw.logError(path, err)
+		fsys.logError(path, err)
 		return interpretError(err)
 	}
-	if gw.exists(name) {
+	if fsys.exists(name) {
 		return -fuse.EEXIST
 	}
-	if creator, ok := gw.FS.(filesystem.CreateFileFS); ok {
-		file, err := creator.CreateFile(name)
+	if creator, ok := fsys.FS.(filesystem.CreateFileFS); ok {
+		file, err := creator.Create(name)
 		if err != nil {
-			gw.logError(path, err)
+			fsys.logError(path, err)
 			return interpretError(err)
 		}
 		if err := file.Close(); err != nil {
-			gw.logError(path, err)
+			fsys.logError(path, err)
 			return interpretError(err)
 		}
 		return operationSuccess
@@ -72,11 +72,11 @@ func (gw *goWrapper) Mknod(path string, mode uint32, dev uint64) errNo {
 	return -fuse.ENOSYS
 }
 
-func (gw *goWrapper) Truncate(path string, size int64, fh fileDescriptor) errNo {
-	defer gw.systemLock.Modify(path)()
+func (fsys *fileSystem) Truncate(path string, size int64, fh fileDescriptor) errNo {
+	defer fsys.systemLock.Modify(path)()
 	if size < 0 {
 		const errNo = -fuse.EINVAL
-		gw.logError(path, fuse.Error(errNo))
+		fsys.logError(path, fuse.Error(errNo))
 		return errNo
 	}
 	// TODO: [metadata] "Unless FUSE_CAP_HANDLE_KILLPRIV is disabled,
@@ -85,16 +85,16 @@ func (gw *goWrapper) Truncate(path string, size int64, fh fileDescriptor) errNo 
 		errNo errNo
 		opErr error
 	)
-	switch handle, err := gw.fileTable.get(fh); {
+	switch handle, err := fsys.fileTable.get(fh); {
 	case err == nil:
 		errNo, opErr = truncateFile(handle.goFile, size)
 	case errors.Is(err, errInvalidHandle):
-		errNo, opErr = truncatePath(gw.FS, path, size)
+		errNo, opErr = truncatePath(fsys.FS, path, size)
 	default:
 		errNo, opErr = interpretError(err), err
 	}
 	if opErr != nil {
-		gw.logError(path, opErr)
+		fsys.logError(path, opErr)
 	}
 	return errNo
 }
@@ -130,45 +130,45 @@ func truncatePath(fsys fs.FS, path string, size int64) (errNo, error) {
 	return operationSuccess, nil
 }
 
-func (gw *goWrapper) Open(path string, flags int) (errNo, fileDescriptor) {
+func (fsys *fileSystem) Open(path string, flags int) (errNo, fileDescriptor) {
 	if flags&fuse.O_TRUNC != 0 {
-		defer gw.systemLock.Modify(path)()
+		defer fsys.systemLock.Modify(path)()
 	} else {
-		defer gw.systemLock.Access(path)()
+		defer fsys.systemLock.Access(path)()
 	}
-	if path == mountedFusePath {
-		// Special case; see: [pollMountpoint].
+	if path == fsys.mountID {
+		// Special case; see: [Mount].
 		return operationSuccess, errorHandle
 	}
 
 	name, err := fuseToGo(path)
 	if err != nil {
-		gw.logError(path, err)
+		fsys.logError(path, err)
 		return interpretError(err), errorHandle
 	}
 
 	const permissions = 0
 	fsFlags := goFlagsFromFuse(flags)
-	file, err := filesystem.OpenFile(gw.FS, name, fsFlags, permissions)
+	file, err := filesystem.OpenFile(fsys.FS, name, fsFlags, permissions)
 	if err != nil {
-		gw.logError(path, err)
+		fsys.logError(path, err)
 		return interpretError(err), errorHandle
 	}
 
-	handle, err := gw.fileTable.add(file)
+	handle, err := fsys.fileTable.add(file)
 	if err != nil {
-		gw.logError(path, err)
+		fsys.logError(path, err)
 		return -fuse.EMFILE, errorHandle
 	}
 
 	return operationSuccess, handle
 }
 
-func (gw *goWrapper) Write(path string, buff []byte, ofst int64, fh fileDescriptor) int {
-	defer gw.systemLock.Modify(path)()
-	handle, err := gw.fileTable.get(fh)
+func (fsys *fileSystem) Write(path string, buff []byte, ofst int64, fh fileDescriptor) int {
+	defer fsys.systemLock.Modify(path)()
+	handle, err := fsys.fileTable.get(fh)
 	if err != nil {
-		gw.logError(path, err)
+		fsys.logError(path, err)
 		return -fuse.EBADF
 	}
 	handle.ioMu.Lock()
@@ -178,7 +178,7 @@ func (gw *goWrapper) Write(path string, buff []byte, ofst int64, fh fileDescript
 
 	errNo, err := writeFile(handle.goFile, buff, ofst)
 	if err != nil {
-		gw.logError(path, err)
+		fsys.logError(path, err)
 	}
 	return errNo
 }
@@ -205,17 +205,17 @@ func writeFile(file fs.File, buff []byte, ofst int64) (errNo, error) {
 	return wroteBytes, nil
 }
 
-func (gw *goWrapper) Fsync(path string, datasync bool, fh fileDescriptor) errNo {
-	defer gw.systemLock.Modify(path)()
+func (fsys *fileSystem) Fsync(path string, datasync bool, fh fileDescriptor) errNo {
+	defer fsys.systemLock.Modify(path)()
 	return -fuse.ENOSYS
 }
 
-func (gw *goWrapper) Read(path string, buff []byte, ofst int64, fh fileDescriptor) int {
-	defer gw.systemLock.Access(path)()
+func (fsys *fileSystem) Read(path string, buff []byte, ofst int64, fh fileDescriptor) int {
+	defer fsys.systemLock.Access(path)()
 
-	handle, err := gw.fileTable.get(fh)
+	handle, err := fsys.fileTable.get(fh)
 	if err != nil {
-		gw.logError(path, err)
+		fsys.logError(path, err)
 		return -fuse.EBADF
 	}
 	handle.ioMu.Lock()
@@ -223,7 +223,7 @@ func (gw *goWrapper) Read(path string, buff []byte, ofst int64, fh fileDescripto
 
 	retVal, err := readFile(handle.goFile, buff, ofst)
 	if err != nil {
-		gw.logError(path, err)
+		fsys.logError(path, err)
 	}
 	return retVal
 }
@@ -259,10 +259,10 @@ func seekFile(file fs.File, ofst int64) (errNo, error) {
 	return operationSuccess, nil
 }
 
-func (gw *goWrapper) Release(path string, fh fileDescriptor) errNo {
-	errNo, err := gw.fileTable.release(fh)
+func (fsys *fileSystem) Release(path string, fh fileDescriptor) errNo {
+	errNo, err := fsys.fileTable.release(fh)
 	if err != nil {
-		gw.logError(path, err)
+		fsys.logError(path, err)
 	}
 	return errNo
 }

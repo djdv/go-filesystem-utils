@@ -102,12 +102,17 @@ func (gf *GuestFile) UnlinkAt(name string, flags uint32) error {
 	if err != nil {
 		return err
 	}
-	// NOTE: Always attempt both operations,
-	// regardless of error from preceding operation.
-	var dErr error
+	var errs []error
 	if target, ok := file.(detacher); ok {
-		dErr = target.detach()
+		if err := target.detach(); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	uErr := dir.UnlinkAt(name, flags)
-	return errors.Join(dErr, uErr)
+	if err := file.Close(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := dir.UnlinkAt(name, flags); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }

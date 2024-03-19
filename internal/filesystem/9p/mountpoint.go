@@ -2,15 +2,13 @@ package p9
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
-	"strings"
 	"sync"
 
 	"github.com/djdv/go-filesystem-utils/internal/filesystem"
+	"github.com/djdv/go-filesystem-utils/internal/filesystem/mountpoint"
 	"github.com/djdv/go-filesystem-utils/internal/generic"
 	perrors "github.com/djdv/p9/errors"
 	"github.com/djdv/p9/fsimpl/templatefs"
@@ -18,171 +16,75 @@ import (
 )
 
 type (
-	// FieldParser should parse and assign its inputs.
-	// Returning either a [FieldError] if the key is not applicable,
-	// or any other error if the value is invalid.
-	FieldParser interface {
-		ParseField(key, value string) error
+	detachFunc = func() error
+	Mountpoint interface {
+		mountpoint.FSMaker
+		mountpoint.Mounter
+		mountpoint.Marshaler
+		mountpoint.FieldParser
 	}
-	// FieldError describes which key was searched for
-	// and the available fields which were tried.
-	// Useful for chaining [FieldParser.ParseField] calls with [errors.As].
-	FieldError struct {
-		Key   string
-		Tried []string
-	}
-	SystemMaker interface {
-		MakeFS() (fs.FS, error)
-	}
-	Mounter interface {
-		Mount(fs.FS) (io.Closer, error)
-	}
-	mountPointTag struct {
-		filesystem.Host `json:"host"`
-		filesystem.ID   `json:"guest"`
-	}
-	mountPointMarshal struct {
-		mountPointTag `json:"tag"`
-		Data          json.RawMessage `json:"data"`
-	}
-	HostIdentifier interface {
-		HostID() filesystem.Host
-	}
-	GuestIdentifier interface {
-		GuestID() filesystem.ID
-	}
-	MountPoint interface {
-		SystemMaker
-		Mounter
-		HostIdentifier
-		GuestIdentifier
-	}
-	MountPointFile[MP MountPoint] struct {
-		mountPointFile
-		mountPoint MP
-		mountPointHost
-		mountPointIO
-	}
-	mountPointFile struct {
+	MountpointFile struct {
 		templatefs.NoopFile
 		*metadata
 		mu       *sync.Mutex
 		linkSync *linkSync
-	}
-	mountPointIO struct {
-		reader *bytes.Reader
-		buffer *bytes.Buffer
+		// All FID instances must be able to
+		// read and write this function pointer.
+		// Hence `*func` instead of just `func`.
+		detachFn   *detachFunc
+		mountpoint Mountpoint
+		reader     *bytes.Reader
+		buffer     *bytes.Buffer
 		openFlags
-		fieldMode bool
-		modified  bool
-	}
-	detachFunc     = func() error
-	mountPointHost struct {
-		unmountFn *detachFunc
+		fieldMode, modified, closing bool
 	}
 	MountPointOption func(*fileSettings) error
 )
 
-func (fe FieldError) Error() string {
-	// Format:
-	// unexpected key: "${key}", want one of: $QuotedCSV(${tried})
-	const (
-		delimiter  = ','
-		space      = ' '
-		separator  = string(delimiter) + string(space)
-		separated  = len(separator)
-		surrounder = '"'
-		surrounded = len(string(surrounder)) * 2
-		padding    = surrounded + separated
-		gotPrefix  = "unexpected key: "
-		wantPrefix = "want one of: "
-		prefixes   = len(gotPrefix) + surrounded +
-			len(wantPrefix) + separated
-	)
-	var (
-		b    strings.Builder
-		key  = fe.Key
-		size = prefixes + len(key)
-	)
-	for i, tried := range fe.Tried {
-		size += len(tried) + surrounded
-		if i != 0 {
-			size += separated
-		}
-	}
-	b.Grow(size)
-	b.WriteString(gotPrefix)
-	b.WriteRune(surrounder)
-	b.WriteString(key)
-	b.WriteRune(surrounder)
-	b.WriteString(separator)
-	b.WriteString(wantPrefix)
-	end := len(fe.Tried) - 1
-	for i, tried := range fe.Tried {
-		b.WriteRune(surrounder)
-		b.WriteString(tried)
-		b.WriteRune(surrounder)
-		if i != end {
-			b.WriteString(separator)
-		}
-	}
-	return b.String()
-}
-
-func NewMountPoint[
-	MP interface {
-		*T
-		MountPoint
-	},
-	T any,
-](options ...MountPointOption,
-) (p9.QID, *MountPointFile[MP], error) {
+func NewMountpointFile(mountpoint Mountpoint, options ...MountPointOption,
+) (p9.QID, *MountpointFile, error) {
 	var settings fileSettings
 	settings.metadata.initialize(p9.ModeRegular)
 	if err := generic.ApplyOptions(&settings, options...); err != nil {
 		return p9.QID{}, nil, err
 	}
-	file := &MountPointFile[MP]{
-		mountPoint: new(T),
-		mountPointFile: mountPointFile{
-			metadata: &settings.metadata,
-			linkSync: &settings.linkSync,
-			mu:       new(sync.Mutex),
-		},
-		mountPointHost: mountPointHost{
-			unmountFn: new(detachFunc),
-		},
+	file := &MountpointFile{
+		mountpoint: mountpoint,
+		metadata:   &settings.metadata,
+		linkSync:   &settings.linkSync,
+		mu:         new(sync.Mutex),
+		detachFn:   new(detachFunc),
 	}
 	settings.metadata.fillDefaults()
 	settings.metadata.incrementPath()
 	return settings.QID, file, nil
 }
 
-func (mf *MountPointFile[MP]) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
+func (mf *MountpointFile) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
 	return mf.metadata.SetAttr(valid, attr)
 }
 
-func (mf *MountPointFile[MP]) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
+func (mf *MountpointFile) GetAttr(req p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
 	return mf.metadata.GetAttr(req)
 }
 
-func (mf *MountPointFile[MP]) Walk(names []string) ([]p9.QID, p9.File, error) {
+func (mf *MountpointFile) Walk(names []string) ([]p9.QID, p9.File, error) {
 	if len(names) > 0 {
 		return nil, nil, perrors.ENOTDIR
 	}
 	if mf.opened() {
 		return nil, nil, fidOpenedErr
 	}
-	return nil, &MountPointFile[MP]{
-		mountPointFile: mf.mountPointFile,
-		mountPointHost: mountPointHost{
-			unmountFn: mf.unmountFn,
-		},
-		mountPoint: mf.mountPoint,
+	return nil, &MountpointFile{
+		metadata:   mf.metadata,
+		mu:         mf.mu,
+		linkSync:   mf.linkSync,
+		detachFn:   mf.detachFn,
+		mountpoint: mf.mountpoint,
 	}, nil
 }
 
-func (mf *MountPointFile[MP]) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
+func (mf *MountpointFile) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
 	mf.mu.Lock()
 	defer mf.mu.Unlock()
 	if mf.opened() {
@@ -192,7 +94,7 @@ func (mf *MountPointFile[MP]) Open(mode p9.OpenFlags) (p9.QID, ioUnit, error) {
 	return mf.QID, noIOUnit, nil
 }
 
-func (mf *MountPointFile[MP]) WriteAt(p []byte, offset int64) (int, error) {
+func (mf *MountpointFile) WriteAt(p []byte, offset int64) (int, error) {
 	mf.mu.Lock()
 	defer mf.mu.Unlock()
 	if !mf.canWrite() {
@@ -220,69 +122,39 @@ func (mf *MountPointFile[MP]) WriteAt(p []byte, offset int64) (int, error) {
 	return written, err
 }
 
-func (mf *MountPointFile[MP]) parseFieldsLocked(b []byte) error {
-	const (
-		key   = 0
-		value = 1
-	)
-	for _, fields := range tokenize(b) {
-		switch fields.typ() {
-		case keyAndValue:
-			parser, ok := any(mf.mountPoint).(FieldParser)
-			if !ok {
-				// TODO: [Go 1.21] use [errors.ErrUnsupported].
-				const unsupported = generic.ConstError("unsupported operation")
-				return fmt.Errorf(
-					"%w - %w: %T does not implement field parser",
-					perrors.EINVAL, unsupported, mf.mountPoint,
-				)
-			}
-			key, value := fields[key], fields[value]
-			if err := parser.ParseField(key, value); err != nil {
+func (mf *MountpointFile) parseFieldsLocked(b []byte) error {
+	for _, attrValue := range tokenize(b) {
+		attribute := attrValue[attribute]
+		if attrValue.attributeOnly() {
+			if err := mf.parseAttributeLocked(attribute); err != nil {
 				return errors.Join(perrors.EINVAL, err)
 			}
-			mf.modified = true
-		case keyWord:
-			key := fields[key]
-			if err := mf.parseKeyWordLocked(key); err != nil {
-				return errors.Join(perrors.EINVAL, err)
-			}
-		default:
-			// TODO: insert input into message? probably.
-			return fmt.Errorf("%w - unexpected input", perrors.EINVAL)
+			continue
 		}
+		if err := mf.mountpoint.ParseField(
+			attribute, attrValue[value],
+		); err != nil {
+			return errors.Join(perrors.EINVAL, err)
+		}
+		mf.modified = true
 	}
 	return nil
 }
 
-func (mf *MountPointFile[MP]) serializeLocked() ([]byte, error) {
-	mb, err := json.Marshal(mf.mountPoint)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(mountPointMarshal{
-		Data: json.RawMessage(mb),
-		mountPointTag: mountPointTag{
-			Host: mf.mountPoint.HostID(),
-			ID:   mf.mountPoint.GuestID(),
-		},
-	})
-}
-
-func (mf *MountPointFile[MP]) parseKeyWordLocked(keyWord string) error {
+func (mf *MountpointFile) parseAttributeLocked(keyWord string) error {
 	const syncKey = "sync"
 	if keyWord == syncKey {
 		return mf.syncLocked()
 	}
-	return FieldError{
-		Key:   keyWord,
-		Tried: []string{syncKey},
+	return mountpoint.FieldError{
+		Attribute: keyWord,
+		Tried:     []string{syncKey},
 	}
 	// TODO: Expected one of: $...
 	// return fmt.Errorf("%w - invalid keyword: %s", perrors.EINVAL, keyWord)
 }
 
-func (mf *MountPointFile[MP]) bufferStructuredLocked(p []byte, offset int64) (int, error) {
+func (mf *MountpointFile) bufferStructuredLocked(p []byte, offset int64) (int, error) {
 	buffer := mf.buffer
 	if buffer == nil {
 		buffer = new(bytes.Buffer)
@@ -299,13 +171,17 @@ func (mf *MountPointFile[MP]) bufferStructuredLocked(p []byte, offset int64) (in
 	return buffer.Write(p)
 }
 
-func (mf *MountPointFile[MP]) FSync() error {
+func (mf *MountpointFile) serializeLocked() ([]byte, error) {
+	return mf.mountpoint.MarshalJSON()
+}
+
+func (mf *MountpointFile) FSync() error {
 	mf.mu.Lock()
 	defer mf.mu.Unlock()
 	return mf.syncLocked()
 }
 
-func (mf *MountPointFile[MP]) syncLocked() error {
+func (mf *MountpointFile) syncLocked() error {
 	if !mf.modified {
 		return nil
 	}
@@ -324,7 +200,7 @@ func (mf *MountPointFile[MP]) syncLocked() error {
 	return mf.remountLocked()
 }
 
-func (mf *MountPointFile[MP]) resetReaderLocked(data []byte) error {
+func (mf *MountpointFile) resetReaderLocked(data []byte) error {
 	reader := mf.reader
 	if reader == nil {
 		return nil
@@ -338,49 +214,57 @@ func (mf *MountPointFile[MP]) resetReaderLocked(data []byte) error {
 	return err
 }
 
-func (mf *MountPointFile[MP]) flushBufferLocked() error {
+func (mf *MountpointFile) flushBufferLocked() error {
 	buffer := mf.buffer
 	if buffer == nil ||
 		buffer.Len() == 0 {
 		return nil
 	}
 	defer buffer.Reset()
-	data := buffer.Bytes()
-	return json.Unmarshal(data, &mf.mountPoint)
+	return mf.mountpoint.UnmarshalJSON(buffer.Bytes())
 }
 
-func (mf *MountPointFile[MP]) remountLocked() error {
-	if unmount := *mf.unmountFn; unmount != nil {
-		if err := unmount(); err != nil {
+func (mf *MountpointFile) remountLocked() error {
+	if detachFn := *mf.detachFn; detachFn != nil {
+		if err := detachFn(); err != nil {
 			return err
 		}
 	}
 	return mf.mountFileLocked()
 }
 
-func (mf *MountPointFile[MP]) mountFileLocked() error {
-	goFS, err := mf.mountPoint.MakeFS()
+func (mf *MountpointFile) mountFileLocked() error {
+	goFS, err := mf.mountpoint.MakeFS()
 	if err != nil {
 		return err
 	}
-	closer, err := mf.mountPoint.Mount(goFS)
-	if err == nil {
-		*mf.unmountFn = closer.Close
-		return nil
+	closer, err := mf.mountpoint.Mount(goFS)
+	if err != nil {
+		if cErr := filesystem.Close(goFS); cErr != nil {
+			return errors.Join(err, cErr)
+		}
+		return err
+	}
+	*mf.detachFn = closer.Close
+	return nil
+}
+
+func (mf *MountpointFile) failAndUnlinkSelf(err error) error {
+	errs := []error{
+		perrors.EIO,
+		err,
 	}
 	if parent := mf.linkSync.parent; parent != nil {
 		const flags = 0
 		child := mf.linkSync.child
-		return errors.Join(
-			perrors.EIO,
-			err,
-			parent.UnlinkAt(child, flags),
-		)
+		if err = parent.UnlinkAt(child, flags); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	return errors.Join(perrors.EIO, err)
+	return errors.Join(errs...)
 }
 
-func (mf *MountPointFile[MP]) ReadAt(p []byte, offset int64) (int, error) {
+func (mf *MountpointFile) ReadAt(p []byte, offset int64) (int, error) {
 	mf.mu.Lock()
 	defer mf.mu.Unlock()
 	reader := mf.reader
@@ -399,16 +283,20 @@ func (mf *MountPointFile[MP]) ReadAt(p []byte, offset int64) (int, error) {
 	return reader.ReadAt(p, offset)
 }
 
-func (mf *MountPointFile[MP]) Close() error {
-	err := mf.FSync()
-	mf.openFlags = 0
-	mf.reader = nil
-	mf.buffer = nil
+func (mf *MountpointFile) Close() error {
+	mf.mu.Lock()
+	err := mf.syncLocked()
+	mf.mu.Unlock()
+	if err != nil {
+		return mf.failAndUnlinkSelf(err)
+	}
 	return err
 }
 
-func (mf *MountPointFile[MP]) detach() error {
-	if detach := *mf.unmountFn; detach != nil {
+func (mf *MountpointFile) detach() error {
+	mf.mu.Lock()
+	defer mf.mu.Unlock()
+	if detach := *mf.detachFn; detach != nil {
 		return detach()
 	}
 	return nil

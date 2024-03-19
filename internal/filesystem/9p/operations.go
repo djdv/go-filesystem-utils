@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"strings"
 	"sync"
 
 	perrors "github.com/djdv/p9/errors"
@@ -30,20 +29,11 @@ type (
 	connInfoResult = result[ConnInfo]
 	stringResult   = result[string]
 
-	// dataField must be of length 1 with just a key name,
-	// or of length 2 with a key and value.
-	dataField  []string
-	dataTokens []dataField
-	fieldType  uint
-
 	openFlags p9.OpenFlags
 )
 
 const (
 	fileOpened = openFlags(p9.OpenFlagsModeMask + 1)
-
-	keyWord     fieldType = 1
-	keyAndValue fieldType = 2
 
 	// NOTE: [2023.01.02]
 	// The reference documentation and implementation
@@ -51,8 +41,6 @@ const (
 	// If this value seems incorrect, request to change it.
 	fidOpenedErr = perrors.EBUSY
 )
-
-func (df dataField) typ() fieldType { return fieldType(len(df)) }
 
 func (of openFlags) withOpenedFlag(mode p9.OpenFlags) openFlags {
 	return openFlags(mode.Mode()) | fileOpened
@@ -442,30 +430,6 @@ func findFilesPipeline(ctx context.Context, root p9.File, name string, wg *sync.
 	}
 }
 
-// tokenize is for parsing data from Read/Write.
-// Returning a list of tokens
-// which contain a list of fields.
-func tokenize(p []byte) dataTokens {
-	var (
-		str   = string(p)
-		split = strings.FieldsFunc(str, func(r rune) bool {
-			return r == '\t' || r == '\r' || r == '\n'
-		})
-		tokens = make(dataTokens, len(split))
-	)
-	for i, token := range split {
-		fields := strings.Fields(token)
-		if len(fields) > 2 { // Preserve spaces in values.
-			fields = dataField{
-				fields[0],
-				strings.Join(fields[1:], " "),
-			}
-		}
-		tokens[i] = fields
-	}
-	return tokens
-}
-
 func unlinkChildSync(link *linkSync) error {
 	link.mu.Lock()
 	defer link.mu.Unlock()
@@ -531,17 +495,4 @@ func mapDirPipeline[
 		close(results)
 	}()
 	return results
-}
-
-func unwind(err error, funcs ...func() error) error {
-	var errs []error
-	for _, fn := range funcs {
-		if fnErr := fn(); fnErr != nil {
-			errs = append(errs, fnErr)
-		}
-	}
-	if errs == nil {
-		return err
-	}
-	return errors.Join(append([]error{err}, errs...)...)
 }

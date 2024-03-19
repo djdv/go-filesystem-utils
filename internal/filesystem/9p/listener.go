@@ -906,7 +906,7 @@ func (ct *connTracker) Accept() (manet.Conn, error) {
 	parent := ct.parent
 	connDir, err := parent.getConnDir()
 	if err != nil {
-		return nil, unwind(err, conn.Close)
+		return nil, generic.CloseWithError(err, conn)
 	}
 	var (
 		closeOnce,
@@ -934,10 +934,10 @@ func (ct *connTracker) Accept() (manet.Conn, error) {
 		fileConn,
 	)
 	if err != nil {
-		return nil, unwind(err, conn.Close, connDir.Close)
+		return nil, generic.CloseWithError(err, conn, connDir)
 	}
 	if err := connDir.Link(file, name); err != nil {
-		return nil, unwind(err, conn.Close, connDir.Close)
+		return nil, generic.CloseWithError(err, conn, connDir)
 	}
 	var (
 		link         = file.linkSync
@@ -954,7 +954,7 @@ func (ct *connTracker) Accept() (manet.Conn, error) {
 		}
 	)
 	if err := connDir.Close(); err != nil {
-		return nil, unwind(err, conn.Close, fileConn.Close)
+		return nil, generic.CloseWithError(err, conn, fileConn)
 	}
 	return connUnlinker, nil
 }
@@ -1031,28 +1031,3 @@ func (cf *connFile) ReadAt(p []byte, offset int64) (int, error) {
 }
 
 func (cc *connCloser) Close() error { return cc.closeFn() }
-
-func (ci *ConnInfo) UnmarshalJSON(data []byte) error {
-	var maddrBuff struct {
-		Local  string `json:"local"`
-		Remote string `json:"remote"`
-	}
-	if err := json.Unmarshal(data, &maddrBuff); err != nil {
-		return err
-	}
-	var err error
-	if ci.Local, err = multiaddr.NewMultiaddr(maddrBuff.Local); err != nil {
-		return err
-	}
-	if ci.Remote, err = multiaddr.NewMultiaddr(maddrBuff.Remote); err != nil {
-		return err
-	}
-	return json.Unmarshal(data, &struct {
-		ID        *uintptr   `json:"#"`
-		LastRead  *time.Time `json:"lastRead"`
-		LastWrite *time.Time `json:"lastWrite"`
-	}{
-		ID:       &ci.ID,
-		LastRead: &ci.LastRead, LastWrite: &ci.LastWrite,
-	})
-}

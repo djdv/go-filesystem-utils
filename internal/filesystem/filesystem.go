@@ -21,42 +21,61 @@ type (
 	// (IPFS, IPNS, et al.)
 	ID string
 
+	// IDFS provides an identifier for the file system.
+	// I.e. the file system's type.
 	IDFS interface {
 		fs.FS
 		ID() ID
 	}
+	// OpenFileFS extends an [fs.FS] to provide
+	// functionality matching [os.OpenFile].
 	OpenFileFS interface {
 		fs.FS
 		OpenFile(name string, flag int, perm fs.FileMode) (fs.File, error)
 	}
+	// CreateFileFS extends an [fs.FS] to provide
+	// functionality matching [os.Create].
 	CreateFileFS interface {
 		fs.FS
-		CreateFile(name string) (fs.File, error)
+		Create(name string) (fs.File, error)
 	}
+	// RemoveFS extends an [fs.FS] to provide
+	// functionality matching [os.Remove].
 	RemoveFS interface {
 		fs.FS
 		Remove(name string) error
 	}
-	LinkStater interface {
+	// SymlinkFS extends an [fs.FS] to provide
+	// functionality matching symlink read operations
+	// matching their counterparts in [os].
+	SymlinkFS interface {
 		fs.FS
+		// ReadLink returns the destination of the named symbolic link.
+		ReadLink(name string) (string, error)
+		// Lstat returns a FileInfo describing the file without following any symbolic links.
+		// If there is an error, it should be of type [*fs.PathError].
 		Lstat(name string) (fs.FileInfo, error)
 	}
-	LinkMaker interface {
-		fs.FS
+	// WritableSymlinkFS extends [SymlinkFS] to provide
+	// functionality matching [os.Symlink].
+	WritableSymlinkFS interface {
+		SymlinkFS
 		Symlink(oldname, newname string) error
 	}
-	LinkReader interface {
-		fs.FS
-		Readlink(name string) (string, error)
-	}
+	// RenameFS extends an [fs.FS] to provide
+	// functionality matching [os.Rename].
 	RenameFS interface {
 		fs.FS
 		Rename(oldName, newName string) error
 	}
-	TruncateFileFS interface {
+	// TruncateFS extends an [fs.FS] to provide
+	// functionality matching [os.Truncate].
+	TruncateFS interface {
 		fs.FS
 		Truncate(name string, size int64) error
 	}
+	// MkdirFS extends an [fs.FS] to provide
+	// functionality matching [os.Mkdir].
 	MkdirFS interface {
 		fs.FS
 		Mkdir(name string, perm fs.FileMode) error
@@ -71,24 +90,36 @@ type (
 		// is sent or the directory is closed.
 		StreamDir() <-chan StreamDirEntry
 	}
+	// A TruncateFile is a file whose Truncate method
+	// matches that of [os.File].
 	TruncateFile interface {
 		fs.File
 		Truncate(size int64) error
 	}
 
+	// StreamDirEntry is a directory
+	// entry result. Containing either
+	// the entry, or the error encountered
+	// while enumerating the directory.
 	StreamDirEntry interface {
 		fs.DirEntry
 		Error() error
 	}
 
+	// AccessTimeInfo provides the
+	// time a file was last accessed.
 	AccessTimeInfo interface {
 		fs.FileInfo
 		AccessTime() time.Time
 	}
+	// ChangeTimeInfo provides the
+	// time a file's info was last modified.
 	ChangeTimeInfo interface {
 		fs.FileInfo
 		ChangeTime() time.Time
 	}
+	// CreationTimeInfo provides the
+	// time a file was created.
 	CreationTimeInfo interface {
 		fs.FileInfo
 		CreationTime() time.Time
@@ -124,6 +155,9 @@ const (
 
 func (dw dirEntryWrapper) Error() error { return dw.error }
 
+// FSID calls the [IDFS] extension method
+// if present, otherwise returns a wrapped
+// [errors.ErrUnsupported].
 func FSID(fsys fs.FS) (ID, error) {
 	if fsys, ok := fsys.(IDFS); ok {
 		return fsys.ID(), nil
@@ -132,6 +166,18 @@ func FSID(fsys fs.FS) (ID, error) {
 	return "", unsupportedOpErrAnonymous(op, fsys)
 }
 
+// Close calls the [io.Closer] extension method
+// if present, otherwise returns `nil`.
+func Close(fsys fs.FS) error {
+	if closer, ok := fsys.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
+// OpenFile calls the [OpenFileFS] extension method
+// if present, otherwise returns a wrapped
+// [errors.ErrUnsupported].
 func OpenFile(fsys fs.FS, name string, flag int, perm fs.FileMode) (fs.File, error) {
 	if fsys, ok := fsys.(OpenFileFS); ok {
 		return fsys.OpenFile(name, flag, perm)
@@ -143,14 +189,20 @@ func OpenFile(fsys fs.FS, name string, flag int, perm fs.FileMode) (fs.File, err
 	return nil, unsupportedOpErr(op, name)
 }
 
+// CreateFile calls the [CreateFileFS] extension method
+// if present, otherwise returns a wrapped
+// [errors.ErrUnsupported].
 func CreateFile(fsys fs.FS, name string) (fs.File, error) {
 	if fsys, ok := fsys.(CreateFileFS); ok {
-		return fsys.CreateFile(name)
+		return fsys.Create(name)
 	}
 	const op = "createfile"
 	return nil, unsupportedOpErr(op, name)
 }
 
+// Remove calls the [RemoveFS] extension method
+// if present, otherwise returns a wrapped
+// [errors.ErrUnsupported].
 func Remove(fsys fs.FS, name string) error {
 	if fsys, ok := fsys.(RemoveFS); ok {
 		return fsys.Remove(name)
@@ -159,30 +211,42 @@ func Remove(fsys fs.FS, name string) error {
 	return unsupportedOpErr(op, name)
 }
 
+// Lstat calls the [LinkStater] extension method
+// if present, otherwise returns a wrapped
+// [errors.ErrUnsupported].
 func Lstat(fsys fs.FS, name string) (fs.FileInfo, error) {
-	if fsys, ok := fsys.(LinkStater); ok {
+	if fsys, ok := fsys.(SymlinkFS); ok {
 		return fsys.Lstat(name)
 	}
 	const op = "lstat"
 	return nil, unsupportedOpErr(op, name)
 }
 
+// Symlink calls the [LinkMaker] extension method
+// if present, otherwise returns a wrapped
+// [errors.ErrUnsupported].
 func Symlink(fsys fs.FS, oldname, newname string) error {
-	if fsys, ok := fsys.(LinkMaker); ok {
+	if fsys, ok := fsys.(WritableSymlinkFS); ok {
 		return fsys.Symlink(oldname, newname)
 	}
 	const op = "symlink"
 	return unsupportedOpErr2(op, oldname, newname)
 }
 
+// Readlink calls the [LinkReader] extension method
+// if present, otherwise returns a wrapped
+// [errors.ErrUnsupported].
 func Readlink(fsys fs.FS, name string) (string, error) {
-	if fsys, ok := fsys.(LinkReader); ok {
-		return fsys.Readlink(name)
+	if fsys, ok := fsys.(SymlinkFS); ok {
+		return fsys.ReadLink(name)
 	}
 	const op = "readlink"
 	return "", unsupportedOpErr(op, name)
 }
 
+// Rename calls the [RenameFS] extension method
+// if present, otherwise returns a wrapped
+// [errors.ErrUnsupported].
 func Rename(fsys fs.FS, oldName, newName string) error {
 	if fsys, ok := fsys.(RenameFS); ok {
 		return fsys.Rename(oldName, newName)
@@ -191,6 +255,9 @@ func Rename(fsys fs.FS, oldName, newName string) error {
 	return unsupportedOpErr2(op, oldName, newName)
 }
 
+// Truncate calls the [TruncateFile] extension method
+// if present, otherwise returns a wrapped
+// [errors.ErrUnsupported].
 func Truncate(fsys fs.FS, name string, size int64) error {
 	file, err := OpenFile(fsys, name, os.O_WRONLY|os.O_CREATE, 0o666)
 	if err != nil {
@@ -209,6 +276,9 @@ func Truncate(fsys fs.FS, name string, size int64) error {
 	)
 }
 
+// Mkdir calls the [MkdirFS] extension method
+// if present, otherwise returns a wrapped
+// [errors.ErrUnsupported].
 func Mkdir(fsys fs.FS, name string, perm fs.FileMode) error {
 	if fsys, ok := fsys.(MkdirFS); ok {
 		return fsys.Mkdir(name, perm)
@@ -263,6 +333,9 @@ func StreamDir(ctx context.Context, count int, directory fs.ReadDirFile) <-chan 
 	return stream
 }
 
+// Seek calls the [io.Seeker] extension method
+// if present, otherwise returns a wrapped
+// [errors.ErrUnsupported].
 func Seek(file fs.File, offset int64, whence int) (int64, error) {
 	if seeker, ok := file.(io.Seeker); ok {
 		return seeker.Seek(offset, whence)

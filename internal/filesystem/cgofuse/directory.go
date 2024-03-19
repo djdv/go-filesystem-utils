@@ -28,6 +28,7 @@ type (
 		fuseContext
 		position int64
 	}
+	fillFunc = func(name string, stat *fuse.Stat_t, ofst int64) bool
 )
 
 const (
@@ -35,12 +36,12 @@ const (
 	errDirStreamNotOpened = generic.ConstError("directory stream not opened")
 )
 
-func (gw *goWrapper) Mkdir(path string, mode uint32) errNo {
-	defer gw.systemLock.CreateOrDelete(path)()
-	if maker, ok := gw.FS.(filesystem.MkdirFS); ok {
+func (fsys *fileSystem) Mkdir(path string, mode uint32) errNo {
+	defer fsys.systemLock.CreateOrDelete(path)()
+	if maker, ok := fsys.FS.(filesystem.MkdirFS); ok {
 		goPath, err := fuseToGo(path)
 		if err != nil {
-			gw.logError(path, err)
+			fsys.logError(path, err)
 			return interpretError(err)
 		}
 		permissions := fuseToGoPermissions(mode)
@@ -52,11 +53,11 @@ func (gw *goWrapper) Mkdir(path string, mode uint32) errNo {
 	return -fuse.ENOSYS
 }
 
-func (gw *goWrapper) Opendir(path string) (errNo, fileDescriptor) {
-	defer gw.systemLock.Access(path)()
-	directory, err := openDir(gw.FS, path)
+func (fsys *fileSystem) Opendir(path string) (errNo, fileDescriptor) {
+	defer fsys.systemLock.Access(path)()
+	directory, err := openDir(fsys.FS, path)
 	if err != nil {
-		gw.logError(path, err)
+		fsys.logError(path, err)
 		return interpretError(err), errorHandle
 	}
 	var (
@@ -75,9 +76,9 @@ func (gw *goWrapper) Opendir(path string) (errNo, fileDescriptor) {
 			gid: gid,
 		})
 	)
-	handle, err := gw.fileTable.add(dirStream)
+	handle, err := fsys.fileTable.add(dirStream)
 	if err != nil {
-		gw.logError(path, err)
+		fsys.logError(path, err)
 		// TODO: the file table should return an error value
 		// that maps to this POSIX error.
 		return -fuse.EMFILE, errorHandle
@@ -108,16 +109,16 @@ func openDir(fsys fs.FS, path string) (fs.ReadDirFile, error) {
 	return directory, nil
 }
 
-func (gw *goWrapper) Readdir(path string, fill fillFunc, ofst int64, fh fileDescriptor) errNo {
-	defer gw.systemLock.Access(path)()
+func (fsys *fileSystem) Readdir(path string, fill fillFunc, ofst int64, fh fileDescriptor) errNo {
+	defer fsys.systemLock.Access(path)()
 	if fh == errorHandle {
 		const errNo = -fuse.EBADF
-		gw.logError(path, fuse.Error(errNo))
+		fsys.logError(path, fuse.Error(errNo))
 		return errNo
 	}
-	directoryHandle, err := gw.fileTable.get(fh)
+	directoryHandle, err := fsys.fileTable.get(fh)
 	if err != nil {
-		gw.logError(path, err)
+		fsys.logError(path, err)
 		return -fuse.EBADF
 	}
 	var (
@@ -126,18 +127,18 @@ func (gw *goWrapper) Readdir(path string, fill fillFunc, ofst int64, fh fileDesc
 	)
 	if !ok {
 		const errNo = -fuse.EBADF
-		gw.logError(path, fuse.Error(errNo))
+		fsys.logError(path, fuse.Error(errNo))
 		return errNo
 	}
 	if ofst == 0 && stream.position != 0 {
-		if errorCode, err := rewinddir(gw.FS, stream, path); err != nil {
-			gw.logError(path, err)
+		if errorCode, err := rewinddir(fsys.FS, stream, path); err != nil {
+			fsys.logError(path, err)
 			return errorCode
 		}
 	}
 	ret, err := fillDir(stream, fill)
 	if err != nil {
-		gw.logError(path, err)
+		fsys.logError(path, err)
 	}
 	return ret
 }
@@ -203,22 +204,22 @@ func fillDir(stream *directoryStream, fill fillFunc) (errNo, error) {
 	}
 }
 
-func (gw *goWrapper) Fsyncdir(path string, datasync bool, fh fileDescriptor) errNo {
-	defer gw.systemLock.Modify(path)()
+func (fsys *fileSystem) Fsyncdir(path string, datasync bool, fh fileDescriptor) errNo {
+	defer fsys.systemLock.Modify(path)()
 	return -fuse.ENOSYS
 }
 
-func (gw *goWrapper) Releasedir(path string, fh fileDescriptor) errNo {
-	errNo, err := gw.fileTable.release(fh)
+func (fsys *fileSystem) Releasedir(path string, fh fileDescriptor) errNo {
+	errNo, err := fsys.fileTable.release(fh)
 	if err != nil {
-		gw.logError(path, err)
+		fsys.logError(path, err)
 	}
 	return errNo
 }
 
-func (gw *goWrapper) Rmdir(path string) errNo {
-	defer gw.systemLock.CreateOrDelete(path)()
-	if remover, ok := gw.FS.(filesystem.RemoveFS); ok {
+func (fsys *fileSystem) Rmdir(path string) errNo {
+	defer fsys.systemLock.CreateOrDelete(path)()
+	if remover, ok := fsys.FS.(filesystem.RemoveFS); ok {
 		goPath, err := fuseToGo(path)
 		if err != nil {
 			return interpretError(err)

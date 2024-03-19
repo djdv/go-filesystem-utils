@@ -1,17 +1,6 @@
 {
 	"type": "object",
 	"properties": {
-		"data": {
-			"type": "object",
-			"properties": {
-				"host": {
-					"type": "object"
-				},
-				"guest": {
-					"type": "object"
-				}
-			}
-		},
 		"tag": {
 			"type": "object",
 			"properties": {
@@ -35,10 +24,17 @@
 				"host",
 				"guest"
 			]
+		},
+		"host": {
+			"type": "object"
+		},
+		"guest": {
+			"type": "object"
 		}
 	},
 	"required": [
-		"data",
-		"tag"
+		"tag",
+		"host",
+		"guest"
 	]
 }

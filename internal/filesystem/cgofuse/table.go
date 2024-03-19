@@ -12,6 +12,13 @@ import (
 )
 
 type (
+	fileHandle struct {
+		goFile fs.File
+		// TODO: Our path based locks should be enough to make this mutex redundant,
+		// however, the underlying `fs.FS` files should expose lock mechanisms themselves.
+		// (So that cross API locks can be possible. E.g. FUSE+9P accessing the same `fs.File`)
+		ioMu sync.Mutex
+	}
 	handleSlice []*fileHandle
 	fileTable   struct {
 		files handleSlice

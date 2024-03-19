@@ -11,7 +11,27 @@ import (
 	"github.com/winfsp/cgofuse/fuse"
 )
 
-const errEmptyPath = generic.ConstError("path argument is empty")
+type fileType = uint32
+
+const (
+	// SUSv4BSi7 permission bits
+	// extended and aliased
+	// for Go style conventions.
+
+	executeOther = fuse.S_IXOTH
+	writeOther   = fuse.S_IWOTH
+	readOther    = fuse.S_IROTH
+
+	executeGroup = fuse.S_IXGRP
+	writeGroup   = fuse.S_IWGRP
+	readGroup    = fuse.S_IRGRP
+
+	executeUser = fuse.S_IXUSR
+	writeUser   = fuse.S_IWUSR
+	readUser    = fuse.S_IRUSR
+
+	errEmptyPath = generic.ConstError("path argument is empty")
+)
 
 // fuseToGo converts a FUSE absolute path
 // to a relative [fs.FS] name.
@@ -54,6 +74,11 @@ func goToFuseStat(info fs.FileInfo, fctx fuseContext, stat *fuse.Stat_t) {
 		fuseModTime     = fuse.NewTimespec(info.ModTime())
 	)
 
+	// TODO: if the [fs.FileInfo] is extended
+	// to contain UID and GID values, use them.
+	// For now, we disregard ownership security.
+	// The process owner that called us,
+	// owns the file during this check.
 	stat.Mode = fuseType | fusePermissions
 	stat.Uid = fctx.uid
 	stat.Gid = fctx.gid

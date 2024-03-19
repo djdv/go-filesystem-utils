@@ -2,7 +2,6 @@ package p9
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -34,6 +33,7 @@ type (
 		error
 		target string
 	}
+	// TODO (Ame): review
 	// DecodeTargetFunc will be called with bytes representing
 	// an encoded mount point, and should decode then return
 	// the mount point's target.
@@ -42,7 +42,7 @@ type (
 	// [Client.Mount]. However, this is not guaranteed;
 	// as different clients with different formats may
 	// call `Mount` and `Unmount` independently.
-	DecodeTargetFunc func(filesystem.Host, filesystem.ID, []byte) (string, error)
+	DecodeTargetFunc func(mountpointData []byte) (string, error)
 )
 
 func (ue unmountError) Error() string {
@@ -136,6 +136,9 @@ func UnmountTargets(mounts p9.File,
 			continue
 		}
 		unlinked = append(unlinked, result.value)
+	}
+	if unmountAll := len(mountPoints) == 0; unmountAll {
+		return errors.Join(errs...)
 	}
 	if len(mountPoints) != len(unlinked) ||
 		errs != nil {
@@ -291,25 +294,45 @@ func parseMountFile(file p9.File, decodeFn DecodeTargetFunc) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var point mountPointMarshal
-	if err := json.Unmarshal(fileData, &point); err != nil {
-		return "", err
-	}
-	return decodeFn(point.Host, point.ID, point.Data)
+	return decodeFn(fileData)
 }
 
 func formatUnmountErr(mountPoints, unlinked []string, errs []error) error {
-	faulty := make([]string, 0, len(errs))
+	var (
+		skip      = append(faultedPoints(errs), unlinked...)
+		remaining = reduceAndQuote(mountPoints, skip)
+	)
+	if len(remaining) != 0 {
+		prefix := "could not find mount point"
+		if len(remaining) > 1 {
+			prefix += "s"
+		}
+		errs = append(
+			errs,
+			fmt.Errorf(
+				prefix+": %s",
+				strings.Join(remaining, ", "),
+			),
+		)
+	}
+	return errors.Join(errs...)
+}
+
+func faultedPoints(errs []error) []string {
+	var (
+		uErr    unmountError
+		faulted = make([]string, 0, len(errs))
+	)
 	for _, err := range errs {
-		var uErr unmountError
 		if errors.As(err, &uErr) {
-			faulty = append(faulty, uErr.target)
+			faulted = append(faulted, uErr.target)
 		}
 	}
-	var (
-		skip      = append(faulty, unlinked...)
-		remaining = make([]string, 0, len(mountPoints)-len(skip))
-	)
+	return faulted
+}
+
+func reduceAndQuote(mountPoints, skip []string) []string {
+	remaining := make([]string, 0, len(mountPoints)-len(skip))
 reduce:
 	for _, target := range mountPoints {
 		for _, skipped := range skip {
@@ -319,12 +342,5 @@ reduce:
 		}
 		remaining = append(remaining, fmt.Sprintf(`"%s"`, target))
 	}
-	const prefix = "could not find mount point"
-	var errStr string
-	if len(remaining) == 1 {
-		errStr = fmt.Sprintf(prefix+": %s", remaining[0])
-	} else {
-		errStr = fmt.Sprintf(prefix+"s: %s", strings.Join(remaining, ", "))
-	}
-	return errors.Join(append(errs, errors.New(errStr))...)
+	return remaining
 }

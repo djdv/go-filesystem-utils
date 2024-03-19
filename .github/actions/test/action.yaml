@@ -31,7 +31,7 @@ runs:
             return $combinations
         }
         $tagValues | ForEach-Object {
-            "go vet -tags=$_ ${commandPath}"
+            go vet -tags="$_" "${commandPath}"
         }
         go test -cover ${commandPath}
         go test -race ${commandPath}

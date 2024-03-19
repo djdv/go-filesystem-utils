@@ -9,12 +9,22 @@ func CloneSlice[T any](slice []T) []T {
 	return clone
 }
 
-// CompactSlice will return either
-// the input slice, or a copy of it
-// with a cap == len(slice).
-func CompactSlice[T any](slice []T) []T {
-	if len(slice) == cap(slice) {
-		return slice
+// UpsertSlice returns a function which
+// appends (on the first call)
+// or updates (on subsequent calls)
+// an element in the slice being pointed to.
+func UpsertSlice[S ~[]T, T any](slicePtr *S) func(T) {
+	var (
+		set   bool
+		index int
+	)
+	return func(element T) {
+		if set {
+			(*slicePtr)[index] = element
+		} else {
+			index = len(*slicePtr)
+			*slicePtr = append(*slicePtr, element)
+			set = true
+		}
 	}
-	return CloneSlice(slice)
 }
