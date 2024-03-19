@@ -84,8 +84,8 @@ func (ue UsageError) Unwrap() error { return ue.Err }
 func unexpectedArguments(name string, args []string) UsageError {
 	return UsageError{
 		Err: fmt.Errorf(
-			"`%s` does not take arguments but was provided: %s",
-			name, strings.Join(args, ","),
+			"`%s` does not take arguments but was provided: `%s`",
+			name, strings.Join(args, " "),
 		),
 	}
 }
